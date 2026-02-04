@@ -1,0 +1,523 @@
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #0b1a2a;
+  font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+}
+
+#game {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  touch-action: none;
+}
+
+#ui {
+  position: absolute;
+  inset: 0;
+  color: #f4f7ff;
+  pointer-events: none;
+}
+
+#topbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  font-size: 14px;
+  background: linear-gradient(180deg, rgba(8, 20, 34, 0.9), rgba(8, 15, 26, 0));
+  border-bottom: 1px solid rgba(120, 170, 220, 0.2);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+  pointer-events: auto;
+  align-items: center;
+  flex-wrap: wrap;
+  backdrop-filter: blur(6px);
+}
+
+#timeDisplay {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(40, 80, 120, 0.35);
+  border: 1px solid rgba(140, 190, 230, 0.3);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+}
+
+#healthDisplay {
+  width: 120px;
+  height: 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(10, 18, 26, 0.6);
+  overflow: hidden;
+  box-shadow: inset 0 0 6px rgba(0, 0, 0, 0.35);
+  align-self: center;
+  position: relative;
+}
+
+#healthFill {
+  height: 100%;
+  width: 100%;
+  background: linear-gradient(90deg, #e04b4b, #f3b16b);
+  transition: width 0.2s ease;
+  box-shadow: inset 0 0 6px rgba(255, 255, 255, 0.2);
+}
+
+#healthDisplay::after {
+  content: "";
+  position: absolute;
+  inset: 1px 1px 6px 1px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0));
+  pointer-events: none;
+}
+
+#mpStatus {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(38, 60, 88, 0.4);
+  border: 1px solid rgba(140, 190, 230, 0.28);
+  font-size: 12px;
+  letter-spacing: 0.3px;
+}
+
+#roomDisplay {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, rgba(34, 56, 80, 0.55), rgba(20, 34, 52, 0.65));
+  border: 1px solid rgba(120, 170, 220, 0.3);
+  font-size: 12px;
+  letter-spacing: 0.3px;
+}
+
+#mpCopy,
+#mpJoin {
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(20, 40, 60, 0.75);
+  color: #f4f7ff;
+  font-size: 12px;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+#mpCopy:disabled,
+#mpJoin:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+#prompt {
+  position: absolute;
+  top: 48px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: linear-gradient(145deg, rgba(18, 28, 44, 0.92), rgba(10, 18, 28, 0.85));
+  border: 1px solid rgba(120, 170, 220, 0.35);
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 14px;
+  min-width: 120px;
+  text-align: center;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.3);
+}
+
+#objectiveDisplay {
+  position: absolute;
+  top: 44px;
+  left: 12px;
+  padding: 6px 10px;
+  font-size: 12px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, rgba(16, 26, 40, 0.9), rgba(10, 18, 28, 0.85));
+  border: 1px solid rgba(120, 170, 220, 0.3);
+  letter-spacing: 0.3px;
+  pointer-events: none;
+}
+
+#prompt.visible {
+  opacity: 1;
+}
+
+.slot-row {
+  position: absolute;
+  bottom: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 8px;
+  pointer-events: auto;
+}
+
+.panel {
+  position: absolute;
+  right: 20px;
+  bottom: 90px;
+  width: 260px;
+  background: linear-gradient(160deg, rgba(22, 32, 48, 0.96), rgba(10, 18, 28, 0.92));
+  border: 1px solid rgba(140, 190, 230, 0.28);
+  border-radius: 10px;
+  padding: 12px;
+  pointer-events: auto;
+  box-shadow: 0 14px 28px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(6px);
+}
+
+.panel-title {
+  font-size: 16px;
+  margin-bottom: 10px;
+  letter-spacing: 0.5px;
+}
+
+.panel-hint {
+  font-size: 12px;
+  opacity: 0.7;
+  margin-top: 8px;
+}
+
+.slot-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+
+.slot {
+  width: 52px;
+  height: 52px;
+  border-radius: 8px;
+  border: 1px solid rgba(140, 190, 230, 0.28);
+  background: linear-gradient(145deg, rgba(26, 40, 58, 0.75), rgba(8, 14, 22, 0.85));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  box-shadow: inset 0 0 8px rgba(0, 0, 0, 0.35), 0 4px 10px rgba(0, 0, 0, 0.2);
+}
+
+.slot.selected {
+  outline: 2px solid #ffe08a;
+  box-shadow: 0 0 12px rgba(255, 224, 138, 0.4);
+}
+
+.slot.active {
+  outline: 2px solid #8ad1ff;
+  box-shadow: 0 0 12px rgba(138, 209, 255, 0.4);
+}
+
+.slot-item {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  text-align: center;
+  padding: 2px;
+}
+
+.slot-count {
+  position: absolute;
+  bottom: 4px;
+  right: 6px;
+  font-size: 11px;
+  opacity: 0.8;
+}
+
+.hidden {
+  display: none;
+}
+
+#buildMenu {
+  left: 20px;
+  right: auto;
+  bottom: 90px;
+  width: 260px;
+}
+
+#stationMenu {
+  right: 20px;
+  top: 60px;
+  bottom: auto;
+  width: 260px;
+}
+
+#chestPanel {
+  right: 20px;
+  bottom: 260px;
+  width: 260px;
+}
+
+.tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.tab-btn {
+  flex: 1;
+  border-radius: 8px;
+  border: 1px solid rgba(120, 170, 220, 0.28);
+  background: linear-gradient(150deg, rgba(12, 22, 36, 0.9), rgba(10, 18, 28, 0.8));
+  color: #f4f7ff;
+  padding: 6px 8px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  cursor: pointer;
+  box-shadow: inset 0 0 8px rgba(0, 0, 0, 0.25);
+}
+
+.tab-btn.active {
+  background: linear-gradient(135deg, rgba(88, 160, 230, 0.55), rgba(40, 90, 140, 0.5));
+  border-color: rgba(140, 210, 255, 0.75);
+  box-shadow: 0 6px 14px rgba(15, 35, 60, 0.45);
+}
+
+.recipe-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 240px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.recipe-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.recipe-list::-webkit-scrollbar-thumb {
+  background: rgba(120, 170, 220, 0.35);
+  border-radius: 6px;
+}
+
+.recipe-list::-webkit-scrollbar-track {
+  background: rgba(10, 18, 28, 0.4);
+}
+
+.recipe-card {
+  border: 1px solid rgba(120, 170, 220, 0.25);
+  border-radius: 8px;
+  padding: 8px;
+  background: linear-gradient(150deg, rgba(12, 20, 32, 0.92), rgba(10, 16, 26, 0.85));
+  box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.2);
+}
+
+.recipe-title {
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+
+.recipe-cost {
+  font-size: 12px;
+  opacity: 0.75;
+  margin-bottom: 6px;
+}
+
+.recipe-card button {
+  width: 100%;
+  border-radius: 6px;
+  border: 1px solid rgba(140, 200, 240, 0.4);
+  background: linear-gradient(150deg, rgba(36, 70, 110, 0.9), rgba(20, 40, 60, 0.8));
+  color: #f4f7ff;
+  padding: 6px 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.recipe-card button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.action-btn {
+  margin-top: 10px;
+  width: 100%;
+  border-radius: 8px;
+  border: 1px solid rgba(230, 170, 170, 0.45);
+  background: linear-gradient(160deg, rgba(120, 54, 54, 0.75), rgba(80, 30, 30, 0.7));
+  color: #f4f7ff;
+  padding: 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+#touch {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(6, 12, 20, 0);
+  pointer-events: auto;
+  z-index: 10;
+}
+
+.overlay.hidden {
+  display: none;
+}
+
+.overlay-card {
+  width: min(320px, 90vw);
+  background: rgba(15, 24, 36, 0.95);
+  border: 1px solid rgba(140, 190, 230, 0.3);
+  border-radius: 14px;
+  padding: 18px;
+  text-align: center;
+  box-shadow: 0 16px 30px rgba(0, 0, 0, 0.4);
+  color: #f4f7ff;
+  position: relative;
+  z-index: 2;
+  opacity: 0;
+  transform: translateY(10px);
+  transition: opacity 0.6s ease, transform 0.6s ease;
+}
+
+.overlay.text-ready .overlay-card {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.overlay-title {
+  font-size: 20px;
+  letter-spacing: 0.4px;
+  margin-bottom: 8px;
+  color: #f4f7ff;
+}
+
+.overlay-text {
+  font-size: 13px;
+  opacity: 0.85;
+  color: #f4f7ff;
+  margin-bottom: 14px;
+}
+
+
+@keyframes beamRise {
+  0% {
+    height: 0;
+    opacity: 0;
+  }
+  40% {
+    opacity: 1;
+  }
+  100% {
+    height: 68%;
+    opacity: 1;
+  }
+}
+
+@keyframes beamGlow {
+  0%, 100% {
+    opacity: 0.65;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+
+#stick {
+  position: absolute;
+  left: 20px;
+  bottom: 20px;
+  width: 120px;
+  height: 120px;
+  border-radius: 60px;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  background: rgba(10, 20, 34, 0.35);
+  pointer-events: auto;
+  touch-action: none;
+}
+
+#stickKnob {
+  position: absolute;
+  width: 50px;
+  height: 50px;
+  border-radius: 50%;
+  left: 35px;
+  top: 35px;
+  background: rgba(255, 255, 255, 0.5);
+}
+
+#actionBtn {
+  position: absolute;
+  right: 24px;
+  bottom: 36px;
+  padding: 14px 18px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  background: linear-gradient(145deg, rgba(40, 80, 120, 0.6), rgba(10, 20, 34, 0.6));
+  color: #f4f7ff;
+  font-size: 14px;
+  pointer-events: auto;
+  touch-action: none;
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.35);
+}
+
+#actionBtn:active {
+  transform: translateY(1px);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  #touch {
+    display: none;
+  }
+}
+
+@media (max-width: 720px) {
+  .panel {
+    right: 10px;
+    bottom: 140px;
+  }
+
+  #buildMenu {
+    left: 10px;
+    bottom: 140px;
+  }
+
+  #stationMenu {
+    right: 10px;
+    top: 60px;
+  }
+
+  #chestPanel {
+    right: 10px;
+    bottom: 300px;
+  }
+
+  .slot {
+    width: 46px;
+    height: 46px;
+  }
+}
+#seedDisplay,
+#toolDisplay,
+#saveStatus {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(30, 48, 72, 0.45);
+  border: 1px solid rgba(120, 170, 220, 0.25);
+  font-size: 12px;
+  letter-spacing: 0.3px;
+}
