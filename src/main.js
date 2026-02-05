@@ -24,6 +24,13 @@
   const objectiveDisplay = document.getElementById("objectiveDisplay");
   const endScreen = document.getElementById("endScreen");
   const newRunBtn = document.getElementById("newRunBtn");
+  const startScreen = document.getElementById("startScreen");
+  const startButtons = document.getElementById("startButtons");
+  const soloBtn = document.getElementById("soloBtn");
+  const friendsBtn = document.getElementById("friendsBtn");
+  const mpButtons = document.getElementById("mpButtons");
+  const hostBtn = document.getElementById("hostBtn");
+  const joinBtn = document.getElementById("joinBtn");
   const stickEl = document.getElementById("stick");
   const stickKnobEl = document.getElementById("stickKnob");
   const actionBtn = document.getElementById("actionBtn");
@@ -611,6 +618,66 @@
       mpJoin.addEventListener("click", joinRoomPrompt);
     }
     connectAsHostCandidate();
+  }
+
+  function initMultiplayerJoin(roomId) {
+    if (typeof window.Peer !== "function") {
+      updateMpStatus("MP: Offline");
+      return;
+    }
+    net.enabled = true;
+    const profile = getLocalProfile();
+    net.localName = profile.name;
+    net.localColor = profile.color;
+    net.roomId = roomId;
+    net.hostId = `${roomId}-host`;
+    if (roomDisplay) {
+      roomDisplay.textContent = `Room: ${net.roomId}`;
+    }
+    updateMpStatus("MP: Joining");
+    connectAsClient();
+  }
+
+  function hideStartScreen() {
+    if (startScreen) startScreen.classList.add("hidden");
+  }
+
+  function showMpButtons() {
+    if (startButtons) startButtons.classList.add("hidden");
+    if (mpButtons) mpButtons.classList.remove("hidden");
+  }
+
+  function startSolo() {
+    net.enabled = false;
+    hideStartScreen();
+    if (!state.world) {
+      loadOrCreateGame();
+      updateAllSlotUI();
+    }
+  }
+
+  function startHost() {
+    hideStartScreen();
+    initMultiplayer();
+    if (!state.world) {
+      loadOrCreateGame();
+      updateAllSlotUI();
+    }
+  }
+
+  function startJoin() {
+    const input = window.prompt("Enter room code:", "");
+    const roomId = parseRoomInput(input);
+    if (!roomId) {
+      setPrompt("Invalid room code", 1.2);
+      return;
+    }
+    hideStartScreen();
+    initMultiplayerJoin(roomId);
+    if (!state.world) {
+      loadOrCreateGame();
+      updateAllSlotUI();
+    }
   }
 
   function connectAsHostCandidate() {
@@ -3773,6 +3840,7 @@
   }
 
   function updateMonsters(dt) {
+    if (!state.player) return;
     if (state.player.invincible > 0) state.player.invincible -= dt;
     if (state.player.attackTimer > 0) state.player.attackTimer -= dt;
     if (netIsClient()) return;
@@ -4160,6 +4228,10 @@
   }
 
   function update(dt) {
+    if (!state.world || !state.player) {
+      updatePrompt(dt);
+      return;
+    }
     if (net.enabled && !net.isHost && !net.ready) {
       setPrompt("Connecting...", 0.5);
     }
@@ -5120,9 +5192,7 @@
   function init() {
     setupSlots();
     resize();
-    initMultiplayer();
-    loadOrCreateGame();
-    updateAllSlotUI();
+    if (startScreen) startScreen.classList.remove("hidden");
 
     window.addEventListener("resize", resize);
     window.addEventListener("keydown", handleKeyDown);
@@ -5157,6 +5227,10 @@
         promptNewSeed();
       });
     }
+    if (soloBtn) soloBtn.addEventListener("click", startSolo);
+    if (friendsBtn) friendsBtn.addEventListener("click", showMpButtons);
+    if (hostBtn) hostBtn.addEventListener("click", startHost);
+    if (joinBtn) joinBtn.addEventListener("click", startJoin);
     gameLoop();
   }
 

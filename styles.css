@@ -373,6 +373,31 @@ button:active:not(:disabled) {
   z-index: 10;
 }
 
+.start-screen {
+  background: radial-gradient(circle at top, rgba(18, 34, 58, 0.85), rgba(6, 12, 20, 0.92));
+  z-index: 20;
+}
+
+.start-card {
+  width: min(360px, 90vw);
+}
+
+.start-screen .overlay-card {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.start-buttons {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+}
+
+.start-buttons .action-btn {
+  margin-top: 0;
+  width: 100%;
+}
+
 .overlay.hidden {
   display: none;
 }

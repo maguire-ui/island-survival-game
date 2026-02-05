@@ -9,6 +9,21 @@
 <body>
   <canvas id="game"></canvas>
 
+  <div id="startScreen" class="overlay start-screen">
+    <div class="overlay-card start-card">
+      <div class="overlay-title">Island Survival</div>
+      <div class="overlay-text">Choose how you want to play.</div>
+      <div id="startButtons" class="start-buttons">
+        <button id="soloBtn" class="action-btn">Play Solo</button>
+        <button id="friendsBtn" class="action-btn">Play with Friends</button>
+      </div>
+      <div id="mpButtons" class="start-buttons hidden">
+        <button id="hostBtn" class="action-btn">Host</button>
+        <button id="joinBtn" class="action-btn">Join</button>
+      </div>
+    </div>
+  </div>
+
   <div id="ui">
     <div id="topbar">
       <div id="seedDisplay">Seed: --</div>
