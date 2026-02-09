@@ -140,6 +140,7 @@
     houseSmooth: 18,
     monsterSmooth: 10,
     animalSmooth: 10,
+    villagerSmooth: 10,
   };
 
   const PLAYER_COLORS = [
@@ -157,6 +158,25 @@
     rock: 120,
     grass: 45,
   };
+
+  const VILLAGER_CONFIG = Object.freeze({
+    minPerVillage: 2,
+    maxPerVillage: 8,
+    speedMin: 19,
+    speedMax: 31,
+    wanderRadiusTiles: 6.8,
+    wanderResetMin: 0.7,
+    wanderResetMax: 2.2,
+  });
+
+  const VILLAGER_COLORS = [
+    "#4e6da5",
+    "#8f6a4a",
+    "#6c8f5b",
+    "#8a5f9d",
+    "#9b4f4f",
+    "#6f8e92",
+  ];
 
   const CAVE_SIZE = 28;
 
@@ -1958,6 +1978,16 @@
         speed: animal.speed,
         color: animal.color,
       })),
+      villagers: (world.villagers ?? []).map((villager) => ({
+        id: villager.id,
+        x: villager.x,
+        y: villager.y,
+        homeX: villager.homeX,
+        homeY: villager.homeY,
+        speed: villager.speed,
+        color: villager.color,
+        wanderRadius: villager.wanderRadius,
+      })),
     };
   }
 
@@ -2243,6 +2273,7 @@
     normalizeSurfaceResources(world);
     applyDrops(world, snapshot.world?.drops ?? []);
     applyAnimals(world, snapshot.world?.animals ?? []);
+    applyVillagers(world, snapshot.world?.villagers ?? []);
     world.monsters = buildMonstersFromSnapshot(world.monsters, snapshot.world?.monsters);
     world.projectiles = buildProjectilesFromSnapshot(world.projectiles, snapshot.world?.projectiles);
 
@@ -2254,6 +2285,7 @@
         applyRespawnTasks(cave.world, caveSnapshot.world?.respawnTasks ?? []);
         applyDrops(cave.world, caveSnapshot.world?.drops ?? []);
         applyAnimals(cave.world, caveSnapshot.world?.animals ?? []);
+        applyVillagers(cave.world, caveSnapshot.world?.villagers ?? []);
         cave.world.monsters = buildMonstersFromSnapshot(cave.world.monsters, caveSnapshot.world?.monsters);
         cave.world.projectiles = buildProjectilesFromSnapshot(cave.world.projectiles, caveSnapshot.world?.projectiles);
       }
@@ -2886,6 +2918,18 @@
       }
     }
 
+    if (!net.isHost && state.world?.villagers) {
+      for (const villager of state.world.villagers) {
+        if (villager.renderX == null || villager.renderY == null) {
+          villager.renderX = villager.x;
+          villager.renderY = villager.y;
+        } else {
+          villager.renderX = smoothValue(villager.renderX, villager.x, dt, NET_CONFIG.villagerSmooth);
+          villager.renderY = smoothValue(villager.renderY, villager.y, dt, NET_CONFIG.villagerSmooth);
+        }
+      }
+    }
+
     if (!net.isHost && state.world?.projectiles) {
       for (const projectile of state.world.projectiles) {
         if (projectile.renderX == null || projectile.renderY == null) {
@@ -3406,6 +3450,8 @@
       nextMonsterId,
       projectiles: [],
       nextProjectileId: 1,
+      villagers: [],
+      nextVillagerId: 1,
       landmarks,
       ambience: "wind-echo",
     };
@@ -3806,6 +3852,8 @@
       animals: [],
       nextAnimalId: 1,
       animalSpawnTimer: 3,
+      villagers: [],
+      nextVillagerId: 1,
     };
   }
 
@@ -4350,6 +4398,16 @@
         speed: animal.speed,
         color: animal.color,
       })),
+      villagers: (surface.villagers ?? []).map((villager) => ({
+        id: villager.id,
+        x: villager.x,
+        y: villager.y,
+        homeX: villager.homeX,
+        homeY: villager.homeY,
+        speed: villager.speed,
+        color: villager.color,
+        wanderRadius: villager.wanderRadius,
+      })),
       caves: surface.caves?.map((cave) => ({
         id: cave.id,
         tx: cave.tx,
@@ -4430,6 +4488,7 @@
         ...data,
         version: SAVE_VERSION,
         seed: normalizeSeedValue(data.seed),
+        villagers: Array.isArray(data.villagers) ? data.villagers : [],
       };
     }
     if (data.version === 1) {
@@ -4454,6 +4513,7 @@
         structures: [],
         drops: Array.isArray(data.drops) ? data.drops : [],
         animals: Array.isArray(data.animals) ? data.animals : [],
+        villagers: [],
         caves: [],
       };
     }
@@ -4479,6 +4539,7 @@
         structures: Array.isArray(data.structures) ? data.structures : [],
         drops: Array.isArray(data.drops) ? data.drops : [],
         animals: Array.isArray(data.animals) ? data.animals : [],
+        villagers: [],
         caves: [],
       };
     }
@@ -4504,6 +4565,7 @@
         structures: Array.isArray(data.structures) ? data.structures : [],
         drops: Array.isArray(data.drops) ? data.drops : [],
         animals: Array.isArray(data.animals) ? data.animals : [],
+        villagers: [],
         caves: Array.isArray(data.caves) ? data.caves : [],
       };
     }
@@ -4534,6 +4596,7 @@
           : [],
         drops: Array.isArray(data.drops) ? data.drops : [],
         animals: Array.isArray(data.animals) ? data.animals : [],
+        villagers: [],
         caves: Array.isArray(data.caves) ? data.caves : [],
       };
     }
@@ -4565,6 +4628,7 @@
         : [],
       drops: Array.isArray(data.drops) ? data.drops : [],
       animals: Array.isArray(data.animals) ? data.animals : [],
+      villagers: Array.isArray(data.villagers) ? data.villagers : [],
       caves: Array.isArray(data.caves) ? data.caves : [],
     };
   }
@@ -4703,6 +4767,48 @@
         }))
       : [];
     world.nextAnimalId = world.animals.reduce((max, animal) => Math.max(max, animal.id + 1), 1);
+  }
+
+  function applyVillagers(world, villagers) {
+    const prevVillagers = new Map(
+      Array.isArray(world.villagers) ? world.villagers.map((villager) => [villager.id, villager]) : []
+    );
+    let autoId = Number.isInteger(world.nextVillagerId) && world.nextVillagerId > 0
+      ? world.nextVillagerId
+      : 1;
+    world.villagers = Array.isArray(villagers)
+      ? villagers.map((villager) => {
+          const baseId = typeof villager?.id === "number" ? villager.id : autoId++;
+          const x = Number.isFinite(villager?.x) ? villager.x : 0;
+          const y = Number.isFinite(villager?.y) ? villager.y : 0;
+          const prev = prevVillagers.get(baseId);
+          const speed = clamp(
+            Number(villager?.speed) || ((VILLAGER_CONFIG.speedMin + VILLAGER_CONFIG.speedMax) * 0.5),
+            VILLAGER_CONFIG.speedMin,
+            VILLAGER_CONFIG.speedMax
+          );
+          const wanderRadius = clamp(
+            Number(villager?.wanderRadius) || (VILLAGER_CONFIG.wanderRadiusTiles * CONFIG.tileSize),
+            CONFIG.tileSize * 4,
+            CONFIG.tileSize * 12
+          );
+          return {
+            id: baseId,
+            x,
+            y,
+            homeX: Number.isFinite(villager?.homeX) ? villager.homeX : x,
+            homeY: Number.isFinite(villager?.homeY) ? villager.homeY : y,
+            speed,
+            color: villager?.color || VILLAGER_COLORS[baseId % VILLAGER_COLORS.length],
+            wanderRadius,
+            wanderTimer: 0,
+            dir: { x: 0, y: 0 },
+            renderX: prev?.renderX ?? x,
+            renderY: prev?.renderY ?? y,
+          };
+        })
+      : [];
+    world.nextVillagerId = world.villagers.reduce((max, villager) => Math.max(max, villager.id + 1), 1);
   }
 
   function isStructureValidOnLoad(world, entry, bridgeSet) {
@@ -4986,6 +5092,119 @@
     return true;
   }
 
+  function canVillageVillagerUseTile(world, tx, ty) {
+    if (!world || !inBounds(tx, ty, world.size)) return false;
+    const idx = tileIndex(tx, ty, world.size);
+    if (world.tiles[idx] !== 1) return false;
+    if (world.beachGrid?.[idx]) return false;
+    if (getCaveAt(world, tx, ty)) return false;
+    const structure = getStructureAt(tx, ty);
+    if (!structure || structure.removed) return true;
+    const def = STRUCTURE_DEFS[structure.type];
+    if (def?.blocking) return false;
+    return true;
+  }
+
+  function spawnVillageVillager(world, tx, ty, homeTx, homeTy, rng = Math.random) {
+    if (!canVillageVillagerUseTile(world, tx, ty)) return null;
+    if (!Array.isArray(world.villagers)) world.villagers = [];
+    if (!Number.isInteger(world.nextVillagerId) || world.nextVillagerId < 1) world.nextVillagerId = 1;
+    const id = world.nextVillagerId++;
+    const x = (tx + 0.5) * CONFIG.tileSize;
+    const y = (ty + 0.5) * CONFIG.tileSize;
+    const baseRadius = VILLAGER_CONFIG.wanderRadiusTiles * CONFIG.tileSize;
+    const speed = VILLAGER_CONFIG.speedMin + rng() * (VILLAGER_CONFIG.speedMax - VILLAGER_CONFIG.speedMin);
+    const villager = {
+      id,
+      x,
+      y,
+      homeX: (homeTx + 0.5) * CONFIG.tileSize,
+      homeY: (homeTy + 0.5) * CONFIG.tileSize,
+      speed,
+      color: VILLAGER_COLORS[id % VILLAGER_COLORS.length],
+      wanderRadius: clamp(baseRadius * (0.82 + rng() * 0.34), CONFIG.tileSize * 4, CONFIG.tileSize * 12),
+      wanderTimer: VILLAGER_CONFIG.wanderResetMin + rng() * (VILLAGER_CONFIG.wanderResetMax - VILLAGER_CONFIG.wanderResetMin),
+      dir: { x: 0, y: 0 },
+      renderX: x,
+      renderY: y,
+    };
+    const angle = rng() * Math.PI * 2;
+    villager.dir.x = Math.cos(angle);
+    villager.dir.y = Math.sin(angle);
+    world.villagers.push(villager);
+    return villager;
+  }
+
+  function spawnVillageVillagers(world, centerTx, centerTy, houses = [], rng = Math.random) {
+    if (!world) return 0;
+    if (!Array.isArray(world.villagers)) world.villagers = [];
+    if (!Number.isInteger(world.nextVillagerId) || world.nextVillagerId < 1) world.nextVillagerId = 1;
+
+    const homeX = (centerTx + 0.5) * CONFIG.tileSize;
+    const homeY = (centerTy + 0.5) * CONFIG.tileSize;
+    const existingNearby = world.villagers.filter((villager) => {
+      const hx = Number.isFinite(villager.homeX) ? villager.homeX : villager.x;
+      const hy = Number.isFinite(villager.homeY) ? villager.homeY : villager.y;
+      return Math.hypot(hx - homeX, hy - homeY) <= CONFIG.tileSize * 10;
+    }).length;
+
+    const houseCount = Array.isArray(houses) ? houses.length : 0;
+    const desired = clamp(
+      Math.floor(2 + houseCount * 0.7 + rng() * 2.1),
+      VILLAGER_CONFIG.minPerVillage,
+      VILLAGER_CONFIG.maxPerVillage
+    );
+    const need = Math.max(0, desired - existingNearby);
+    if (need <= 0) return 0;
+
+    const candidateSet = new Set();
+    const pushCandidate = (tx, ty) => {
+      if (!canVillageVillagerUseTile(world, tx, ty)) return;
+      candidateSet.add(`${tx},${ty}`);
+    };
+
+    for (let dy = -8; dy <= 8; dy += 1) {
+      for (let dx = -8; dx <= 8; dx += 1) {
+        if (Math.hypot(dx, dy) > 8.5) continue;
+        pushCandidate(centerTx + dx, centerTy + dy);
+      }
+    }
+    for (const house of (houses || [])) {
+      for (let dy = -4; dy <= 4; dy += 1) {
+        for (let dx = -4; dx <= 4; dx += 1) {
+          if (Math.hypot(dx, dy) > 4.5) continue;
+          pushCandidate(house.tx + dx, house.ty + dy);
+        }
+      }
+    }
+
+    const candidates = Array.from(candidateSet)
+      .map((key) => {
+        const [sx, sy] = key.split(",");
+        const tx = Number(sx);
+        const ty = Number(sy);
+        const structure = getStructureAt(tx, ty);
+        const dist = Math.hypot(tx - centerTx, ty - centerTy);
+        const score = (structure?.meta?.village ? 2.5 : 0) - dist * 0.07 + rng() * 0.5;
+        return { tx, ty, score };
+      })
+      .sort((a, b) => b.score - a.score);
+
+    let spawned = 0;
+    const minSeparation = CONFIG.tileSize * 0.85;
+    for (const candidate of candidates) {
+      if (spawned >= need) break;
+      const wx = (candidate.tx + 0.5) * CONFIG.tileSize;
+      const wy = (candidate.ty + 0.5) * CONFIG.tileSize;
+      const crowded = world.villagers.some((villager) => Math.hypot(villager.x - wx, villager.y - wy) < minSeparation);
+      if (crowded) continue;
+      const villager = spawnVillageVillager(world, candidate.tx, candidate.ty, centerTx, centerTy, rng);
+      if (!villager) continue;
+      spawned += 1;
+    }
+    return spawned;
+  }
+
   function carveVillagePathLine(world, x0, y0, x1, y1) {
     let x = x0;
     let y = y0;
@@ -5070,7 +5289,8 @@
       addStructure("bench", centerTx - 1, centerTy + 1, { meta: { village: true } });
     }
 
-    return { ok: true, houses: houses.length };
+    const villagers = spawnVillageVillagers(world, centerTx, centerTy, houses, rng);
+    return { ok: true, houses: houses.length, villagers };
   }
 
   function seedSurfaceVillages(world) {
@@ -5166,6 +5386,22 @@
     return added;
   }
 
+  function ensureVillageVillagers(world, rng = Math.random) {
+    if (!world || !Array.isArray(state.structures)) return 0;
+    if (!Array.isArray(world.villagers)) world.villagers = [];
+    if (!Number.isInteger(world.nextVillagerId) || world.nextVillagerId < 1) world.nextVillagerId = 1;
+    const centers = getVillageCenters(world);
+    if (centers.length === 0) return 0;
+    let spawned = 0;
+    for (const center of centers) {
+      spawned += spawnVillageVillagers(world, Math.floor(center.tx), Math.floor(center.ty), [], rng);
+    }
+    if (spawned > 0) {
+      markDirty();
+    }
+    return spawned;
+  }
+
   function startNewGame(seedStr) {
     const normalizedSeed = normalizeSeedValue(seedStr);
     const world = generateWorld(normalizedSeed);
@@ -5187,6 +5423,8 @@
     world.animals = world.animals || [];
     world.nextAnimalId = world.nextAnimalId || 1;
     world.animalSpawnTimer = 3;
+    world.villagers = world.villagers || [];
+    world.nextVillagerId = world.nextVillagerId || 1;
     seedSurfaceAnimals(world, 24);
     const spawn = findSpawnTile(world);
     state.spawnTile = spawn;
@@ -5258,6 +5496,7 @@
       applyRespawnTasks(world, saved.respawnTasks);
       applyDrops(world, saved.drops);
       applyAnimals(world, saved.animals);
+      applyVillagers(world, saved.villagers);
       world.monsters = world.monsters || [];
       world.nextMonsterId = world.nextMonsterId || 1;
       world.projectiles = [];
@@ -5265,6 +5504,8 @@
       world.animals = world.animals || [];
       world.nextAnimalId = world.nextAnimalId || 1;
       world.animalSpawnTimer = 3;
+      world.villagers = world.villagers || [];
+      world.nextVillagerId = world.nextVillagerId || 1;
       if (world.animals.length === 0) {
         seedSurfaceAnimals(world, 24);
       }
@@ -5285,6 +5526,8 @@
           cave.world.nextMonsterId = cave.world.nextMonsterId || 1;
           cave.world.projectiles = [];
           cave.world.nextProjectileId = 1;
+          cave.world.villagers = cave.world.villagers || [];
+          cave.world.nextVillagerId = cave.world.nextVillagerId || 1;
         }
       }
 
@@ -5394,12 +5637,16 @@
         addStructure("bench", benchSpot.tx, benchSpot.ty);
       }
 
-      ensureSurfaceVillagePresence(world);
+      const villagesAdded = ensureSurfaceVillagePresence(world);
+      const villagersAdded = ensureVillageVillagers(world);
 
       state.targetResource = null;
       state.activeStation = null;
       state.activeChest = null;
-      state.dirty = false;
+      state.dirty = villagesAdded || villagersAdded > 0;
+      if (state.dirty && !netIsClientReady()) {
+        saveStatus.textContent = "Saving...";
+      }
 
       setStoredActiveSeed(world.seed);
       seedDisplay.textContent = `Seed: ${world.seed}`;
@@ -7207,7 +7454,8 @@
       setPrompt(result.reason || "Village spawn failed", 1.2);
       return;
     }
-    setPrompt(`Village spawned (${result.houses} houses)`, 1.4);
+    const villagerCount = Number.isFinite(result.villagers) ? result.villagers : 0;
+    setPrompt(`Village spawned (${result.houses} houses, ${villagerCount} villagers)`, 1.4);
     markDirty();
     if (net.isHost && net.connections.size > 0) {
       broadcastNet(buildSnapshot());
@@ -7830,6 +8078,22 @@
     return true;
   }
 
+  function canMoveVillagerTo(world, tx, ty) {
+    if (!inBounds(tx, ty, world.size)) return false;
+    const idx = tileIndex(tx, ty, world.size);
+    if (world.tiles[idx] !== 1) return false;
+    if (world.beachGrid?.[idx]) return false;
+    if (world === (state.surfaceWorld || state.world)) {
+      if (getCaveAt(world, tx, ty)) return false;
+      const structure = getStructureAt(tx, ty);
+      if (structure && !structure.removed) {
+        const def = STRUCTURE_DEFS[structure.type];
+        if (def?.blocking) return false;
+      }
+    }
+    return true;
+  }
+
   function seedSurfaceAnimals(world, desired = 20) {
     if (!world) return;
     if (!world.animals) world.animals = [];
@@ -8432,6 +8696,99 @@
     }
   }
 
+  function updateVillagers(dt) {
+    if (netIsClient()) return;
+    const world = state.surfaceWorld || state.world;
+    if (!world || !Array.isArray(world.villagers) || world.villagers.length === 0) return;
+
+    for (const villager of world.villagers) {
+      if (!villager) continue;
+      if (!Number.isFinite(villager.x) || !Number.isFinite(villager.y)) continue;
+
+      if (!villager.dir || typeof villager.dir !== "object") {
+        villager.dir = { x: 0, y: 0 };
+      }
+      const homeX = Number.isFinite(villager.homeX) ? villager.homeX : villager.x;
+      const homeY = Number.isFinite(villager.homeY) ? villager.homeY : villager.y;
+      villager.homeX = homeX;
+      villager.homeY = homeY;
+      const speed = clamp(
+        Number(villager.speed) || ((VILLAGER_CONFIG.speedMin + VILLAGER_CONFIG.speedMax) * 0.5),
+        VILLAGER_CONFIG.speedMin,
+        VILLAGER_CONFIG.speedMax
+      );
+      villager.speed = speed;
+      const wanderRadius = clamp(
+        Number(villager.wanderRadius) || (VILLAGER_CONFIG.wanderRadiusTiles * CONFIG.tileSize),
+        CONFIG.tileSize * 4,
+        CONFIG.tileSize * 12
+      );
+      villager.wanderRadius = wanderRadius;
+
+      const toHomeX = homeX - villager.x;
+      const toHomeY = homeY - villager.y;
+      const homeDist = Math.hypot(toHomeX, toHomeY);
+      let dirX = Number(villager.dir.x) || 0;
+      let dirY = Number(villager.dir.y) || 0;
+
+      villager.wanderTimer = Number.isFinite(villager.wanderTimer) ? villager.wanderTimer - dt : 0;
+      if (homeDist > wanderRadius * 1.08) {
+        const len = homeDist || 1;
+        dirX = (toHomeX / len) + (Math.random() - 0.5) * 0.24;
+        dirY = (toHomeY / len) + (Math.random() - 0.5) * 0.24;
+        villager.wanderTimer = VILLAGER_CONFIG.wanderResetMin;
+      } else if (villager.wanderTimer <= 0) {
+        const angle = Math.random() * Math.PI * 2;
+        dirX = Math.cos(angle);
+        dirY = Math.sin(angle);
+        villager.wanderTimer = VILLAGER_CONFIG.wanderResetMin
+          + Math.random() * (VILLAGER_CONFIG.wanderResetMax - VILLAGER_CONFIG.wanderResetMin);
+      }
+
+      const dirLen = Math.hypot(dirX, dirY) || 1;
+      dirX /= dirLen;
+      dirY /= dirLen;
+      villager.dir.x = dirX;
+      villager.dir.y = dirY;
+
+      const step = speed * dt * (homeDist > wanderRadius ? 1.08 : 0.78);
+      const nextX = villager.x + dirX * step;
+      const nextY = villager.y + dirY * step;
+      const nextTx = Math.floor(nextX / CONFIG.tileSize);
+      const nextTy = Math.floor(nextY / CONFIG.tileSize);
+      const moveXOk = canMoveVillagerTo(world, nextTx, Math.floor(villager.y / CONFIG.tileSize));
+      const moveYOk = canMoveVillagerTo(world, Math.floor(villager.x / CONFIG.tileSize), nextTy);
+
+      if (moveXOk) villager.x = nextX;
+      if (moveYOk) villager.y = nextY;
+
+      if (!moveXOk && !moveYOk) {
+        villager.wanderTimer = 0;
+        villager.dir.x = -dirY;
+        villager.dir.y = dirX;
+      }
+
+      const postHomeDist = Math.hypot(villager.x - homeX, villager.y - homeY);
+      if (postHomeDist > wanderRadius * 1.35) {
+        const pullX = homeX - villager.x;
+        const pullY = homeY - villager.y;
+        const pullLen = Math.hypot(pullX, pullY) || 1;
+        const pullStep = Math.min(step * 1.4, postHomeDist - wanderRadius);
+        const pullTargetX = villager.x + (pullX / pullLen) * pullStep;
+        const pullTargetY = villager.y + (pullY / pullLen) * pullStep;
+        const pullTx = Math.floor(pullTargetX / CONFIG.tileSize);
+        const pullTy = Math.floor(pullTargetY / CONFIG.tileSize);
+        if (canMoveVillagerTo(world, pullTx, pullTy)) {
+          villager.x = pullTargetX;
+          villager.y = pullTargetY;
+        }
+      }
+
+      villager.renderX = villager.x;
+      villager.renderY = villager.y;
+    }
+  }
+
   function getPlacementItem() {
     if (state.gameWon) return null;
     if (state.inCave || inventoryOpen || state.activeStation || state.activeChest) return null;
@@ -9009,6 +9366,7 @@
     updateResources(dt);
     updateMonsters(dt);
     updateAnimals(dt);
+    updateVillagers(dt);
     updatePlayerEffects(dt);
     updateDrops();
     updateInteraction();
@@ -9373,6 +9731,47 @@
       ctx.arc(screen.x, screen.y, 15, 0, Math.PI * 2);
       ctx.stroke();
     }
+  }
+
+  function drawVillager(villager, camera) {
+    const drawX = villager.renderX ?? villager.x;
+    const drawY = villager.renderY ?? villager.y;
+    const screen = worldToScreen(drawX, drawY, camera);
+    if (
+      screen.x < -40
+      || screen.y < -40
+      || screen.x > viewWidth + 40
+      || screen.y > viewHeight + 40
+    ) {
+      return;
+    }
+
+    ctx.fillStyle = "rgba(0,0,0,0.2)";
+    ctx.beginPath();
+    ctx.ellipse(screen.x, screen.y + 10, 8, 3.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    const bodyColor = villager.color || VILLAGER_COLORS[(villager.id || 0) % VILLAGER_COLORS.length];
+    const dirX = Number(villager?.dir?.x) || 0;
+    ctx.fillStyle = "#f0c18c";
+    ctx.beginPath();
+    ctx.arc(screen.x, screen.y - 3, 5.2, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = bodyColor;
+    ctx.fillRect(screen.x - 6, screen.y + 1, 12, 12);
+    ctx.fillStyle = tintColor(bodyColor, -0.2);
+    ctx.fillRect(screen.x - 6, screen.y + 11, 5, 6);
+    ctx.fillRect(screen.x + 1, screen.y + 11, 5, 6);
+    ctx.fillStyle = tintColor(bodyColor, 0.28);
+    ctx.fillRect(screen.x - 4, screen.y + 3, 8, 3);
+
+    const eyeShift = clamp(dirX * 0.9, -0.9, 0.9);
+    ctx.fillStyle = "#2e241c";
+    ctx.beginPath();
+    ctx.arc(screen.x - 1.6 + eyeShift, screen.y - 3, 0.8, 0, Math.PI * 2);
+    ctx.arc(screen.x + 1.6 + eyeShift, screen.y - 3, 0.8, 0, Math.PI * 2);
+    ctx.fill();
   }
 
   function drawStructure(structure, camera) {
@@ -10406,6 +10805,9 @@
     if (!state.inCave) {
       for (const animal of state.world.animals || []) {
         drawAnimal(animal, camera);
+      }
+      for (const villager of state.world.villagers || []) {
+        drawVillager(villager, camera);
       }
     }
 
