@@ -19,6 +19,8 @@
   const stationTitle = document.getElementById("stationTitle");
   const stationOptions = document.getElementById("stationOptions");
   const chestPanel = document.getElementById("chestPanel");
+  const chestPanelTitle = document.getElementById("chestPanelTitle");
+  const chestPanelHint = document.getElementById("chestPanelHint");
   const chestSlotsEl = document.getElementById("chestSlots");
   const destroyChestBtn = document.getElementById("destroyChest");
   const endScreen = document.getElementById("endScreen");
@@ -53,7 +55,10 @@
   const debugUnlockStatus = document.getElementById("debugUnlockStatus");
   const debugToggle = document.getElementById("debugToggle");
   const debugPanel = document.getElementById("debugPanel");
+  const debugSpeedInput = document.getElementById("debugSpeed");
+  const debugSpeedValue = document.getElementById("debugSpeedValue");
   const giveBeaconBtn = document.getElementById("giveBeaconBtn");
+  const giveRobotBtn = document.getElementById("giveRobotBtn");
   const spawnCaveBtn = document.getElementById("spawnCaveBtn");
   const spawnVillageBtn = document.getElementById("spawnVillageBtn");
   const forceDayBtn = document.getElementById("forceDayBtn");
@@ -240,6 +245,7 @@
     hide: { name: "Hide", color: "#9f7d57" },
     ...BIOME_STONE_ITEMS,
     bridge: { name: "Bridge", color: "#c7b37a", placeable: true, placeType: "bridge" },
+    village_path: { name: "Path Block", color: "#b59b6a", placeable: true, placeType: "village_path" },
     brick: { name: "Brick", color: "#b46a4d" },
     dock: { name: "Dock", color: "#c3a76b", placeable: true, placeType: "dock" },
     small_house: { name: "Small House", color: "#a57a4a", placeable: true, placeType: "small_house" },
@@ -258,6 +264,7 @@
     sawmill: { name: "Sawmill", color: "#7d6a46", placeable: true, placeType: "sawmill" },
     kiln: { name: "Kiln", color: "#b37d5c", placeable: true, placeType: "kiln" },
     chest: { name: "Chest", color: "#a8794a", placeable: true, placeType: "chest" },
+    robot: { name: "Robot", color: "#7aa1c6", placeable: true, placeType: "robot" },
   };
 
   const ITEM_VISUALS = {
@@ -279,6 +286,7 @@
     cooked_meat: { symbol: "FOOD", bg: "#9e5d3a", border: "#e0a77f", fg: "#fff0e2" },
     hide: { symbol: "HID", bg: "#7d603f", border: "#bc9a73", fg: "#f9e5c9" },
     bridge: { symbol: "BRG", bg: "#8a7548", border: "#d2bb82", fg: "#fff3d8" },
+    village_path: { symbol: "PTH", bg: "#726243", border: "#c6ab72", fg: "#fff3d7" },
     dock: { symbol: "DCK", bg: "#7c6a43", border: "#c3aa72", fg: "#fff2d2" },
     small_house: { symbol: "HS-S", bg: "#7a4f2f", border: "#bf8e63", fg: "#ffe6cf" },
     medium_house: { symbol: "HS-M", bg: "#694327", border: "#b17f56", fg: "#ffe1c4" },
@@ -296,6 +304,7 @@
     sawmill: { symbol: "SAW", bg: "#5d5238", border: "#ad9a68", fg: "#f6efd7" },
     kiln: { symbol: "KLN", bg: "#7a4f39", border: "#c48c6f", fg: "#ffe9de" },
     chest: { symbol: "CHS", bg: "#7e5833", border: "#c49a6a", fg: "#ffebd2" },
+    robot: { symbol: "BOT", bg: "#34506a", border: "#7ab7e1", fg: "#eaf6ff" },
     temperate_stone: { symbol: "T-ST", bg: "#4f7f43", border: "#8fc17f", fg: "#ebffe8" },
     jungle_stone: { symbol: "J-ST", bg: "#2f7f56", border: "#62c89a", fg: "#e7fff3" },
     snow_stone: { symbol: "S-ST", bg: "#587a99", border: "#a9d4f3", fg: "#ecf8ff" },
@@ -347,7 +356,7 @@
     { tier: 3, name: "Iron Pickaxe", damage: 2 },
     { tier: 4, name: "Gold Pickaxe", damage: 3 },
     { tier: 5, name: "Emerald Pickaxe", damage: 3 },
-    { tier: 6, name: "Diamond Pickaxe", damage: 3 },
+    { tier: 6, name: "Diamond Pickaxe", damage: 4 },
   ];
 
   const SWORD_TIER_DATA = [
@@ -356,7 +365,7 @@
     { tier: 2, name: "Stone Sword", damage: 1 },
     { tier: 3, name: "Iron Sword", damage: 2 },
     { tier: 4, name: "Gold Sword", damage: 3 },
-    { tier: 5, name: "Diamond Sword", damage: 3 },
+    { tier: 5, name: "Diamond Sword", damage: 5 },
   ];
 
   const PLAYER_UNLOCK_DEFAULTS = Object.freeze({
@@ -395,6 +404,7 @@
     sawmill: { name: "Sawmill", color: "#7d6a46", blocking: true, walkable: false, station: true },
     kiln: { name: "Kiln", color: "#b37d5c", blocking: true, walkable: false, station: true },
     chest: { name: "Chest", color: "#a8794a", blocking: true, walkable: false, storage: true },
+    robot: { name: "Robot", color: "#7aa1c6", blocking: false, walkable: true, station: true, storage: true },
   };
 
   const BUILD_RECIPES = [
@@ -403,6 +413,21 @@
       name: "Bridge",
       description: "Cross water to reach other islands.",
       cost: { wood: 4 },
+    },
+    {
+      id: "bridge_bundle",
+      icon: "bridge",
+      name: "Bridge Bundle",
+      description: "Craft multiple bridges at once for rapid expansion.",
+      cost: { wood: 10, plank: 2 },
+      output: { bridge: 3 },
+    },
+    {
+      id: "village_path",
+      name: "Path Block",
+      description: "Build walkable roads to make player-made villages.",
+      cost: { wood: 2, stone: 2 },
+      outputQty: 6,
     },
     {
       id: "dock",
@@ -459,6 +484,14 @@
       cost: { raw_meat: 1, hide: 1, wood: 1 },
     },
     {
+      id: "paper_bundle",
+      icon: "paper",
+      name: "Hand-Pressed Paper",
+      description: "Craft map paper without a sawmill (resource-inefficient).",
+      cost: { grass: 6, wood: 1 },
+      output: { paper: 1 },
+    },
+    {
       id: "chest",
       name: "Chest",
       description: "Extra storage for resources and crafted gear.",
@@ -486,18 +519,18 @@
       id: "village_map",
       name: "Village Map",
       description: "Shows a tracked village zone and all active players.",
-      cost: { paper: 2, plank: 2, grass: 2 },
+      cost: { paper: 8, plank: 12, grass: 10, hide: 5, stone: 14 },
     },
     {
       id: "cave_map",
       name: "Cave Map",
       description: "Shows a tracked cave zone and all active players.",
-      cost: { paper: 2, stone: 3, plank: 1 },
+      cost: { paper: 10, plank: 14, stone: 24, hide: 7, torch: 4, medicine: 2 },
     },
     {
       id: "beacon",
       name: "Rescue Beacon",
-      description: "Final objective that triggers rescue sequence.",
+      description: "Ends the game for this seed. Starting this same seed again resets its progress.",
       cost: {
         beacon_core: 1,
         plank: 12,
@@ -506,6 +539,21 @@
         brick: 6,
         stone: 10,
         ...BEACON_BIOME_COST,
+      },
+    },
+    {
+      id: "robot",
+      name: "Robot",
+      description: "Late-game automation helper. Mine Trees, Stone, or Grass, then collect from robot storage.",
+      cost: {
+        beacon: 1,
+        diamond: 14,
+        emerald: 18,
+        gold_ingot: 16,
+        iron_ingot: 26,
+        plank: 42,
+        brick: 22,
+        medicine: 10,
       },
     },
   ];
@@ -786,12 +834,34 @@
     sfxVolume: 0.62,
     debugUnlocked: false,
     debugInfiniteResources: false,
+    debugSpeedMultiplier: 1,
   });
   const MAP_ITEM_SET = new Set(["village_map", "cave_map"]);
   const MAP_PANEL = Object.freeze({
     minSize: 164,
     maxSize: 238,
     screenScale: 0.23,
+  });
+  const ROBOT_STORAGE_SIZE = CHEST_SIZE;
+  const ROBOT_MODE = Object.freeze({
+    trees: "trees",
+    stone: "stone",
+    grass: "grass",
+  });
+  const ROBOT_CONFIG = Object.freeze({
+    speed: 78,
+    mineRange: 16,
+    mineCooldown: 0.62,
+    mineDamage: 1,
+    interactionPause: 0.9,
+    retargetInterval: 0.8,
+    maxPathNodes: 14000,
+    retargetPathChecks: 6,
+    pathNodeSnapDistance: 5,
+    stuckMoveEpsilon: 0.1,
+    stuckRetargetTime: 1.1,
+    sandStuckRetargetTime: 0.7,
+    bridgePathChecks: 28,
   });
 
   let dpr = window.devicePixelRatio || 1;
@@ -874,6 +944,7 @@
     debugUnlocked: SETTINGS_DEFAULTS.debugUnlocked,
     debugMoses: false,
     debugInfiniteResources: SETTINGS_DEFAULTS.debugInfiniteResources,
+    debugSpeedMultiplier: SETTINGS_DEFAULTS.debugSpeedMultiplier,
   };
 
   let wasNearBench = false;
@@ -893,6 +964,7 @@
     pendingHousePlaces: new Map(),
     snapshotTimer: NET_CONFIG.snapshotInterval,
     playerTimer: NET_CONFIG.playerSendInterval,
+    robotPausePingTimer: 0.2,
     localName: "",
     localColor: "",
   };
@@ -985,12 +1057,19 @@
     return clamp(num, 0, 1);
   }
 
+  function clampDebugSpeedMultiplier(value) {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return SETTINGS_DEFAULTS.debugSpeedMultiplier;
+    return clamp(num, 1, 4);
+  }
+
   function saveUserSettings() {
     const payload = {
       musicVolume: clampVolume(state.musicVolume, SETTINGS_DEFAULTS.musicVolume),
       sfxVolume: clampVolume(state.sfxVolume, SETTINGS_DEFAULTS.sfxVolume),
       debugUnlocked: !!state.debugUnlocked,
       debugInfiniteResources: !!state.debugInfiniteResources,
+      debugSpeedMultiplier: clampDebugSpeedMultiplier(state.debugSpeedMultiplier),
     };
     try {
       window.localStorage.setItem(SETTINGS_KEY, JSON.stringify(payload));
@@ -1012,12 +1091,15 @@
       state.musicVolume = clampVolume(data.musicVolume, SETTINGS_DEFAULTS.musicVolume);
       state.sfxVolume = clampVolume(data.sfxVolume, SETTINGS_DEFAULTS.sfxVolume);
       state.debugUnlocked = !!data.debugUnlocked;
-      state.debugInfiniteResources = !!data.debugInfiniteResources;
+      // Always start sessions with infinite resources off; users can toggle it per run.
+      state.debugInfiniteResources = false;
+      state.debugSpeedMultiplier = clampDebugSpeedMultiplier(data.debugSpeedMultiplier);
     } catch (err) {
       state.musicVolume = SETTINGS_DEFAULTS.musicVolume;
       state.sfxVolume = SETTINGS_DEFAULTS.sfxVolume;
       state.debugUnlocked = SETTINGS_DEFAULTS.debugUnlocked;
       state.debugInfiniteResources = SETTINGS_DEFAULTS.debugInfiniteResources;
+      state.debugSpeedMultiplier = SETTINGS_DEFAULTS.debugSpeedMultiplier;
     }
   }
 
@@ -1034,6 +1116,29 @@
     if (sfxVolumeValue) {
       sfxVolumeValue.textContent = `${Math.round(clampVolume(state.sfxVolume, SETTINGS_DEFAULTS.sfxVolume) * 100)}%`;
     }
+  }
+
+  function getDebugSpeedMultiplier() {
+    if (!state.debugUnlocked) return 1;
+    return clampDebugSpeedMultiplier(state.debugSpeedMultiplier);
+  }
+
+  function updateDebugSpeedUI() {
+    const mult = clampDebugSpeedMultiplier(state.debugSpeedMultiplier);
+    if (debugSpeedInput) {
+      debugSpeedInput.value = String(Math.round(mult * 100));
+      debugSpeedInput.disabled = !state.debugUnlocked;
+    }
+    if (debugSpeedValue) {
+      debugSpeedValue.textContent = `${mult.toFixed(1)}x`;
+    }
+  }
+
+  function setDebugSpeedFromPercent(percent, persist = true) {
+    const mult = clampDebugSpeedMultiplier((Number(percent) || 100) / 100);
+    state.debugSpeedMultiplier = mult;
+    updateDebugSpeedUI();
+    if (persist) saveUserSettings();
   }
 
   function applyAudioLevels() {
@@ -1083,6 +1188,7 @@
     if (!state.debugUnlocked) {
       state.debugMoses = false;
       state.debugInfiniteResources = false;
+      state.debugSpeedMultiplier = 1;
       if (buildMenu && !buildMenu.classList.contains("hidden")) {
         renderBuildMenu();
       }
@@ -1092,6 +1198,7 @@
     }
     updateMosesButton();
     updateInfiniteResourcesButton();
+    updateDebugSpeedUI();
     if (persist) saveUserSettings();
   }
 
@@ -1856,6 +1963,9 @@
       case "chestUpdate":
         if (net.isHost) handleChestUpdate(conn, message);
         break;
+      case "robotCommand":
+        if (net.isHost) handleRobotCommand(conn, message);
+        break;
       case "houseChestUpdate":
         if (net.isHost) handleHouseChestUpdate(message);
         break;
@@ -1911,6 +2021,7 @@
         houseY: state.player.inHut ? state.housePlayer?.y ?? null : null,
         inCave: state.inCave,
         caveId: state.activeCave?.id ?? null,
+        torchTimer: state.torchTimer,
         unlocks: normalizeUnlocks(state.player.unlocks),
       });
     }
@@ -1932,6 +2043,7 @@
         houseY: player.houseY ?? null,
         inCave: player.inCave,
         caveId: player.caveId,
+        torchTimer: player.torchTimer ?? 0,
         unlocks: normalizeUnlocks(player.unlocks),
       });
     }
@@ -2006,7 +2118,26 @@
   }
 
   function serializeStructureMeta(structure) {
-    if (!structure?.meta) return null;
+    if (!structure) return null;
+    if (structure.type === "robot") {
+      const robot = ensureRobotMeta(structure);
+      if (!robot) return null;
+      return {
+        robot: {
+          homeTx: robot.homeTx,
+          homeTy: robot.homeTy,
+          x: robot.x,
+          y: robot.y,
+          mode: robot.mode,
+          state: robot.state,
+          targetResourceId: Number.isInteger(robot.targetResourceId) ? robot.targetResourceId : null,
+          mineTimer: robot.mineTimer,
+          retargetTimer: robot.retargetTimer,
+          pauseTimer: robot.pauseTimer,
+        },
+      };
+    }
+    if (!structure.meta) return null;
     const meta = structure.meta;
     if (meta.house) {
       return {
@@ -2127,7 +2258,7 @@
       if (!entry) continue;
       const normalized = { ...entry, type: entry.type === "hut" ? "small_house" : entry.type };
       if (!isStructureValidOnLoad(world, normalized, bridgeSet)) continue;
-      clearResourceForStructure(world, normalized.tx, normalized.ty);
+      clearResourcesForFootprint(world, normalized.type, normalized.tx, normalized.ty);
       const structure = addStructure(normalized.type, normalized.tx, normalized.ty, {
         storage: entry.storage
           ? entry.storage.map((slot) => ({ id: slot.id, qty: slot.qty }))
@@ -2141,7 +2272,7 @@
 
     if (activeChestPos) {
       const chest = getStructureAt(activeChestPos.tx, activeChestPos.ty);
-      if (chest && chest.type === "chest") {
+      if (chest && (chest.type === "chest" || chest.type === "robot")) {
         state.activeChest = chest;
       } else {
         closeChest();
@@ -2179,6 +2310,9 @@
         if (typeof entry.hp === "number") state.player.hp = entry.hp;
         if (typeof entry.maxHp === "number") state.player.maxHp = entry.maxHp;
         if (typeof entry.toolTier === "number") state.player.toolTier = entry.toolTier;
+        if (typeof entry.torchTimer === "number") {
+          state.torchTimer = Math.max(0, entry.torchTimer);
+        }
         state.player.unlocks = normalizeUnlocks(entry.unlocks ?? state.player.unlocks);
         state.player.checkpoint = normalizeCheckpoint(entry.checkpoint) ?? state.player.checkpoint;
         updateHealthUI();
@@ -2203,6 +2337,9 @@
         houseY: typeof entry.houseY === "number" ? entry.houseY : null,
         inCave: !!entry.inCave,
         caveId: entry.caveId ?? null,
+        torchTimer: typeof entry.torchTimer === "number"
+          ? Math.max(0, entry.torchTimer)
+          : Math.max(0, prev?.torchTimer ?? 0),
         unlocks: normalizeUnlocks(entry.unlocks ?? prev?.unlocks),
         renderX: prev?.renderX ?? entry.x ?? 0,
         renderY: prev?.renderY ?? entry.y ?? 0,
@@ -2346,6 +2483,7 @@
       houseY: null,
       inCave: false,
       caveId: null,
+      torchTimer: 0,
     };
     net.players.set(conn.peer, player);
     const snapshot = buildSnapshot();
@@ -2374,6 +2512,7 @@
       houseY: player.houseY,
       inCave: player.inCave,
       caveId: player.caveId,
+      torchTimer: player.torchTimer ?? 0,
     }, conn.peer);
   }
 
@@ -2396,6 +2535,9 @@
       state.player.toolTier = message.playerState.toolTier ?? state.player.toolTier;
       state.player.unlocks = normalizeUnlocks(message.playerState.unlocks ?? state.player.unlocks);
       state.player.checkpoint = normalizeCheckpoint(message.playerState.checkpoint) ?? state.player.checkpoint;
+      if (typeof message.playerState.torchTimer === "number") {
+        state.torchTimer = Math.max(0, message.playerState.torchTimer);
+      }
       updateHealthUI();
       updateToolDisplay();
     }
@@ -2422,6 +2564,9 @@
     player.houseY = typeof message.houseY === "number" ? message.houseY : null;
     player.inCave = !!message.inCave;
     player.caveId = message.caveId ?? null;
+    if (typeof message.torchTimer === "number") {
+      player.torchTimer = Math.max(0, message.torchTimer);
+    }
     if (!player.inCave && !player.inHut && state.surfaceWorld && !normalizeCheckpoint(player.checkpoint)) {
       setPlayerCheckpoint(player, state.surfaceWorld, player.x, player.y, true);
     }
@@ -2446,6 +2591,7 @@
       houseY: player.houseY,
       inCave: player.inCave,
       caveId: player.caveId,
+      torchTimer: player.torchTimer ?? 0,
     }, conn.peer);
   }
 
@@ -2458,6 +2604,9 @@
       if (message.unlocks) {
         state.player.unlocks = normalizeUnlocks(message.unlocks);
         updateToolDisplay();
+      }
+      if (typeof message.torchTimer === "number") {
+        state.torchTimer = Math.max(0, message.torchTimer);
       }
       if (message.checkpoint) {
         state.player.checkpoint = normalizeCheckpoint(message.checkpoint) ?? state.player.checkpoint;
@@ -2483,6 +2632,9 @@
       houseY: typeof message.houseY === "number" ? message.houseY : current.houseY ?? null,
       inCave: !!message.inCave,
       caveId: message.caveId ?? null,
+      torchTimer: typeof message.torchTimer === "number"
+        ? Math.max(0, message.torchTimer)
+        : Math.max(0, current.torchTimer ?? 0),
       renderX: current.renderX ?? (typeof message.x === "number" ? message.x : current.x ?? 0),
       renderY: current.renderY ?? (typeof message.y === "number" ? message.y : current.y ?? 0),
     });
@@ -2494,15 +2646,19 @@
     const { tx, ty } = message;
     const result = canPlaceItemAt(world, false, message.itemId, tx, ty);
     if (result.ok) {
-      if (result.clearResource) {
-        clearResourceForStructure(world, tx, ty);
+      if (result.clearResourceTiles?.length) {
+        clearResourceTiles(world, result.clearResourceTiles);
       }
       const itemDef = ITEMS[message.itemId];
       if (result.upgradeHouse && result.targetHouse) {
         upgradeHouseStructure(result.targetHouse, itemDef.placeType);
       } else {
         addStructure(itemDef.placeType, tx, ty, {
-          storage: itemDef.placeType === "chest" ? createEmptyInventory(CHEST_SIZE) : null,
+          storage: itemDef.placeType === "chest"
+            ? createEmptyInventory(CHEST_SIZE)
+            : itemDef.placeType === "robot"
+              ? createEmptyInventory(ROBOT_STORAGE_SIZE)
+              : null,
         });
       }
       if (itemDef.placeType === "beacon") {
@@ -2577,7 +2733,7 @@
       ? { ...(net.players.get(conn.peer) || {}), unlocks: normalizeUnlocks(message.unlocks ?? net.players.get(conn.peer)?.unlocks) }
       : state.player;
     if (!canHarvestResource(resource, sourcePlayer).ok) return;
-    const damage = clamp(getHarvestDamage(sourcePlayer), 1, 4);
+    const damage = clamp(getAppliedHarvestDamage(sourcePlayer, resource), 1, 4);
     const playAudio = shouldPlayWorldSfx(world, resource.x, resource.y);
     applyHarvestToResource(world, resource, damage, false, playAudio);
   }
@@ -2590,10 +2746,10 @@
     const sourcePlayer = conn
       ? { ...(net.players.get(conn.peer) || {}), unlocks: normalizeUnlocks(message.unlocks ?? net.players.get(conn.peer)?.unlocks) }
       : state.player;
-    const damage = clamp(Number(message.damage) || 1, 1, 10);
     const target = findNearestMonsterAt(world, { x: message.x, y: message.y }, MONSTER.attackRange + 8);
     if (target) {
       if (!canDamageMonsters(sourcePlayer)) return;
+      const damage = clamp(getAppliedAttackDamage(sourcePlayer, target), 1, 12);
       target.hp -= damage;
       target.hitTimer = 0.2;
       if (shouldPlayWorldSfx(world, target.x, target.y)) {
@@ -2607,6 +2763,7 @@
     if (world !== surface) return;
     const animal = findNearestAnimalAt(world, { x: message.x, y: message.y }, MONSTER.attackRange + 8);
     if (!animal) return;
+    const damage = clamp(getAppliedAttackDamage(sourcePlayer, animal), 1, 12);
     animal.hp -= damage;
     animal.hitTimer = 0.2;
     animal.fleeTimer = 2.4;
@@ -2627,11 +2784,50 @@
     void conn;
     if (typeof message.tx !== "number" || typeof message.ty !== "number") return;
     const structure = getStructureAt(message.tx, message.ty);
-    if (!structure || structure.type !== "chest") return;
+    if (!structure || (structure.type !== "chest" && structure.type !== "robot")) return;
+    if (structure.type === "robot") {
+      ensureRobotMeta(structure);
+    }
     structure.storage = Array.isArray(message.storage)
       ? message.storage.map((slot) => ({ id: slot.id, qty: slot.qty }))
-      : createEmptyInventory(CHEST_SIZE);
+      : createEmptyInventory(structure.type === "robot" ? ROBOT_STORAGE_SIZE : CHEST_SIZE);
     markDirty();
+  }
+
+  function canRemotePlayerControlRobot(player, structure) {
+    if (!player || !structure || structure.type !== "robot") return false;
+    if (player.inCave || player.inHut) return false;
+    const robotPos = getStructureCenterWorld(structure);
+    const dist = Math.hypot((player.x ?? 0) - robotPos.x, (player.y ?? 0) - robotPos.y);
+    return dist <= CONFIG.interactRange * 1.9;
+  }
+
+  function handleRobotCommand(conn, message) {
+    if (!conn || !message) return;
+    if (typeof message.tx !== "number" || typeof message.ty !== "number") return;
+    const structure = getStructureAt(message.tx, message.ty);
+    if (!structure || structure.type !== "robot") return;
+    const robot = ensureRobotMeta(structure);
+    if (!robot) return;
+    const player = net.players.get(conn.peer);
+    if (!canRemotePlayerControlRobot(player, structure)) return;
+
+    if (message.action === "setMode") {
+      const nextMode = normalizeRobotMode(message.mode);
+      if (!isRobotMode(nextMode)) return;
+      robot.mode = nextMode;
+      robot.targetResourceId = null;
+      robot.retargetTimer = 0;
+      robot.state = "idle";
+      clearRobotNavigation(robot);
+      setRobotInteractionPause(structure, ROBOT_CONFIG.interactionPause);
+      markDirty();
+      return;
+    }
+
+    if (message.action === "ping") {
+      setRobotInteractionPause(structure, ROBOT_CONFIG.interactionPause);
+    }
   }
 
   function handleHouseChestUpdate(message) {
@@ -2711,6 +2907,15 @@
       ? getCaveWorld(message.caveId)
       : state.surfaceWorld;
     if (!world || !Array.isArray(world.drops)) return;
+    const requestedId = Number.isInteger(message.dropId) ? message.dropId : null;
+    if (requestedId != null) {
+      const byIdIndex = world.drops.findIndex((drop) => drop.id === requestedId);
+      if (byIdIndex >= 0) {
+        world.drops.splice(byIdIndex, 1);
+        markDirty();
+      }
+      return;
+    }
     let bestIndex = -1;
     let bestDist = Infinity;
     for (let i = 0; i < world.drops.length; i += 1) {
@@ -2722,7 +2927,7 @@
         bestIndex = i;
       }
     }
-    if (bestIndex >= 0) {
+    if (bestIndex >= 0 && bestDist <= CONFIG.tileSize * 2) {
       world.drops.splice(bestIndex, 1);
       markDirty();
     }
@@ -2740,6 +2945,11 @@
     const x = Number.isFinite(message.x) ? message.x : null;
     const y = Number.isFinite(message.y) ? message.y : null;
     if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+    const player = net.players.get(conn.peer);
+    if (player) {
+      const distFromPlayer = Math.hypot(x - (player.x ?? 0), y - (player.y ?? 0));
+      if (distFromPlayer > CONFIG.tileSize * 6) return;
+    }
     spawnDrop(itemId, qty, x, y, world);
   }
 
@@ -2845,6 +3055,7 @@
       houseY: state.player.inHut ? state.housePlayer?.y ?? null : null,
       inCave: state.inCave,
       caveId: state.activeCave?.id ?? null,
+      torchTimer: state.torchTimer,
     };
     if (net.isHost) {
       broadcastNet(payload);
@@ -2853,8 +3064,29 @@
     }
   }
 
+  function maintainRobotInteractionPause(dt) {
+    const robotStructure = state.activeStation?.type === "robot"
+      ? state.activeStation
+      : (state.activeChest?.type === "robot" ? state.activeChest : null);
+    if (!robotStructure || robotStructure.removed) {
+      net.robotPausePingTimer = 0.2;
+      return;
+    }
+    if (!netIsClientReady()) {
+      // Keep the robot paused for the entire local interaction window (solo + host).
+      setRobotInteractionPause(robotStructure, ROBOT_CONFIG.interactionPause);
+      return;
+    }
+    net.robotPausePingTimer -= dt;
+    if (net.robotPausePingTimer <= 0) {
+      sendRobotCommand(robotStructure, "ping");
+      net.robotPausePingTimer = 0.25;
+    }
+  }
+
   function netTick(dt) {
     if (!net.enabled) return;
+    if (!netIsClientReady()) net.robotPausePingTimer = 0.2;
     net.playerTimer -= dt;
     if (net.playerTimer <= 0) {
       sendPlayerUpdate();
@@ -2872,6 +3104,9 @@
 
   function updateRemoteRender(dt) {
     for (const player of net.players.values()) {
+      if (player.torchTimer > 0) {
+        player.torchTimer = Math.max(0, player.torchTimer - dt);
+      }
       if (player.renderX == null || player.renderY == null) {
         player.renderX = player.x;
         player.renderY = player.y;
@@ -3698,8 +3933,13 @@
 
     const caves = [];
     const maxCaves = Math.max(1, Math.floor(islandCount * 0.08));
+    const starterCaveChance = 0.03;
     const caveCandidateIslands = islands
-      .filter((island) => !island.starter && island.radius >= 8)
+      .filter((island) => {
+        if (island.radius < 8) return false;
+        if (!island.starter) return true;
+        return rng() < starterCaveChance;
+      })
       .sort((a, b) => b.radius - a.radius);
 
     function hasCaveAt(tx, ty) {
@@ -4836,11 +5076,23 @@
     }
 
     if (!baseLand) return false;
+    const footprint = getStructureFootprint(entry.type);
+    for (let oy = 0; oy < footprint.h; oy += 1) {
+      for (let ox = 0; ox < footprint.w; ox += 1) {
+        const tx = entry.tx + ox;
+        const ty = entry.ty + oy;
+        if (!inBounds(tx, ty, world.size)) return false;
+        const tileIdx = tileIndex(tx, ty, world.size);
+        if (world.tiles[tileIdx] !== 1) return false;
+        if (getCaveAt(world, tx, ty)) return false;
+        const occupied = getStructureAt(tx, ty);
+        if (occupied && !occupied.removed) return false;
+      }
+    }
     if (entry.type === "beacon") {
       const idxBeach = tileIndex(entry.tx, entry.ty, world.size);
       if (!world.beachGrid?.[idxBeach]) return false;
     }
-    if (getCaveAt(world, entry.tx, entry.ty)) return false;
     return true;
   }
 
@@ -4851,6 +5103,61 @@
       const idx = tileIndex(tx, ty, world.size);
       world.resourceGrid[idx] = -1;
     }
+  }
+
+  function clearResourcesForFootprint(world, type, tx, ty) {
+    forEachStructureFootprintTile(type, tx, ty, (fx, fy) => {
+      clearResourceForStructure(world, fx, fy);
+    });
+  }
+
+  function clearResourceTiles(world, clearTiles) {
+    if (!Array.isArray(clearTiles) || clearTiles.length === 0) return;
+    for (const tile of clearTiles) {
+      clearResourceForStructure(world, tile.tx, tile.ty);
+    }
+  }
+
+  function canUseStructureFootprint(world, type, tx, ty, options = {}) {
+    const {
+      ignoreStructureId = null,
+      allowResourceClear = false,
+    } = options;
+    if (!world) return { ok: false, reason: "No world", clearResourceTiles: [] };
+    const clearResourceTiles = [];
+    let failReason = null;
+    forEachStructureFootprintTile(type, tx, ty, (fx, fy) => {
+      if (failReason) return;
+      if (!inBounds(fx, fy, world.size)) {
+        failReason = "Out of bounds";
+        return;
+      }
+      const idx = tileIndex(fx, fy, world.size);
+      if (world.tiles[idx] !== 1) {
+        failReason = "Needs land";
+        return;
+      }
+      if (world === state.surfaceWorld && getCaveAt(world, fx, fy)) {
+        failReason = "Cave";
+        return;
+      }
+      const occupied = getStructureAt(fx, fy);
+      if (occupied && !occupied.removed && occupied.id !== ignoreStructureId) {
+        failReason = "Occupied";
+        return;
+      }
+      const res = getResourceAt(world, fx, fy);
+      if (!res) return;
+      if (allowResourceClear || (res.stage && res.stage !== "alive")) {
+        clearResourceTiles.push({ tx: fx, ty: fy });
+      } else {
+        failReason = "Blocked";
+      }
+    });
+    if (failReason) {
+      return { ok: false, reason: failReason, clearResourceTiles: [] };
+    }
+    return { ok: true, reason: "", clearResourceTiles };
   }
 
   function setActiveSlot(index) {
@@ -4889,6 +5196,33 @@
 
   function isHouseType(type) {
     return type === "hut" || type === "small_house" || type === "medium_house" || type === "large_house";
+  }
+
+  function getStructureFootprint(type) {
+    if (type === "medium_house") return { w: 2, h: 1 };
+    if (type === "large_house") return { w: 2, h: 2 };
+    return { w: 1, h: 1 };
+  }
+
+  function forEachStructureFootprintTile(type, tx, ty, callback) {
+    const footprint = getStructureFootprint(type);
+    for (let oy = 0; oy < footprint.h; oy += 1) {
+      for (let ox = 0; ox < footprint.w; ox += 1) {
+        callback(tx + ox, ty + oy, ox, oy, footprint);
+      }
+    }
+  }
+
+  function getStructureCenterWorld(structure) {
+    if (structure?.type === "robot") {
+      const robotPos = getRobotPosition(structure);
+      if (robotPos) return robotPos;
+    }
+    const footprint = getStructureFootprint(structure?.type);
+    return {
+      x: (structure.tx + footprint.w * 0.5) * CONFIG.tileSize,
+      y: (structure.ty + footprint.h * 0.5) * CONFIG.tileSize,
+    };
   }
 
   function getHouseTier(type) {
@@ -4940,14 +5274,130 @@
     return structure.meta?.house ?? null;
   }
 
+  function normalizeRobotMode(mode) {
+    if (mode === ROBOT_MODE.trees || mode === ROBOT_MODE.stone || mode === ROBOT_MODE.grass) {
+      return mode;
+    }
+    // Backward compatibility with older saves/snapshots.
+    if (mode === "stone_grass") return ROBOT_MODE.stone;
+    return null;
+  }
+
+  function isRobotMode(mode) {
+    return normalizeRobotMode(mode) !== null;
+  }
+
+  function createRobotMeta(tx, ty) {
+    return {
+      robot: {
+        homeTx: tx,
+        homeTy: ty,
+        x: (tx + 0.5) * CONFIG.tileSize,
+        y: (ty + 0.5) * CONFIG.tileSize,
+        mode: ROBOT_MODE.trees,
+        state: "idle",
+        targetResourceId: null,
+        mineTimer: 0,
+        retargetTimer: 0,
+        pauseTimer: 0,
+      },
+    };
+  }
+
+  function ensureRobotMeta(structure) {
+    if (!structure || structure.type !== "robot") return null;
+    if (!structure.meta || typeof structure.meta !== "object") {
+      structure.meta = createRobotMeta(structure.tx, structure.ty);
+    }
+    if (!structure.meta.robot || typeof structure.meta.robot !== "object") {
+      structure.meta.robot = createRobotMeta(structure.tx, structure.ty).robot;
+    }
+    const robot = structure.meta.robot;
+    if (!Number.isFinite(robot.homeTx)) robot.homeTx = structure.tx;
+    if (!Number.isFinite(robot.homeTy)) robot.homeTy = structure.ty;
+    if (!Number.isFinite(robot.x)) robot.x = (robot.homeTx + 0.5) * CONFIG.tileSize;
+    if (!Number.isFinite(robot.y)) robot.y = (robot.homeTy + 0.5) * CONFIG.tileSize;
+    robot.mode = normalizeRobotMode(robot.mode) ?? ROBOT_MODE.trees;
+    if (typeof robot.state !== "string") robot.state = "idle";
+    if (!Number.isFinite(robot.mineTimer)) robot.mineTimer = 0;
+    if (!Number.isFinite(robot.retargetTimer)) robot.retargetTimer = 0;
+    if (!Number.isFinite(robot.pauseTimer)) robot.pauseTimer = 0;
+    if (!Number.isInteger(robot.targetResourceId)) robot.targetResourceId = null;
+    if (!Array.isArray(structure.storage)) {
+      structure.storage = createEmptyInventory(ROBOT_STORAGE_SIZE);
+    }
+    return robot;
+  }
+
+  function getRobotPosition(structure) {
+    const robot = ensureRobotMeta(structure);
+    if (!robot) return null;
+    return { x: robot.x, y: robot.y };
+  }
+
+  function setRobotInteractionPause(structure, duration = ROBOT_CONFIG.interactionPause) {
+    const robot = ensureRobotMeta(structure);
+    if (!robot) return;
+    robot.pauseTimer = Math.max(robot.pauseTimer || 0, duration);
+  }
+
+  function isInventoryFull(inventory) {
+    if (!Array.isArray(inventory) || inventory.length === 0) return true;
+    for (const slot of inventory) {
+      if (!slot.id) return false;
+      if (slot.qty < MAX_STACK) return false;
+    }
+    return true;
+  }
+
+  function getRobotModeLabel(mode) {
+    if (mode === ROBOT_MODE.stone) return "Mine Stone";
+    if (mode === ROBOT_MODE.grass) return "Mine Grass";
+    return "Mine Trees";
+  }
+
+  function getRobotStatusLabel(structure) {
+    const robot = ensureRobotMeta(structure);
+    if (!robot) return "Idle";
+    if (robot.pauseTimer > 0) return "Paused (interacting)";
+    if (robot.state === "returning") return "Returning to base";
+    if (robot.state === "waiting") return "Waiting (inventory full)";
+    if (robot.state === "moving") return "Moving to target";
+    if (robot.state === "mining") return `Mining (${getRobotModeLabel(robot.mode)})`;
+    return "Idle";
+  }
+
+  function robotCanMineResource(robot, resource) {
+    if (!robot || !resource || resource.removed) return false;
+    if (resource.stage && resource.stage !== "alive") return false;
+    if (robot.mode === ROBOT_MODE.trees) {
+      return resource.type === "tree";
+    }
+    if (robot.mode === ROBOT_MODE.stone) return resource.type === "rock";
+    if (robot.mode === ROBOT_MODE.grass) return resource.type === "grass";
+    return false;
+  }
+
   function getHouseKey(structure) {
     if (!structure) return null;
     return `${structure.tx},${structure.ty}`;
   }
 
-  function addStructure(type, tx, ty, options = {}) {
+  function setStructureFootprintInGrid(structure, place) {
+    if (!structure || !state.structureGrid) return;
     const size = state.surfaceWorld?.size ?? state.world.size;
-    const idx = tileIndex(tx, ty, size);
+    forEachStructureFootprintTile(structure.type, structure.tx, structure.ty, (tx, ty) => {
+      if (!inBounds(tx, ty, size)) return;
+      const idx = tileIndex(tx, ty, size);
+      if (place) {
+        state.structureGrid[idx] = structure.id;
+      } else if (state.structureGrid[idx] === structure.id) {
+        state.structureGrid[idx] = null;
+      }
+    });
+  }
+
+  function addStructure(type, tx, ty, options = {}) {
     const structure = {
       id: state.structures.length,
       type,
@@ -4961,10 +5411,11 @@
     if (isHouseType(type)) {
       ensureHouseMeta(structure);
     }
-    state.structures.push(structure);
-    if (state.structureGrid) {
-      state.structureGrid[idx] = structure.id;
+    if (type === "robot") {
+      ensureRobotMeta(structure);
     }
+    state.structures.push(structure);
+    setStructureFootprintInGrid(structure, true);
     return structure;
   }
 
@@ -4993,12 +5444,8 @@
 
   function removeStructure(structure) {
     if (!structure || structure.removed) return;
-    const size = state.surfaceWorld?.size ?? state.world.size;
-    const idx = tileIndex(structure.tx, structure.ty, size);
     structure.removed = true;
-    if (state.structureGrid) {
-      state.structureGrid[idx] = null;
-    }
+    setStructureFootprintInGrid(structure, false);
   }
 
   function findBenchSpot(world, spawn) {
@@ -5055,8 +5502,15 @@
   }
 
   function addVillageHouse(world, tx, ty, type, rng, withChest, withBed) {
-    if (!canPlaceVillageTile(world, tx, ty)) return null;
-    clearResourceForStructure(world, tx, ty);
+    const footprintCheck = canUseStructureFootprint(world, type, tx, ty, { allowResourceClear: true });
+    if (!footprintCheck.ok) return null;
+    let villageTilesValid = true;
+    forEachStructureFootprintTile(type, tx, ty, (fx, fy) => {
+      if (!villageTilesValid) return;
+      if (!canPlaceVillageTile(world, fx, fy)) villageTilesValid = false;
+    });
+    if (!villageTilesValid) return null;
+    clearResourceTiles(world, footprintCheck.clearResourceTiles);
     const house = addStructure(type, tx, ty, { meta: { village: true } });
     if (!house) return null;
     ensureHouseMeta(house);
@@ -5270,7 +5724,10 @@
     }
 
     for (const house of houses) {
-      carveVillagePathLine(world, centerTx, centerTy, house.tx, house.ty);
+      const footprint = getStructureFootprint(house.type);
+      const pathTx = house.tx + Math.floor(footprint.w / 2);
+      const pathTy = house.ty + Math.floor(footprint.h / 2);
+      carveVillagePathLine(world, centerTx, centerTy, pathTx, pathTy);
     }
     placeVillagePath(world, centerTx, centerTy);
 
@@ -5296,14 +5753,51 @@
   function seedSurfaceVillages(world) {
     if (!world || !Array.isArray(world.islands)) return;
     const rng = makeRng((world.seedInt ?? seedToInt(world.seed || "island")) + 170341);
-    const candidates = world.islands
-      .filter((island) => !island.starter && island.radius >= 8)
+    const starterVillageChance = 0.03;
+    const islandEntries = world.islands.map((island, index) => ({ island, index }));
+
+    function getIslandIndexForTile(tx, ty) {
+      const px = tx + 0.5;
+      const py = ty + 0.5;
+      let bestIndex = -1;
+      let bestDelta = Infinity;
+      for (const entry of islandEntries) {
+        const dx = px - entry.island.x;
+        const dy = py - entry.island.y;
+        const delta = Math.hypot(dx, dy) - entry.island.radius;
+        if (delta <= 0 && delta < bestDelta) {
+          bestDelta = delta;
+          bestIndex = entry.index;
+        }
+      }
+      return bestIndex;
+    }
+
+    const caveIslandIndexes = new Set();
+    for (const cave of world.caves || []) {
+      if (!cave) continue;
+      const islandIndex = getIslandIndexForTile(cave.tx, cave.ty);
+      if (islandIndex >= 0) caveIslandIndexes.add(islandIndex);
+    }
+
+    const starterEntry = islandEntries.find(
+      ({ island, index }) => island?.starter && island.radius >= 8 && !caveIslandIndexes.has(index)
+    );
+    const allowStarterVillage = !!starterEntry && rng() < starterVillageChance;
+
+    function isIslandAllowedForVillage(island, index) {
+      if (!island || island.radius < 8) return false;
+      if (caveIslandIndexes.has(index)) return false;
+      if (island.starter) return allowStarterVillage;
+      return true;
+    }
+
+    const candidates = islandEntries
+      .filter(({ island, index }) => !island.starter && isIslandAllowedForVillage(island, index))
+      .map((entry) => entry.island)
       .sort((a, b) => b.radius - a.radius);
-    const fallbackCandidates = (
-      candidates.length > 0
-        ? candidates
-        : world.islands.filter((island) => island.radius >= 8)
-    ).sort((a, b) => b.radius - a.radius);
+    const fallbackCandidates = candidates.slice();
+    if (allowStarterVillage && starterEntry) fallbackCandidates.push(starterEntry.island);
 
     function trySpawnVillageOnIsland(island, attempts = 24) {
       if (!island) return false;
@@ -5348,6 +5842,10 @@
     for (let y = 2; y < world.size - 2; y += 2) {
       let anyPlaced = false;
       for (let x = 2; x < world.size - 2; x += 2) {
+        const islandIndex = getIslandIndexForTile(x, y);
+        if (islandIndex < 0) continue;
+        const island = world.islands[islandIndex];
+        if (!isIslandAllowedForVillage(island, islandIndex)) continue;
         const result = spawnVillageAt(world, x, y, rng);
         if (result.ok) {
           placed += 1;
@@ -5362,6 +5860,8 @@
     for (const island of world.islands
       .slice()
       .sort((a, b) => (b.radius - a.radius) || Number(a.starter) - Number(b.starter))) {
+      const islandIndex = world.islands.indexOf(island);
+      if (!isIslandAllowedForVillage(island, islandIndex)) continue;
       const tx = Math.floor(island.x);
       const ty = Math.floor(island.y);
       const result = spawnVillageAt(world, tx, ty, rng);
@@ -5549,7 +6049,7 @@
           if (!entry) continue;
           const normalized = { ...entry, type: entry.type === "hut" ? "small_house" : entry.type };
           if (!isStructureValidOnLoad(world, normalized, bridgeSet)) continue;
-          clearResourceForStructure(world, normalized.tx, normalized.ty);
+          clearResourcesForFootprint(world, normalized.type, normalized.tx, normalized.ty);
           const structure = addStructure(normalized.type, normalized.tx, normalized.ty, {
             storage: entry.storage
               ? entry.storage.map((slot) => ({ id: slot.id, qty: slot.qty }))
@@ -5802,12 +6302,38 @@
     return Math.max(1, data.damage);
   }
 
+  function getAppliedHarvestDamage(player, resource) {
+    let damage = Math.max(1, Math.floor(getHarvestDamage(player)));
+    // Keep apex pickaxe rewarding but avoid instant deleting full-health nodes.
+    if (getPickaxeTier(player) >= 6 && resource) {
+      const targetMaxHp = Number(resource.maxHp);
+      const targetHp = Number(resource.hp);
+      if (Number.isFinite(targetMaxHp) && targetMaxHp > 1 && Number.isFinite(targetHp) && targetHp >= targetMaxHp) {
+        damage = Math.min(damage, Math.max(1, targetMaxHp - 1));
+      }
+    }
+    return damage;
+  }
+
   function getAttackDamage(player = state.player) {
     const swordTier = getSwordTier(player);
     const swordData = SWORD_TIER_DATA[swordTier] || SWORD_TIER_DATA[0];
     const base = 1 + swordData.damage;
     const torchBonus = player === state.player && state.torchTimer > 0 ? 1 : 0;
     return Math.max(1, base + torchBonus);
+  }
+
+  function getAppliedAttackDamage(player, target) {
+    let damage = Math.max(1, Math.floor(getAttackDamage(player)));
+    // Diamond sword should reliably two-tap full-health targets instead of randomly one-shotting.
+    if (getSwordTier(player) >= 5 && target) {
+      const targetMaxHp = Number(target.maxHp);
+      const targetHp = Number(target.hp);
+      if (Number.isFinite(targetMaxHp) && targetMaxHp > 1 && Number.isFinite(targetHp) && targetHp >= targetMaxHp) {
+        damage = Math.min(damage, Math.max(1, targetMaxHp - 1));
+      }
+    }
+    return damage;
   }
 
   function getResourceActionName(resource) {
@@ -5830,8 +6356,9 @@
     for (const structure of state.structures) {
       if (structure.removed) continue;
       if (!predicate(structure)) continue;
-      const sx = (structure.tx + 0.5) * CONFIG.tileSize;
-      const sy = (structure.ty + 0.5) * CONFIG.tileSize;
+      const center = getStructureCenterWorld(structure);
+      const sx = center.x;
+      const sy = center.y;
       const dist = Math.hypot(sx - player.x, sy - player.y);
       if (dist < CONFIG.interactRange && dist < closestDist) {
         closest = structure;
@@ -6313,19 +6840,27 @@
     }
 
     if (world) {
+      let best = null;
+      let bestScore = Infinity;
       for (let radius = 1; radius <= 3; radius += 1) {
         for (let dy = -radius; dy <= radius; dy += 1) {
           for (let dx = -radius; dx <= radius; dx += 1) {
             const nxTile = tx + dx;
             const nyTile = ty + dy;
             if (!isWalkableTileInWorld(world, nxTile, nyTile)) continue;
-            return {
-              x: (nxTile + 0.5) * CONFIG.tileSize,
-              y: (nyTile + 0.5) * CONFIG.tileSize,
-            };
+            const candidateX = (nxTile + 0.5) * CONFIG.tileSize;
+            const candidateY = (nyTile + 0.5) * CONFIG.tileSize;
+            const fromPlayer = Math.hypot(candidateX - playerX, candidateY - playerY);
+            if (fromPlayer < CONFIG.tileSize * 1.4) continue;
+            const score = Math.hypot(candidateX - targetX, candidateY - targetY);
+            if (score < bestScore) {
+              bestScore = score;
+              best = { x: candidateX, y: candidateY };
+            }
           }
         }
       }
+      if (best) return best;
     }
 
     return { x: targetX, y: targetY };
@@ -6401,6 +6936,7 @@
               type: "dropPickup",
               world: state.inCave ? "cave" : "surface",
               caveId: state.activeCave?.id ?? null,
+              dropId: drop.id,
               itemId: drop.itemId,
               x: drop.x,
               y: drop.y,
@@ -6493,7 +7029,7 @@
       return;
     }
 
-    const damage = getHarvestDamage(state.player);
+    const damage = getAppliedHarvestDamage(state.player, resource);
     applyHarvestToResource(state.world, resource, damage, true);
 
     if (netIsClient()) {
@@ -6775,6 +7311,23 @@
         iconCtx.fillStyle = itemId === "chest" ? "#d2bb7a" : "#2a201b";
         iconCtx.fillRect(cx - s * 0.08, cy - s * 0.03, s * 0.16, s * 0.14);
         break;
+      case "robot":
+        iconCtx.fillStyle = "#456484";
+        iconCtx.fillRect(cx - s * 0.2, cy - s * 0.02, s * 0.4, s * 0.24);
+        iconCtx.fillStyle = "#658ab3";
+        iconCtx.fillRect(cx - s * 0.14, cy - s * 0.18, s * 0.28, s * 0.18);
+        iconCtx.fillStyle = "#d8eeff";
+        iconCtx.fillRect(cx - s * 0.09, cy - s * 0.12, s * 0.08, s * 0.06);
+        iconCtx.fillRect(cx + s * 0.01, cy - s * 0.12, s * 0.08, s * 0.06);
+        iconCtx.strokeStyle = "rgba(220, 245, 255, 0.55)";
+        iconCtx.lineWidth = 1;
+        iconCtx.beginPath();
+        iconCtx.moveTo(cx - s * 0.2, cy + s * 0.03);
+        iconCtx.lineTo(cx - s * 0.27, cy + s * 0.11);
+        iconCtx.moveTo(cx + s * 0.2, cy + s * 0.03);
+        iconCtx.lineTo(cx + s * 0.27, cy + s * 0.11);
+        iconCtx.stroke();
+        break;
       case "beacon_core":
       case "beacon":
         iconCtx.fillStyle = itemId === "beacon" ? "#d0b46a" : "#89bedf";
@@ -6991,12 +7544,23 @@
 
   function openStationMenu(structure) {
     if (!structure) return;
+    if (structure.type === "robot") {
+      ensureRobotMeta(structure);
+      if (netIsClientReady()) {
+        sendRobotCommand(structure, "ping");
+      } else {
+        setRobotInteractionPause(structure, ROBOT_CONFIG.interactionPause);
+      }
+    }
     state.activeStation = structure;
     stationMenu.classList.remove("hidden");
     renderStationMenu();
   }
 
   function closeStationMenu() {
+    if (state.activeStation?.type === "robot" && netIsClientReady()) {
+      sendRobotCommand(state.activeStation, "ping");
+    }
     state.activeStation = null;
     stationMenu.classList.add("hidden");
   }
@@ -7004,9 +7568,20 @@
   function openChest(structure) {
     if (!structure) return;
     if (!structure.storage) {
-      structure.storage = createEmptyInventory(CHEST_SIZE);
+      structure.storage = createEmptyInventory(structure.type === "robot" ? ROBOT_STORAGE_SIZE : CHEST_SIZE);
     }
     state.activeChest = structure;
+    if (chestPanelTitle) {
+      chestPanelTitle.textContent = structure.type === "robot" ? "Robot Cargo" : "Chest";
+    }
+    if (chestPanelHint) {
+      chestPanelHint.textContent = structure.type === "robot"
+        ? "Click once to quick-transfer between robot storage and inventory."
+        : "Click items to quick-transfer between chest and inventory.";
+    }
+    if (destroyChestBtn) {
+      destroyChestBtn.classList.toggle("hidden", structure.type !== "chest");
+    }
     openInventory();
     chestPanel.classList.remove("hidden");
     updateAllSlotUI();
@@ -7015,9 +7590,27 @@
   function closeChest() {
     state.activeChest = null;
     chestPanel.classList.add("hidden");
+    if (destroyChestBtn) destroyChestBtn.classList.remove("hidden");
+    if (chestPanelTitle) chestPanelTitle.textContent = "Chest";
+    if (chestPanelHint) chestPanelHint.textContent = "Click items to quick-transfer between chest and inventory.";
     closeInventory();
     selectedSlot = null;
     updateAllSlotUI();
+  }
+
+  function sendRobotCommand(structure, action, extras = null) {
+    if (!structure || structure.type !== "robot") return;
+    if (!netIsClientReady()) return;
+    const payload = {
+      type: "robotCommand",
+      tx: structure.tx,
+      ty: structure.ty,
+      action,
+    };
+    if (extras && typeof extras === "object") {
+      Object.assign(payload, extras);
+    }
+    sendToHost(payload);
   }
 
   function sendChestUpdate(structure) {
@@ -7041,8 +7634,17 @@
       ty: structure.ty,
       storage: structure.storage
         ? structure.storage.map((slot) => ({ id: slot.id, qty: slot.qty }))
-        : createEmptyInventory(CHEST_SIZE),
+        : createEmptyInventory(structure.type === "robot" ? ROBOT_STORAGE_SIZE : CHEST_SIZE),
     });
+  }
+
+  function getRecipeOutput(recipe) {
+    if (!recipe) return {};
+    if (recipe.output && typeof recipe.output === "object") {
+      return recipe.output;
+    }
+    const qty = Math.max(1, Number.isFinite(recipe.outputQty) ? Math.floor(recipe.outputQty) : 1);
+    return recipe.id ? { [recipe.id]: qty } : {};
   }
 
   function renderBuildMenu() {
@@ -7120,6 +7722,15 @@
       card.appendChild(title);
       card.appendChild(desc);
       if (recipe.cost) card.appendChild(cost);
+      if (buildTab !== "upgrades") {
+        const outputLabel = document.createElement("div");
+        outputLabel.className = "recipe-cost";
+        const output = getRecipeOutput(recipe);
+        outputLabel.textContent = `Produces: ${Object.entries(output)
+          .map(([itemId, qty]) => `${ITEMS[itemId]?.name ?? itemId} x${qty}`)
+          .join(", ")}`;
+        card.appendChild(outputLabel);
+      }
       if (disabled && lockReason) {
         const lock = document.createElement("div");
         lock.className = "recipe-lock";
@@ -7166,13 +7777,16 @@
       return;
     }
 
-    if (!canAddItem(state.inventory, recipe.id, 1)) {
+    const output = getRecipeOutput(recipe);
+    if (!canAddItems(state.inventory, output)) {
       setPrompt("Inventory full", 1.2);
       return;
     }
 
     applyCost(state.inventory, recipe.cost);
-    addItem(state.inventory, recipe.id, 1);
+    for (const [itemId, qty] of Object.entries(output)) {
+      addItem(state.inventory, itemId, qty);
+    }
     updateAllSlotUI();
     markDirty();
     playSfx("ui");
@@ -7182,6 +7796,10 @@
   function renderStationMenu() {
     if (!state.activeStation) return;
     const type = state.activeStation.type;
+    if (type === "robot") {
+      renderRobotStationMenu();
+      return;
+    }
     const recipes = STATION_RECIPES[type] || [];
     stationTitle.textContent = STRUCTURE_DEFS[type]?.name ?? "Station";
     stationOptions.innerHTML = "";
@@ -7246,6 +7864,132 @@
     }
   }
 
+  function setRobotMode(structure, mode) {
+    if (!structure || structure.type !== "robot") return;
+    const normalizedMode = normalizeRobotMode(mode);
+    if (!normalizedMode) return;
+    const robot = ensureRobotMeta(structure);
+    if (!robot) return;
+    robot.mode = normalizedMode;
+    robot.targetResourceId = null;
+    robot.retargetTimer = 0;
+    robot.state = "idle";
+    clearRobotNavigation(robot);
+    setRobotInteractionPause(structure, ROBOT_CONFIG.interactionPause);
+    if (netIsClientReady()) {
+      sendRobotCommand(structure, "setMode", { mode: normalizedMode });
+    } else {
+      markDirty();
+    }
+  }
+
+  function renderRobotStationMenu() {
+    const structure = state.activeStation;
+    if (!structure || structure.type !== "robot") return;
+    const robot = ensureRobotMeta(structure);
+    stationTitle.textContent = STRUCTURE_DEFS.robot?.name ?? "Robot";
+    stationOptions.innerHTML = "";
+
+    const status = document.createElement("div");
+    status.className = "recipe-card";
+    const statusTitle = document.createElement("div");
+    statusTitle.className = "recipe-title";
+    statusTitle.textContent = "Automation Control";
+    const statusDesc = document.createElement("div");
+    statusDesc.className = "recipe-desc";
+    statusDesc.textContent = "Robot mines selected resources automatically and returns home when full.";
+    const statusLine = document.createElement("div");
+    statusLine.className = "recipe-cost";
+    statusLine.textContent = `Status: ${getRobotStatusLabel(structure)}`;
+    const modeLine = document.createElement("div");
+    modeLine.className = "recipe-cost";
+    modeLine.textContent = `Mode: ${getRobotModeLabel(robot.mode)}`;
+    status.appendChild(statusTitle);
+    status.appendChild(statusDesc);
+    status.appendChild(statusLine);
+    status.appendChild(modeLine);
+    stationOptions.appendChild(status);
+
+    const treesCard = document.createElement("div");
+    treesCard.className = "recipe-card";
+    const treesTitle = document.createElement("div");
+    treesTitle.className = "recipe-title";
+    treesTitle.textContent = "Mine Trees";
+    const treesDesc = document.createElement("div");
+    treesDesc.className = "recipe-desc";
+    treesDesc.textContent = "Harvests wood from trees in the surrounding islands.";
+    const treesBtn = document.createElement("button");
+    const treesActive = robot.mode === ROBOT_MODE.trees;
+    treesBtn.textContent = treesActive ? "Selected" : "Select";
+    treesBtn.disabled = treesActive;
+    treesBtn.addEventListener("click", () => {
+      setRobotMode(structure, ROBOT_MODE.trees);
+      renderRobotStationMenu();
+    });
+    treesCard.appendChild(treesTitle);
+    treesCard.appendChild(treesDesc);
+    treesCard.appendChild(treesBtn);
+    stationOptions.appendChild(treesCard);
+
+    const stoneCard = document.createElement("div");
+    stoneCard.className = "recipe-card";
+    const stoneTitle = document.createElement("div");
+    stoneTitle.className = "recipe-title";
+    stoneTitle.textContent = "Mine Stone";
+    const stoneDesc = document.createElement("div");
+    stoneDesc.className = "recipe-desc";
+    stoneDesc.textContent = "Harvests rock nodes for building and refining.";
+    const stoneBtn = document.createElement("button");
+    const stoneActive = robot.mode === ROBOT_MODE.stone;
+    stoneBtn.textContent = stoneActive ? "Selected" : "Select";
+    stoneBtn.disabled = stoneActive;
+    stoneBtn.addEventListener("click", () => {
+      setRobotMode(structure, ROBOT_MODE.stone);
+      renderRobotStationMenu();
+    });
+    stoneCard.appendChild(stoneTitle);
+    stoneCard.appendChild(stoneDesc);
+    stoneCard.appendChild(stoneBtn);
+    stationOptions.appendChild(stoneCard);
+
+    const grassCard = document.createElement("div");
+    grassCard.className = "recipe-card";
+    const grassTitle = document.createElement("div");
+    grassTitle.className = "recipe-title";
+    grassTitle.textContent = "Mine Grass";
+    const grassDesc = document.createElement("div");
+    grassDesc.className = "recipe-desc";
+    grassDesc.textContent = "Harvests grass nodes for paper and utility recipes.";
+    const grassBtn = document.createElement("button");
+    const grassActive = robot.mode === ROBOT_MODE.grass;
+    grassBtn.textContent = grassActive ? "Selected" : "Select";
+    grassBtn.disabled = grassActive;
+    grassBtn.addEventListener("click", () => {
+      setRobotMode(structure, ROBOT_MODE.grass);
+      renderRobotStationMenu();
+    });
+    grassCard.appendChild(grassTitle);
+    grassCard.appendChild(grassDesc);
+    grassCard.appendChild(grassBtn);
+    stationOptions.appendChild(grassCard);
+
+    const invCard = document.createElement("div");
+    invCard.className = "recipe-card";
+    const invTitle = document.createElement("div");
+    invTitle.className = "recipe-title";
+    invTitle.textContent = "Robot Inventory";
+    const invDesc = document.createElement("div");
+    invDesc.className = "recipe-desc";
+    invDesc.textContent = "Collect resources gathered by the robot.";
+    const invBtn = document.createElement("button");
+    invBtn.textContent = "Open Inventory";
+    invBtn.addEventListener("click", () => openChest(structure));
+    invCard.appendChild(invTitle);
+    invCard.appendChild(invDesc);
+    invCard.appendChild(invBtn);
+    stationOptions.appendChild(invCard);
+  }
+
   function craftStationRecipe(recipe) {
     if (recipe.locked) return;
     if (!hasCost(state.inventory, recipe.input)) {
@@ -7292,6 +8036,7 @@
   function destroyActiveChest() {
     const chest = state.activeChest;
     if (!chest) return;
+    if (chest.type !== "chest") return;
     if (chest.interior) {
       if (netIsClient()) {
         sendToHost({
@@ -7393,6 +8138,10 @@
   }
 
   function giveDebugBeacon() {
+    if (netIsClientReady()) {
+      setPrompt("Host only", 1);
+      return;
+    }
     if (!state.inventory) return;
     const left = addItem(state.inventory, "beacon", 1);
     if (left > 0) {
@@ -7401,6 +8150,22 @@
     }
     updateAllSlotUI();
     setPrompt("Rescue Beacon added", 1.2);
+    markDirty();
+  }
+
+  function giveDebugRobot() {
+    if (netIsClientReady()) {
+      setPrompt("Host only", 1);
+      return;
+    }
+    if (!state.inventory) return;
+    const left = addItem(state.inventory, "robot", 1);
+    if (left > 0) {
+      setPrompt("Inventory full", 0.9);
+      return;
+    }
+    updateAllSlotUI();
+    setPrompt("Robot added", 1.2);
     markDirty();
   }
 
@@ -7677,11 +8442,12 @@
 
   function updatePlayer(dt) {
     if (!state.world || !state.player) return;
+    const speedMult = getDebugSpeedMultiplier();
 
     if (state.player.inHut && state.activeHouse && state.housePlayer) {
       const uiLock = inventoryOpen || !!state.activeStation || !!state.activeChest || state.gameWon;
       const move = uiLock ? { x: 0, y: 0 } : getMoveVector();
-      const step = 3.8 * dt;
+      const step = 3.8 * dt * speedMult;
       if (move.x !== 0 || move.y !== 0) {
         state.player.facing.x = move.x;
         state.player.facing.y = move.y;
@@ -7695,7 +8461,7 @@
 
     const uiLock = inventoryOpen || !!state.activeStation || !!state.activeChest || state.gameWon;
     const move = uiLock ? { x: 0, y: 0 } : getMoveVector();
-    const step = CONFIG.moveSpeed * dt;
+    const step = CONFIG.moveSpeed * dt * speedMult;
 
     if (move.x !== 0 || move.y !== 0) {
       state.player.facing.x = move.x;
@@ -8280,8 +9046,8 @@
       });
       return;
     }
-    const damage = getAttackDamage(state.player);
     if (targetMonster) {
+      const damage = getAppliedAttackDamage(state.player, targetMonster);
       targetMonster.hp -= damage;
       targetMonster.hitTimer = 0.2;
       playSfx("hit");
@@ -8292,6 +9058,7 @@
       return;
     }
     if (!targetAnimal) return;
+    const damage = getAppliedAttackDamage(state.player, targetAnimal);
     targetAnimal.hp -= damage;
     targetAnimal.hitTimer = 0.2;
     targetAnimal.fleeTimer = 2.4;
@@ -8789,6 +9556,503 @@
     }
   }
 
+  function getRobotHomeWorldPosition(robot) {
+    return {
+      x: (robot.homeTx + 0.5) * CONFIG.tileSize,
+      y: (robot.homeTy + 0.5) * CONFIG.tileSize,
+    };
+  }
+
+  function ensureRobotNavigationState(robot) {
+    if (!robot || typeof robot !== "object") return null;
+    if (!robot.navigation || typeof robot.navigation !== "object") {
+      robot.navigation = {
+        path: null,
+        pathIndex: 0,
+        goalTx: null,
+        goalTy: null,
+        stuckTimer: 0,
+        lastX: robot.x,
+        lastY: robot.y,
+      };
+      return robot.navigation;
+    }
+    const nav = robot.navigation;
+    if (!Array.isArray(nav.path)) nav.path = null;
+    if (!Number.isInteger(nav.pathIndex) || nav.pathIndex < 0) nav.pathIndex = 0;
+    if (!Number.isInteger(nav.goalTx)) nav.goalTx = null;
+    if (!Number.isInteger(nav.goalTy)) nav.goalTy = null;
+    if (!Number.isFinite(nav.stuckTimer)) nav.stuckTimer = 0;
+    if (!Number.isFinite(nav.lastX)) nav.lastX = robot.x;
+    if (!Number.isFinite(nav.lastY)) nav.lastY = robot.y;
+    return nav;
+  }
+
+  function clearRobotNavigation(robot) {
+    const nav = ensureRobotNavigationState(robot);
+    if (!nav) return;
+    nav.path = null;
+    nav.pathIndex = 0;
+    nav.goalTx = null;
+    nav.goalTy = null;
+    nav.stuckTimer = 0;
+    nav.lastX = robot.x;
+    nav.lastY = robot.y;
+  }
+
+  function isRobotWalkableTile(world, structure, tx, ty) {
+    if (!world || !inBounds(tx, ty, world.size)) return false;
+
+    if (world === (state.surfaceWorld || state.world)) {
+      if (getCaveAt(world, tx, ty)) return false;
+      const occupant = getStructureAt(tx, ty);
+      if (occupant && occupant !== structure) {
+        const def = STRUCTURE_DEFS[occupant.type];
+        return !!def?.walkable;
+      }
+      if (occupant && occupant === structure) {
+        const def = STRUCTURE_DEFS[occupant.type];
+        if (def?.walkable) return true;
+      }
+    }
+
+    const idx = tileIndex(tx, ty, world.size);
+    return world.tiles[idx] === 1;
+  }
+
+  function isRobotOnBeachTile(world, robot) {
+    if (!world || !robot) return false;
+    const tx = Math.floor(robot.x / CONFIG.tileSize);
+    const ty = Math.floor(robot.y / CONFIG.tileSize);
+    if (!inBounds(tx, ty, world.size)) return false;
+    return !!world.beachGrid?.[tileIndex(tx, ty, world.size)];
+  }
+
+  function tryRouteRobotTowardNearestBridge(world, structure, robot, target = null) {
+    if (!world || !robot || !Array.isArray(state.structures)) return false;
+    const startTx = Math.floor(robot.x / CONFIG.tileSize);
+    const startTy = Math.floor(robot.y / CONFIG.tileSize);
+    if (!inBounds(startTx, startTy, world.size)) return false;
+    const bridgeCandidates = state.structures
+      .filter((entry) => entry && !entry.removed && (entry.type === "bridge" || entry.type === "dock"))
+      .map((entry) => {
+        const centerX = (entry.tx + 0.5) * CONFIG.tileSize;
+        const centerY = (entry.ty + 0.5) * CONFIG.tileSize;
+        return {
+          entry,
+          dist: Math.hypot(centerX - robot.x, centerY - robot.y),
+        };
+      })
+      .sort((a, b) => a.dist - b.dist)
+      .slice(0, ROBOT_CONFIG.bridgePathChecks)
+      .map((item) => item.entry);
+    if (bridgeCandidates.length === 0) return false;
+
+    let best = null;
+    let bestScore = Infinity;
+    for (const bridge of bridgeCandidates) {
+      const path = findRobotTilePath(world, structure, startTx, startTy, bridge.tx, bridge.ty);
+      if (!path || path.length === 0) continue;
+      const bridgeX = (bridge.tx + 0.5) * CONFIG.tileSize;
+      const bridgeY = (bridge.ty + 0.5) * CONFIG.tileSize;
+      const towardTarget = target
+        ? Math.hypot(target.x - bridgeX, target.y - bridgeY) / CONFIG.tileSize
+        : 0;
+      const score = path.length + towardTarget * 0.33;
+      if (score < bestScore) {
+        bestScore = score;
+        best = {
+          tx: bridge.tx,
+          ty: bridge.ty,
+          path,
+        };
+      }
+    }
+    if (!best) return false;
+
+    const nav = ensureRobotNavigationState(robot);
+    if (!nav) return false;
+    nav.path = best.path;
+    nav.pathIndex = 0;
+    nav.goalTx = best.tx;
+    nav.goalTy = best.ty;
+    nav.stuckTimer = 0;
+    nav.lastX = robot.x;
+    nav.lastY = robot.y;
+    return true;
+  }
+
+  function findRobotTilePath(world, structure, startTx, startTy, goalTx, goalTy, maxNodes = ROBOT_CONFIG.maxPathNodes) {
+    if (!world) return null;
+    if (!inBounds(startTx, startTy, world.size) || !inBounds(goalTx, goalTy, world.size)) return null;
+    if (startTx === goalTx && startTy === goalTy) return [];
+    if (!isRobotWalkableTile(world, structure, goalTx, goalTy)) return null;
+
+    const size = world.size;
+    const total = size * size;
+    const visited = new Uint8Array(total);
+    const cameFrom = new Int32Array(total);
+    cameFrom.fill(-1);
+    const queue = new Int32Array(total);
+
+    const startIdx = tileIndex(startTx, startTy, size);
+    const goalIdx = tileIndex(goalTx, goalTy, size);
+
+    visited[startIdx] = 1;
+    queue[0] = startIdx;
+    let head = 0;
+    let tail = 1;
+    let explored = 0;
+
+    while (head < tail && explored < maxNodes) {
+      const current = queue[head++];
+      explored += 1;
+      if (current === goalIdx) break;
+
+      const cx = current % size;
+      const cy = (current - cx) / size;
+      let nx = cx + 1;
+      let ny = cy;
+      if (inBounds(nx, ny, size)) {
+        let nextIdx = tileIndex(nx, ny, size);
+        if (!visited[nextIdx] && isRobotWalkableTile(world, structure, nx, ny)) {
+          visited[nextIdx] = 1;
+          cameFrom[nextIdx] = current;
+          queue[tail++] = nextIdx;
+        }
+      }
+
+      nx = cx - 1;
+      ny = cy;
+      if (inBounds(nx, ny, size)) {
+        let nextIdx = tileIndex(nx, ny, size);
+        if (!visited[nextIdx] && isRobotWalkableTile(world, structure, nx, ny)) {
+          visited[nextIdx] = 1;
+          cameFrom[nextIdx] = current;
+          queue[tail++] = nextIdx;
+        }
+      }
+
+      nx = cx;
+      ny = cy + 1;
+      if (inBounds(nx, ny, size)) {
+        let nextIdx = tileIndex(nx, ny, size);
+        if (!visited[nextIdx] && isRobotWalkableTile(world, structure, nx, ny)) {
+          visited[nextIdx] = 1;
+          cameFrom[nextIdx] = current;
+          queue[tail++] = nextIdx;
+        }
+      }
+
+      nx = cx;
+      ny = cy - 1;
+      if (inBounds(nx, ny, size)) {
+        let nextIdx = tileIndex(nx, ny, size);
+        if (!visited[nextIdx] && isRobotWalkableTile(world, structure, nx, ny)) {
+          visited[nextIdx] = 1;
+          cameFrom[nextIdx] = current;
+          queue[tail++] = nextIdx;
+        }
+      }
+    }
+
+    if (!visited[goalIdx]) return null;
+
+    const path = [];
+    let cursor = goalIdx;
+    while (cursor !== startIdx) {
+      const tx = cursor % size;
+      const ty = (cursor - tx) / size;
+      path.push({ tx, ty });
+      cursor = cameFrom[cursor];
+      if (cursor === -1) return null;
+    }
+    path.reverse();
+    return path;
+  }
+
+  function tryMoveRobotTo(world, structure, robot, x, y) {
+    const tx = Math.floor(x / CONFIG.tileSize);
+    const ty = Math.floor(y / CONFIG.tileSize);
+    if (!isRobotWalkableTile(world, structure, tx, ty)) return false;
+    robot.x = x;
+    robot.y = y;
+    return true;
+  }
+
+  function moveRobotStepToward(world, structure, robot, targetX, targetY, dt) {
+    if (!robot || !world || !structure) return false;
+    const dx = targetX - robot.x;
+    const dy = targetY - robot.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist <= 0.001) return false;
+
+    const nx = dx / dist;
+    const ny = dy / dist;
+    const step = Math.min(ROBOT_CONFIG.speed * dt, dist);
+    const moveX = robot.x + nx * step;
+    const moveY = robot.y + ny * step;
+    if (tryMoveRobotTo(world, structure, robot, moveX, moveY)) return true;
+    if (tryMoveRobotTo(world, structure, robot, moveX, robot.y)) return true;
+    if (tryMoveRobotTo(world, structure, robot, robot.x, moveY)) return true;
+
+    const sidestep = step * 0.7;
+    const sx = -ny;
+    const sy = nx;
+    if (tryMoveRobotTo(world, structure, robot, robot.x + sx * sidestep, robot.y + sy * sidestep)) return true;
+    return tryMoveRobotTo(world, structure, robot, robot.x - sx * sidestep, robot.y - sy * sidestep);
+  }
+
+  function moveRobotToward(world, structure, robot, targetX, targetY, dt) {
+    if (!robot || !world || !structure) return false;
+    const nav = ensureRobotNavigationState(robot);
+    if (!nav) return false;
+
+    const startTx = Math.floor(robot.x / CONFIG.tileSize);
+    const startTy = Math.floor(robot.y / CONFIG.tileSize);
+    const targetTx = Math.floor(targetX / CONFIG.tileSize);
+    const targetTy = Math.floor(targetY / CONFIG.tileSize);
+    if (!inBounds(startTx, startTy, world.size) || !inBounds(targetTx, targetTy, world.size)) {
+      nav.stuckTimer += dt;
+      return false;
+    }
+
+    const goalChanged = nav.goalTx !== targetTx || nav.goalTy !== targetTy;
+    if (goalChanged || !Array.isArray(nav.path)) {
+      nav.path = findRobotTilePath(world, structure, startTx, startTy, targetTx, targetTy);
+      nav.pathIndex = 0;
+      nav.goalTx = targetTx;
+      nav.goalTy = targetTy;
+      if (!nav.path) {
+        nav.stuckTimer += dt;
+        return false;
+      }
+    }
+
+    while (Array.isArray(nav.path) && nav.pathIndex < nav.path.length) {
+      const node = nav.path[nav.pathIndex];
+      if (!node || !isRobotWalkableTile(world, structure, node.tx, node.ty)) {
+        nav.path = findRobotTilePath(world, structure, startTx, startTy, targetTx, targetTy);
+        nav.pathIndex = 0;
+        if (!nav.path) {
+          nav.stuckTimer += dt;
+          return false;
+        }
+        continue;
+      }
+      const nodeX = (node.tx + 0.5) * CONFIG.tileSize;
+      const nodeY = (node.ty + 0.5) * CONFIG.tileSize;
+      if (Math.hypot(nodeX - robot.x, nodeY - robot.y) <= ROBOT_CONFIG.pathNodeSnapDistance) {
+        nav.pathIndex += 1;
+        continue;
+      }
+      break;
+    }
+
+    let waypointX = targetX;
+    let waypointY = targetY;
+    if (Array.isArray(nav.path) && nav.pathIndex < nav.path.length) {
+      const node = nav.path[nav.pathIndex];
+      waypointX = (node.tx + 0.5) * CONFIG.tileSize;
+      waypointY = (node.ty + 0.5) * CONFIG.tileSize;
+    }
+
+    const moved = moveRobotStepToward(world, structure, robot, waypointX, waypointY, dt);
+    const movedDist = Math.hypot(robot.x - nav.lastX, robot.y - nav.lastY);
+    nav.lastX = robot.x;
+    nav.lastY = robot.y;
+
+    if (moved && movedDist > ROBOT_CONFIG.stuckMoveEpsilon) {
+      nav.stuckTimer = 0;
+      return true;
+    }
+
+    nav.stuckTimer += dt;
+    if (!moved) {
+      nav.path = null;
+      nav.pathIndex = 0;
+    }
+    return moved;
+  }
+
+  function findRobotTargetResource(world, structure, robot) {
+    if (!world || !robot || !Array.isArray(world.resources)) return null;
+    const home = getRobotHomeWorldPosition(robot);
+    const maxHomeDist = CONFIG.tileSize * 36;
+    const candidates = [];
+    for (const resource of world.resources) {
+      if (!robotCanMineResource(robot, resource)) continue;
+      const homeDist = Math.hypot(resource.x - home.x, resource.y - home.y);
+      if (homeDist > maxHomeDist) continue;
+      const dist = Math.hypot(resource.x - robot.x, resource.y - robot.y);
+      candidates.push({ resource, dist });
+    }
+
+    if (candidates.length === 0) return null;
+    candidates.sort((a, b) => a.dist - b.dist);
+
+    const startTx = Math.floor(robot.x / CONFIG.tileSize);
+    const startTy = Math.floor(robot.y / CONFIG.tileSize);
+    const checks = Math.min(candidates.length, ROBOT_CONFIG.retargetPathChecks);
+    for (let i = 0; i < checks; i += 1) {
+      const candidate = candidates[i].resource;
+      const rawTargetTx = Number.isFinite(candidate.tx) ? candidate.tx : (candidate.x / CONFIG.tileSize);
+      const rawTargetTy = Number.isFinite(candidate.ty) ? candidate.ty : (candidate.y / CONFIG.tileSize);
+      const targetTx = Math.floor(rawTargetTx);
+      const targetTy = Math.floor(rawTargetTy);
+      const path = findRobotTilePath(world, structure, startTx, startTy, targetTx, targetTy);
+      if (path) return candidate;
+    }
+    return null;
+  }
+
+  function updateRobot(structure, world, dt) {
+    const robot = ensureRobotMeta(structure);
+    if (!robot || !world) return;
+    const nav = ensureRobotNavigationState(robot);
+
+    robot.mineTimer = Math.max(0, (robot.mineTimer || 0) - dt);
+    robot.retargetTimer = Math.max(0, (robot.retargetTimer || 0) - dt);
+    robot.pauseTimer = Math.max(0, (robot.pauseTimer || 0) - dt);
+    if (!Array.isArray(structure.storage)) {
+      structure.storage = createEmptyInventory(ROBOT_STORAGE_SIZE);
+    }
+
+    if (robot.pauseTimer > 0) {
+      robot.state = "paused";
+      if (nav) {
+        nav.stuckTimer = 0;
+        nav.lastX = robot.x;
+        nav.lastY = robot.y;
+      }
+      return;
+    }
+
+    const home = getRobotHomeWorldPosition(robot);
+    const storageFull = isInventoryFull(structure.storage);
+    if (storageFull) {
+      const homeDist = Math.hypot(home.x - robot.x, home.y - robot.y);
+      if (homeDist > CONFIG.tileSize * 0.4) {
+        robot.state = "returning";
+        moveRobotToward(world, structure, robot, home.x, home.y, dt);
+      } else {
+        robot.state = "waiting";
+        clearRobotNavigation(robot);
+      }
+      robot.targetResourceId = null;
+      return;
+    }
+
+    let target = Number.isInteger(robot.targetResourceId)
+      ? world.resources?.[robot.targetResourceId] ?? null
+      : null;
+    if (!robotCanMineResource(robot, target)) {
+      target = null;
+      robot.targetResourceId = null;
+      clearRobotNavigation(robot);
+    }
+
+    if (!target && robot.retargetTimer <= 0) {
+      target = findRobotTargetResource(world, structure, robot);
+      robot.targetResourceId = target ? target.id : null;
+      robot.retargetTimer = ROBOT_CONFIG.retargetInterval;
+      if (!target) clearRobotNavigation(robot);
+    }
+
+    if (!target) {
+      const homeDist = Math.hypot(home.x - robot.x, home.y - robot.y);
+      if (homeDist > CONFIG.tileSize * 0.5) {
+        robot.state = "returning";
+        moveRobotToward(world, structure, robot, home.x, home.y, dt);
+      } else {
+        robot.state = "idle";
+        clearRobotNavigation(robot);
+      }
+      return;
+    }
+
+    const distToTarget = Math.hypot(target.x - robot.x, target.y - robot.y);
+    if (distToTarget > ROBOT_CONFIG.mineRange) {
+      robot.state = "moving";
+      const moved = moveRobotToward(world, structure, robot, target.x, target.y, dt);
+      if (!moved && nav) {
+        const onBeach = isRobotOnBeachTile(world, robot);
+        const stuckLimit = onBeach
+          ? ROBOT_CONFIG.sandStuckRetargetTime
+          : ROBOT_CONFIG.stuckRetargetTime;
+        if (nav.stuckTimer >= stuckLimit) {
+          if (onBeach && tryRouteRobotTowardNearestBridge(world, structure, robot, target)) {
+            robot.state = "moving";
+            return;
+          }
+          robot.targetResourceId = null;
+          robot.retargetTimer = 0;
+          robot.state = "idle";
+          clearRobotNavigation(robot);
+        }
+      }
+      return;
+    }
+    clearRobotNavigation(robot);
+
+    if (robot.mineTimer > 0) {
+      robot.state = "mining";
+      return;
+    }
+
+    const dropId = getResourceDropId(target);
+    if (!dropId) {
+      robot.targetResourceId = null;
+      robot.retargetTimer = 0;
+      robot.state = "idle";
+      clearRobotNavigation(robot);
+      return;
+    }
+
+    stabilizeResourceHp(target);
+    const nextDamage = Math.max(1, Math.floor(ROBOT_CONFIG.mineDamage));
+    const willBreak = target.hp <= nextDamage;
+    if (willBreak && !canAddItem(structure.storage, dropId, 1)) {
+      robot.targetResourceId = null;
+      robot.state = "returning";
+      clearRobotNavigation(robot);
+      return;
+    }
+
+    const canHear = shouldPlayWorldSfx(world, robot.x, robot.y);
+    applyHarvestToResource(world, target, nextDamage, false, canHear);
+    if (willBreak) {
+      addItem(structure.storage, dropId, 1);
+      robot.targetResourceId = null;
+      robot.retargetTimer = 0;
+      clearRobotNavigation(robot);
+    }
+    robot.mineTimer = ROBOT_CONFIG.mineCooldown;
+    robot.state = "mining";
+    markDirty();
+  }
+
+  function updateRobots(dt) {
+    if (netIsClient()) return;
+    const world = state.surfaceWorld || state.world;
+    if (!world) return;
+    if (state.gameWon) return;
+    let changed = false;
+    for (const structure of state.structures) {
+      if (!structure || structure.removed || structure.type !== "robot") continue;
+      const before = getRobotPosition(structure);
+      updateRobot(structure, world, dt);
+      const after = getRobotPosition(structure);
+      if (!before || !after) continue;
+      if (Math.hypot(after.x - before.x, after.y - before.y) > 0.01) {
+        changed = true;
+      }
+    }
+    if (changed) {
+      markDirty();
+    }
+  }
+
   function getPlacementItem() {
     if (state.gameWon) return null;
     if (state.inCave || inventoryOpen || state.activeStation || state.activeChest) return null;
@@ -8844,10 +10108,30 @@
     if (structure) {
       if (isHouseType(structure.type) && isHouseType(itemDef.placeType)) {
         if ((structure.type === "small_house" || structure.type === "hut") && itemDef.placeType === "medium_house") {
-          return { ok: true, upgradeHouse: true, targetHouse: structure };
+          const footprint = canUseStructureFootprint(world, itemDef.placeType, structure.tx, structure.ty, {
+            ignoreStructureId: structure.id,
+            allowResourceClear: true,
+          });
+          if (!footprint.ok) return { ok: false, reason: footprint.reason || "Blocked" };
+          return {
+            ok: true,
+            upgradeHouse: true,
+            targetHouse: structure,
+            clearResourceTiles: footprint.clearResourceTiles,
+          };
         }
         if (structure.type === "medium_house" && itemDef.placeType === "large_house") {
-          return { ok: true, upgradeHouse: true, targetHouse: structure };
+          const footprint = canUseStructureFootprint(world, itemDef.placeType, structure.tx, structure.ty, {
+            ignoreStructureId: structure.id,
+            allowResourceClear: true,
+          });
+          if (!footprint.ok) return { ok: false, reason: footprint.reason || "Blocked" };
+          return {
+            ok: true,
+            upgradeHouse: true,
+            targetHouse: structure,
+            clearResourceTiles: footprint.clearResourceTiles,
+          };
         }
         return { ok: false, reason: "Upgrade order: Small -> Medium -> Large" };
       }
@@ -8856,15 +10140,6 @@
     if (itemDef.placeType === "medium_house" || itemDef.placeType === "large_house") {
       return { ok: false, reason: "Place on smaller house to upgrade" };
     }
-    const resource = getResourceAt(world, tx, ty);
-    if (resource) {
-      if (resource.stage && resource.stage !== "alive") {
-        return { ok: true, clearResource: true };
-      }
-      return { ok: false, reason: "Blocked" };
-    }
-    if (world === state.surfaceWorld && getCaveAt(world, tx, ty)) return { ok: false, reason: "Cave" };
-
     if (itemDef.placeType === "bridge") {
       if (baseLand) return { ok: false, reason: "Needs water" };
       const left = isWalkableTileInWorld(world, tx - 1, ty);
@@ -8894,6 +10169,23 @@
       return { ok: true };
     }
 
+    if (isHouseType(itemDef.placeType)) {
+      const footprint = canUseStructureFootprint(world, itemDef.placeType, tx, ty, {
+        allowResourceClear: true,
+      });
+      if (!footprint.ok) return { ok: false, reason: footprint.reason || "Blocked" };
+      return { ok: true, clearResourceTiles: footprint.clearResourceTiles };
+    }
+
+    const resource = getResourceAt(world, tx, ty);
+    if (resource) {
+      if (resource.stage && resource.stage !== "alive") {
+        return { ok: true, clearResourceTiles: [{ tx, ty }] };
+      }
+      return { ok: false, reason: "Blocked" };
+    }
+    if (world === state.surfaceWorld && getCaveAt(world, tx, ty)) return { ok: false, reason: "Cave" };
+
     if (!baseLand) return { ok: false, reason: "Needs land" };
     return { ok: true };
   }
@@ -8904,6 +10196,15 @@
 
   function upgradeHouseStructure(structure, nextType) {
     if (!structure || !isHouseType(nextType)) return false;
+    const surface = state.surfaceWorld || state.world;
+    const footprintCheck = canUseStructureFootprint(surface, nextType, structure.tx, structure.ty, {
+      ignoreStructureId: structure.id,
+      allowResourceClear: true,
+    });
+    if (!footprintCheck.ok) return false;
+    clearResourceTiles(surface, footprintCheck.clearResourceTiles);
+
+    setStructureFootprintInGrid(structure, false);
     const previousInterior = getHouseInterior(structure);
     structure.type = nextType;
     ensureHouseMeta(structure);
@@ -8929,6 +10230,7 @@
       state.housePlayer.x = clamp(state.housePlayer.x, 0.35, interior.width - 0.35);
       state.housePlayer.y = clamp(state.housePlayer.y, 0.35, interior.height - 0.35);
     }
+    setStructureFootprintInGrid(structure, true);
     return true;
   }
 
@@ -8979,13 +10281,8 @@
       return false;
     }
 
-    if (result.clearResource) {
-      const res = getResourceAt(state.world, tx, ty);
-      if (res) {
-        res.removed = true;
-        const idx = tileIndex(tx, ty, state.world.size);
-        state.world.resourceGrid[idx] = -1;
-      }
+    if (result.clearResourceTiles?.length) {
+      clearResourceTiles(state.world, result.clearResourceTiles);
     }
 
     if (result.upgradeHouse && result.targetHouse) {
@@ -8995,7 +10292,11 @@
       }
     } else {
       addStructure(placement.itemDef.placeType, tx, ty, {
-        storage: placement.itemDef.placeType === "chest" ? createEmptyInventory(CHEST_SIZE) : null,
+        storage: placement.itemDef.placeType === "chest"
+          ? createEmptyInventory(CHEST_SIZE)
+          : placement.itemDef.placeType === "robot"
+            ? createEmptyInventory(ROBOT_STORAGE_SIZE)
+            : null,
         pending: netIsClient(),
       });
     }
@@ -9181,26 +10482,34 @@
     }
 
     if (state.activeStation) {
+      if (state.activeStation.type === "robot" && !netIsClientReady()) {
+        setRobotInteractionPause(state.activeStation, 0.35);
+      }
       let dist = Infinity;
       if (state.activeStation.interior && state.housePlayer) {
         dist = Math.hypot((state.activeStation.tx + 0.5) - state.housePlayer.x, (state.activeStation.ty + 0.5) - state.housePlayer.y) * CONFIG.tileSize;
       } else {
+        const center = getStructureCenterWorld(state.activeStation);
         dist = Math.hypot(
-          (state.activeStation.tx + 0.5) * CONFIG.tileSize - state.player.x,
-          (state.activeStation.ty + 0.5) * CONFIG.tileSize - state.player.y
+          center.x - state.player.x,
+          center.y - state.player.y
         );
       }
       if (dist > CONFIG.interactRange * 1.3) closeStationMenu();
     }
 
     if (state.activeChest) {
+      if (state.activeChest.type === "robot" && !netIsClientReady()) {
+        setRobotInteractionPause(state.activeChest, 0.35);
+      }
       let dist = Infinity;
       if (state.activeChest.interior && state.housePlayer) {
         dist = Math.hypot((state.activeChest.tx + 0.5) - state.housePlayer.x, (state.activeChest.ty + 0.5) - state.housePlayer.y) * CONFIG.tileSize;
       } else {
+        const center = getStructureCenterWorld(state.activeChest);
         dist = Math.hypot(
-          (state.activeChest.tx + 0.5) * CONFIG.tileSize - state.player.x,
-          (state.activeChest.ty + 0.5) * CONFIG.tileSize - state.player.y
+          center.x - state.player.x,
+          center.y - state.player.y
         );
       }
       if (dist > CONFIG.interactRange * 1.3) closeChest();
@@ -9367,6 +10676,8 @@
     updateMonsters(dt);
     updateAnimals(dt);
     updateVillagers(dt);
+    maintainRobotInteractionPause(dt);
+    updateRobots(dt);
     updatePlayerEffects(dt);
     updateDrops();
     updateInteraction();
@@ -9778,13 +11089,25 @@
     if (structure.removed) return;
     const def = STRUCTURE_DEFS[structure.type];
     if (!def) return;
-    const screenX = structure.tx * CONFIG.tileSize - camera.x;
-    const screenY = structure.ty * CONFIG.tileSize - camera.y;
+    const footprint = getStructureFootprint(structure.type);
+    let worldX = structure.tx * CONFIG.tileSize;
+    let worldY = structure.ty * CONFIG.tileSize;
+    if (structure.type === "robot") {
+      const robot = ensureRobotMeta(structure);
+      if (robot) {
+        worldX = robot.x - CONFIG.tileSize * 0.5;
+        worldY = robot.y - CONFIG.tileSize * 0.5;
+      }
+    }
+    const screenX = worldX - camera.x;
+    const screenY = worldY - camera.y;
+    const structureWidthPx = footprint.w * CONFIG.tileSize;
+    const structureHeightPx = footprint.h * CONFIG.tileSize;
     if (
-      screenX < -CONFIG.tileSize ||
-      screenY < -CONFIG.tileSize ||
-      screenX > viewWidth + CONFIG.tileSize ||
-      screenY > viewHeight + CONFIG.tileSize
+      screenX < -structureWidthPx ||
+      screenY < -structureHeightPx ||
+      screenX > viewWidth + structureWidthPx ||
+      screenY > viewHeight + structureHeightPx
     ) {
       return;
     }
@@ -9794,14 +11117,16 @@
     const baseX = screenX + inset;
     const baseY = screenY + inset;
     const baseSize = size - inset * 2;
+    const baseWidth = structureWidthPx - inset * 2;
+    const baseHeight = structureHeightPx - inset * 2;
 
     if (def.blocking) {
       ctx.fillStyle = "rgba(0,0,0,0.25)";
       ctx.beginPath();
       ctx.ellipse(
-        screenX + size / 2,
-        screenY + size - 4,
-        baseSize / 2.2,
+        screenX + structureWidthPx / 2,
+        screenY + structureHeightPx - 4,
+        Math.max(baseSize / 2.2, baseWidth / 2.6),
         4,
         0,
         0,
@@ -9882,32 +11207,46 @@
         const isVillageHouse = !!structure.meta?.village;
         const wallColor = isVillageHouse ? tintColor(def.color, 0.12) : tintColor(def.color, 0.05);
         const roofColor = isVillageHouse ? "#8f6f41" : tintColor(def.color, -0.25);
+        const wallTop = baseY + Math.max(10, Math.floor(baseHeight * 0.28));
+        const wallHeight = Math.max(8, baseHeight - (wallTop - baseY) - 2);
+
         ctx.fillStyle = wallColor;
-        ctx.fillRect(baseX + 2, baseY + 10, baseSize - 4, baseSize - 12);
+        ctx.fillRect(baseX + 2, wallTop, baseWidth - 4, wallHeight);
         ctx.fillStyle = roofColor;
         ctx.beginPath();
-        ctx.moveTo(baseX + 2, baseY + 12);
-        ctx.lineTo(baseX + baseSize / 2, baseY - 3);
-        ctx.lineTo(baseX + baseSize - 2, baseY + 12);
+        ctx.moveTo(baseX + 2, wallTop + 2);
+        ctx.lineTo(baseX + baseWidth / 2, baseY - 4);
+        ctx.lineTo(baseX + baseWidth - 2, wallTop + 2);
         ctx.closePath();
         ctx.fill();
         if (isVillageHouse) {
           ctx.strokeStyle = "rgba(235, 214, 152, 0.45)";
           ctx.lineWidth = 1;
-          for (let stripe = 0; stripe < 4; stripe += 1) {
+          const stripeCount = Math.max(4, Math.floor(baseWidth / 18));
+          const stripeStep = (baseWidth - 12) / stripeCount;
+          for (let stripe = 0; stripe < stripeCount; stripe += 1) {
+            const sx = baseX + 6 + stripe * stripeStep;
             ctx.beginPath();
-            ctx.moveTo(baseX + 4 + stripe * 6, baseY + 10);
-            ctx.lineTo(baseX + 8 + stripe * 6, baseY + 4);
+            ctx.moveTo(sx, wallTop);
+            ctx.lineTo(sx + 6, wallTop - 7);
             ctx.stroke();
           }
         }
+        const doorWidth = clamp(Math.floor(baseWidth * 0.14), 8, 14);
+        const doorHeight = clamp(Math.floor(baseHeight * 0.22), 8, 12);
         ctx.fillStyle = "#3a2a1b";
-        ctx.fillRect(baseX + baseSize / 2 - 4, baseY + baseSize - 10, 8, 8);
+        ctx.fillRect(baseX + baseWidth / 2 - doorWidth / 2, baseY + baseHeight - doorHeight - 1, doorWidth, doorHeight);
+        if (baseWidth >= CONFIG.tileSize * 1.9) {
+          const windowY = wallTop + Math.max(3, Math.floor((baseHeight - wallTop + baseY) * 0.2));
+          ctx.fillStyle = "rgba(238, 215, 158, 0.85)";
+          ctx.fillRect(baseX + 8, windowY, 7, 5);
+          ctx.fillRect(baseX + baseWidth - 15, windowY, 7, 5);
+        }
         const tierLabel = structure.type === "small_house" ? "S" : structure.type === "medium_house" ? "M" : "L";
         ctx.fillStyle = "rgba(255, 240, 210, 0.8)";
         ctx.font = "bold 10px Trebuchet MS";
         ctx.textAlign = "center";
-        ctx.fillText(tierLabel, baseX + baseSize / 2, baseY + 9);
+        ctx.fillText(tierLabel, baseX + baseWidth / 2, baseY + 9);
         break;
       }
       case "bed": {
@@ -10011,6 +11350,40 @@
         ctx.fillRect(baseX + baseSize / 2 - 3, baseY + baseSize / 2, 6, 6);
         break;
       }
+      case "robot": {
+        const robot = ensureRobotMeta(structure);
+        ctx.fillStyle = "rgba(0,0,0,0.24)";
+        ctx.beginPath();
+        ctx.ellipse(baseX + baseSize / 2, baseY + baseSize - 4, 11, 4, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = "#456484";
+        ctx.fillRect(baseX + 5, baseY + 13, baseSize - 10, baseSize - 17);
+        ctx.fillStyle = "#658ab3";
+        ctx.fillRect(baseX + 8, baseY + 6, baseSize - 16, 10);
+        ctx.fillStyle = "#d8eeff";
+        ctx.fillRect(baseX + 10, baseY + 8, 4, 3);
+        ctx.fillRect(baseX + baseSize - 14, baseY + 8, 4, 3);
+        ctx.strokeStyle = "rgba(191, 228, 255, 0.7)";
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(baseX + 6, baseY + 20);
+        ctx.lineTo(baseX + 2, baseY + 24);
+        ctx.moveTo(baseX + baseSize - 6, baseY + 20);
+        ctx.lineTo(baseX + baseSize - 2, baseY + 24);
+        ctx.stroke();
+        if (robot?.state === "mining" || robot?.state === "moving") {
+          ctx.fillStyle = "rgba(124, 230, 169, 0.8)";
+          ctx.beginPath();
+          ctx.arc(baseX + baseSize / 2, baseY + 4, 2.5, 0, Math.PI * 2);
+          ctx.fill();
+        } else if (robot?.state === "waiting") {
+          ctx.fillStyle = "rgba(255, 192, 120, 0.85)";
+          ctx.beginPath();
+          ctx.arc(baseX + baseSize / 2, baseY + 4, 2.5, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        break;
+      }
       default: {
         ctx.fillStyle = def.color;
         ctx.fillRect(baseX, baseY, baseSize, baseSize);
@@ -10052,6 +11425,24 @@
     if (state.player && state.torchTimer > 0) {
       const cx = state.player.x - camera.x;
       const cy = state.player.y - camera.y;
+      const radius = 130;
+      const gradient = ctx.createRadialGradient(cx, cy, 18, cx, cy, radius);
+      gradient.addColorStop(0, "rgba(255, 214, 145, 0.35)");
+      gradient.addColorStop(0.52, "rgba(250, 176, 90, 0.16)");
+      gradient.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.fillStyle = gradient;
+      ctx.beginPath();
+      ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    for (const remote of net.players.values()) {
+      if (!remote || remote.inCave || remote.inHut) continue;
+      if ((remote.torchTimer ?? 0) <= 0) continue;
+      const px = typeof remote.renderX === "number" ? remote.renderX : remote.x;
+      const py = typeof remote.renderY === "number" ? remote.renderY : remote.y;
+      if (typeof px !== "number" || typeof py !== "number") continue;
+      const cx = px - camera.x;
+      const cy = py - camera.y;
       const radius = 130;
       const gradient = ctx.createRadialGradient(cx, cy, 18, cx, cy, radius);
       gradient.addColorStop(0, "rgba(255, 214, 145, 0.35)");
@@ -10903,28 +12294,56 @@
     if (placement) {
       const { tx, ty } = getPlacementTile();
       if (inBounds(tx, ty, state.world.size)) {
-        const screenX = tx * CONFIG.tileSize - camera.x;
-        const screenY = ty * CONFIG.tileSize - camera.y;
         const placeResult = canPlaceItem(placement.itemId, tx, ty);
         const valid = placeResult.ok;
-        ctx.fillStyle = valid ? "rgba(120, 210, 255, 0.25)" : "rgba(240, 80, 80, 0.25)";
-        ctx.fillRect(screenX, screenY, CONFIG.tileSize, CONFIG.tileSize);
-        ctx.strokeStyle = valid ? "rgba(120, 210, 255, 0.8)" : "rgba(240, 80, 80, 0.8)";
-        ctx.lineWidth = 2;
-        ctx.strokeRect(screenX + 2, screenY + 2, CONFIG.tileSize - 4, CONFIG.tileSize - 4);
+
+        const previewType = isHouseType(placement.itemDef.placeType) ? placement.itemDef.placeType : null;
+        const anchorTx = (placeResult.upgradeHouse && placeResult.targetHouse)
+          ? placeResult.targetHouse.tx
+          : tx;
+        const anchorTy = (placeResult.upgradeHouse && placeResult.targetHouse)
+          ? placeResult.targetHouse.ty
+          : ty;
+        const footprint = previewType ? getStructureFootprint(previewType) : { w: 1, h: 1 };
+
+        forEachStructureFootprintTile(previewType || "single", anchorTx, anchorTy, (fx, fy) => {
+          const screenX = fx * CONFIG.tileSize - camera.x;
+          const screenY = fy * CONFIG.tileSize - camera.y;
+          ctx.fillStyle = valid ? "rgba(120, 210, 255, 0.25)" : "rgba(240, 80, 80, 0.25)";
+          ctx.fillRect(screenX, screenY, CONFIG.tileSize, CONFIG.tileSize);
+          ctx.strokeStyle = valid ? "rgba(120, 210, 255, 0.8)" : "rgba(240, 80, 80, 0.8)";
+          ctx.lineWidth = 2;
+          ctx.strokeRect(screenX + 2, screenY + 2, CONFIG.tileSize - 4, CONFIG.tileSize - 4);
+        });
 
         if (placeResult.upgradeHouse && placeResult.targetHouse && isHouseType(placement.itemDef.placeType)) {
           const tier = getHouseTier(placement.itemDef.placeType);
+          const screenX = anchorTx * CONFIG.tileSize - camera.x;
+          const screenY = anchorTy * CONFIG.tileSize - camera.y;
           const previewW = tier.width * 8;
           const previewH = tier.height * 8;
           ctx.fillStyle = "rgba(255, 230, 160, 0.2)";
-          ctx.fillRect(screenX - previewW / 2 + 16, screenY - previewH / 2 + 16, previewW, previewH);
+          ctx.fillRect(
+            screenX + (CONFIG.tileSize * footprint.w) / 2 - previewW / 2,
+            screenY + (CONFIG.tileSize * footprint.h) / 2 - previewH / 2,
+            previewW,
+            previewH
+          );
           ctx.strokeStyle = "rgba(255, 230, 160, 0.8)";
-          ctx.strokeRect(screenX - previewW / 2 + 16, screenY - previewH / 2 + 16, previewW, previewH);
+          ctx.strokeRect(
+            screenX + (CONFIG.tileSize * footprint.w) / 2 - previewW / 2,
+            screenY + (CONFIG.tileSize * footprint.h) / 2 - previewH / 2,
+            previewW,
+            previewH
+          );
           ctx.font = "12px Trebuchet MS";
           ctx.fillStyle = "rgba(255,245,220,0.9)";
           ctx.textAlign = "center";
-          ctx.fillText(`Interior ${tier.width}x${tier.height}`, screenX + CONFIG.tileSize / 2, screenY - 10);
+          ctx.fillText(
+            `Interior ${tier.width}x${tier.height}`,
+            screenX + (CONFIG.tileSize * footprint.w) / 2,
+            screenY - 10
+          );
         }
       }
     }
@@ -11054,6 +12473,7 @@
     setSettingsTab("settings");
     updateVolumeUI();
     setDebugUnlocked(state.debugUnlocked, false);
+    updateDebugSpeedUI();
     updateMosesButton();
     updateInfiniteResourcesButton();
     if (settingsPanel) settingsPanel.classList.add("hidden");
@@ -11151,10 +12571,16 @@
         setSfxVolumeFromPercent(sfxVolumeInput.value);
       });
     }
+    if (debugSpeedInput) {
+      debugSpeedInput.addEventListener("input", () => {
+        setDebugSpeedFromPercent(debugSpeedInput.value);
+      });
+    }
     if (resetWorldBtn) resetWorldBtn.addEventListener("click", resetWorldFromSettings);
     if (unlockDebugBtn) unlockDebugBtn.addEventListener("click", unlockDebugFromSettings);
     if (debugToggle) debugToggle.addEventListener("click", toggleDebugMenu);
     if (giveBeaconBtn) giveBeaconBtn.addEventListener("click", giveDebugBeacon);
+    if (giveRobotBtn) giveRobotBtn.addEventListener("click", giveDebugRobot);
     if (spawnCaveBtn) spawnCaveBtn.addEventListener("click", spawnDebugCaveAtPlayer);
     if (spawnVillageBtn) spawnVillageBtn.addEventListener("click", spawnDebugVillageAtPlayer);
     if (forceDayBtn) forceDayBtn.addEventListener("click", forceDebugDay);
