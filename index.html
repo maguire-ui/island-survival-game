@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>Island Survival Game</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <canvas id="game"></canvas>
+
+  <div id="startScreen" class="overlay start-screen">
+    <div class="start-scene-art" aria-hidden="true">
+      <div class="scene-island scene-island-left">
+        <span class="scene-tree t1"></span>
+        <span class="scene-tree t2"></span>
+      </div>
+      <div class="scene-island scene-island-right">
+        <span class="scene-tree t1"></span>
+        <span class="scene-tree t2"></span>
+      </div>
+      <div class="scene-island scene-island-main">
+        <span class="scene-tree t1"></span>
+        <span class="scene-tree t2"></span>
+        <span class="scene-tree t3"></span>
+      </div>
+    </div>
+    <div class="overlay-card start-card">
+      <div class="overlay-kicker">Open World Survival</div>
+      <div class="overlay-title">Island Survival</div>
+      <div class="overlay-text">Scavenge, craft, survive nights, and signal for rescue.</div>
+      <div id="startButtons" class="start-buttons">
+        <button id="soloBtn" class="action-btn">Play Solo</button>
+        <button id="hostBtn" class="action-btn">Host Room</button>
+        <button id="joinBtn" class="action-btn">Join Room</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="ui">
+    <div id="topbar">
+      <div id="seedDisplay">Seed: --</div>
+      <div id="toolDisplay">Tool: Basic</div>
+      <div id="timeDisplay">Day</div>
+      <div id="healthDisplay">
+        <div id="healthFill"></div>
+      </div>
+      <div id="mpStatus">MP: Offline</div>
+      <div id="roomDisplay">Room: --</div>
+      <button id="mpCopy" type="button">Copy Link</button>
+      <button id="mpJoin" type="button">Join Room</button>
+      <button id="settingsToggle" type="button" aria-label="Settings">⚙</button>
+      <button id="debugToggle" type="button" class="hidden">Debug</button>
+      <div id="saveStatus">Saved</div>
+    </div>
+
+    <div id="prompt"></div>
+
+    <div id="buildMenu" class="panel hidden">
+      <div class="panel-title">Crafting Bench</div>
+      <div class="tabs">
+        <button class="tab-btn active" data-tab="buildings">Buildings</button>
+        <button class="tab-btn" data-tab="upgrades">Upgrades</button>
+      </div>
+      <div id="buildList" class="recipe-list"></div>
+    </div>
+
+    <div id="stationMenu" class="panel hidden">
+      <div id="stationTitle" class="panel-title">Station</div>
+      <div id="stationOptions" class="recipe-list"></div>
+    </div>
+
+    <div id="chestPanel" class="panel hidden">
+      <div class="panel-title">Chest</div>
+      <div id="chestSlots" class="slot-grid"></div>
+      <div class="panel-hint">Click items to quick-transfer between chest and inventory.</div>
+      <button id="destroyChest" class="action-btn">Destroy Chest</button>
+    </div>
+
+    <div id="hotbar" class="slot-row"></div>
+
+    <div id="inventory" class="panel hidden">
+      <div class="panel-title">Inventory</div>
+      <div id="inventorySlots" class="slot-grid"></div>
+      <div class="panel-hint">Click a slot to move or merge stacks.</div>
+    </div>
+
+    <div id="debugPanel" class="panel hidden">
+      <div class="panel-title">Debug Tools</div>
+      <button id="giveBeaconBtn" class="action-btn">Give Rescue Beacon</button>
+      <button id="spawnCaveBtn" class="action-btn">Spawn Cave Here</button>
+      <button id="spawnVillageBtn" class="action-btn">Spawn Village Here</button>
+      <button id="forceDayBtn" class="action-btn">Set Day</button>
+      <button id="forceNightBtn" class="action-btn">Set Night</button>
+      <button id="mosesBtn" class="action-btn">Moses: Off</button>
+      <button id="infiniteResourcesBtn" class="action-btn">Infinite Resources: Off</button>
+    </div>
+
+    <div id="settingsPanel" class="panel hidden">
+      <div class="panel-title">Game Menu</div>
+      <div class="tabs">
+        <button id="settingsTabBtn" class="tab-btn active" type="button">Settings</button>
+        <button id="objectivesTabBtn" class="tab-btn" type="button">Objectives</button>
+      </div>
+      <div id="settingsContent">
+        <div class="settings-row">
+          <span>Music Volume</span>
+          <span id="musicVolumeValue">35%</span>
+        </div>
+        <input id="musicVolume" class="settings-slider" type="range" min="0" max="100" step="1" value="35" />
+        <div class="settings-row">
+          <span>SFX Volume</span>
+          <span id="sfxVolumeValue">65%</span>
+        </div>
+        <input id="sfxVolume" class="settings-slider" type="range" min="0" max="100" step="1" value="65" />
+        <button id="resetWorldBtn" class="action-btn">Reset World</button>
+        <button id="unlockDebugBtn" class="action-btn">Access Debug Tools</button>
+        <div id="debugUnlockStatus" class="panel-hint">Debug tools locked</div>
+      </div>
+      <div id="objectivesContent" class="hidden">
+        <div id="objectiveGuide" class="objective-guide"></div>
+      </div>
+    </div>
+
+    <div id="touch">
+      <div id="stick">
+        <div id="stickKnob"></div>
+      </div>
+      <button id="inventoryBtn">Inventory</button>
+      <button id="dropBtn">Drop</button>
+      <button id="actionBtn">Interact</button>
+      <button id="attackBtn">Attack</button>
+    </div>
+  </div>
+
+  <div id="endScreen" class="overlay hidden">
+    <div class="overlay-card">
+      <div class="overlay-title">Rescued!</div>
+      <div class="overlay-text">
+        Your beacon was seen. A rescue crew arrives at dawn.
+      </div>
+      <button id="newRunBtn" class="action-btn">Start New Seed</button>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/peerjs@1.5.5/dist/peerjs.min.js"></script>
+  <script src="src/main.js"></script>
+</body>
+</html>
