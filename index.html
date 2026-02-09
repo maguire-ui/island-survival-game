@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
   <title>Island Survival Game</title>
-  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="styles.css?v=20260209-01" />
 </head>
 <body>
   <canvas id="game"></canvas>
@@ -95,6 +95,19 @@
       <button id="forceNightBtn" class="action-btn">Set Night</button>
       <button id="mosesBtn" class="action-btn">Moses: Off</button>
       <button id="infiniteResourcesBtn" class="action-btn">Infinite Resources: Off</button>
+      <div class="settings-row">
+        <span>Speed Amplifier</span>
+        <span id="debugSpeedValue">1.0x</span>
+      </div>
+      <input
+        id="debugSpeed"
+        class="settings-slider"
+        type="range"
+        min="100"
+        max="400"
+        step="10"
+        value="100"
+      />
     </div>
 
     <div id="settingsPanel" class="panel hidden">
@@ -145,6 +158,6 @@
   </div>
 
   <script src="https://unpkg.com/peerjs@1.5.5/dist/peerjs.min.js"></script>
-  <script src="src/main.js"></script>
+  <script src="src/main.js?v=20260209-01"></script>
 </body>
 </html>
