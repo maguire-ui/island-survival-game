@@ -582,6 +582,7 @@ button:active:not(:disabled) {
 
 .scene-island {
   position: absolute;
+  overflow: hidden;
   border-radius: 58% 42% 52% 48% / 44% 56% 42% 58%;
   background:
     radial-gradient(85% 60% at 50% 24%, rgba(57, 163, 110, 0.92), rgba(57, 163, 110, 0) 60%),
@@ -625,11 +626,11 @@ button:active:not(:disabled) {
 
 .scene-island-main {
   --island-tilt: 0deg;
-  width: min(760px, 72vw);
-  height: min(256px, 28vw);
+  width: min(660px, 60vw);
+  height: min(220px, 22vw);
   left: 50%;
   transform: translateX(-50%) rotate(0deg);
-  bottom: -3%;
+  bottom: 1%;
 }
 
 .scene-tree {
