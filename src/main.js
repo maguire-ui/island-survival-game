@@ -8128,6 +8128,7 @@
     } catch (err) {
       // ignore delete failures
     }
+    setDebugUnlocked(false);
     startNewGame(seed);
     saveGame();
     closeSettingsPanel();
@@ -8154,18 +8155,65 @@
   }
 
   function giveDebugRobot() {
+    if (!state.debugUnlocked) {
+      setPrompt("Debug is locked. Open Settings to unlock.", 1.2);
+      return;
+    }
     if (netIsClientReady()) {
       setPrompt("Host only", 1);
       return;
     }
+    const world = state.surfaceWorld || state.world;
+    if (!state.player || !world || state.inCave) {
+      setPrompt("Leave cave first", 1);
+      return;
+    }
+
+    const startTx = Math.floor(state.player.x / CONFIG.tileSize);
+    const startTy = Math.floor(state.player.y / CONFIG.tileSize);
+    let spawnTile = null;
+    let tilesToClear = null;
+    for (let radius = 0; radius <= 8; radius += 1) {
+      if (spawnTile) break;
+      for (let dy = -radius; dy <= radius; dy += 1) {
+        if (spawnTile) break;
+        for (let dx = -radius; dx <= radius; dx += 1) {
+          const tx = startTx + dx;
+          const ty = startTy + dy;
+          const place = canPlaceItemAt(world, false, "robot", tx, ty);
+          if (!place.ok) continue;
+          spawnTile = { tx, ty };
+          tilesToClear = place.clearResourceTiles || null;
+          break;
+        }
+      }
+    }
+
+    if (spawnTile) {
+      if (tilesToClear?.length) {
+        clearResourceTiles(world, tilesToClear);
+      }
+      addStructure("robot", spawnTile.tx, spawnTile.ty, {
+        storage: createEmptyInventory(ROBOT_STORAGE_SIZE),
+      });
+      setPrompt("Robot spawned", 1.2);
+      markDirty();
+      if (net.isHost && net.connections.size > 0) {
+        broadcastNet(buildSnapshot());
+      }
+      return;
+    }
+
     if (!state.inventory) return;
     const left = addItem(state.inventory, "robot", 1);
     if (left > 0) {
-      setPrompt("Inventory full", 0.9);
+      setPrompt("No room to spawn or store robot", 1.2);
       return;
     }
+    const hotbarIndex = state.inventory.findIndex((slot, idx) => idx < HOTBAR_SIZE && slot?.id === "robot");
+    if (hotbarIndex >= 0) activeSlot = hotbarIndex;
     updateAllSlotUI();
-    setPrompt("Robot added", 1.2);
+    setPrompt("Robot added to inventory", 1.2);
     markDirty();
   }
 
@@ -8315,6 +8363,7 @@
     if (state.world && state.player && !netIsClientReady()) {
       saveGame();
     }
+    setDebugUnlocked(false);
     closeStationMenu();
     closeChest();
     closeInventory();

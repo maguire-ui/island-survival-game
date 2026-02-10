@@ -363,6 +363,8 @@ html, body {
   bottom: auto;
   right: auto;
   width: 220px;
+  max-height: calc(100vh - 140px);
+  overflow-y: auto;
 }
 
 #settingsPanel {
