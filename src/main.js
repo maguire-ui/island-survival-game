@@ -29,6 +29,7 @@
   const soloBtn = document.getElementById("soloBtn");
   const hostBtn = document.getElementById("hostBtn");
   const joinBtn = document.getElementById("joinBtn");
+  const movePadEl = document.getElementById("movePad");
   const stickEl = document.getElementById("stick");
   const stickKnobEl = document.getElementById("stickKnob");
   const inventoryBtn = document.getElementById("inventoryBtn");
@@ -97,6 +98,8 @@
     attackCooldown: 1.1,
     aggroRange: 180,
   };
+
+  const TOUCH_STICK_MAX_DIST = 40;
 
   const MONSTER_CAMPFIRE_FEAR = Object.freeze({
     radiusPadding: 6,
@@ -444,14 +447,14 @@
       id: "bridge",
       name: "Bridge",
       description: "Cross water to reach other islands.",
-      cost: { wood: 4 },
+      cost: { wood: 4, stick: 2 },
     },
     {
       id: "bridge_bundle",
       icon: "bridge",
       name: "Bridge Bundle",
       description: "Craft multiple bridges at once for rapid expansion.",
-      cost: { wood: 11, plank: 2, stick: 4 },
+      cost: { wood: 8, plank: 1, stick: 4 },
       output: { bridge: 3 },
     },
     {
@@ -958,6 +961,8 @@
     stuckRetargetTime: 1.1,
     sandStuckRetargetTime: 0.7,
     bridgePathChecks: 28,
+    minSeparationDistance: 16,
+    crowdingResolvePasses: 2,
   });
 
   let dpr = window.devicePixelRatio || 1;
@@ -2287,7 +2292,11 @@
     if (!structure.meta) return null;
     const meta = structure.meta;
     if (meta.house) {
+      const extra = {};
+      if (meta.village) extra.village = true;
+      if (meta.spawnedByPlayer) extra.spawnedByPlayer = true;
       return {
+        ...extra,
         house: {
           tier: meta.house.tier,
           width: meta.house.width,
@@ -2303,7 +2312,8 @@
         },
       };
     }
-    return null;
+    // Preserve non-house metadata (e.g. village/spawn markers).
+    return JSON.parse(JSON.stringify(meta));
   }
 
   function buildMonstersFromSnapshot(previous, snapshotMonsters, world = null) {
@@ -2404,6 +2414,7 @@
         id: cave.id,
         tx: cave.tx,
         ty: cave.ty,
+        spawnedByPlayer: !!cave.spawnedByPlayer,
         world: serializeWorldState(cave.world),
       })) ?? [],
       structures: serializeStructuresList(),
@@ -2544,7 +2555,11 @@
     if (!world || !Array.isArray(caveEntries)) return;
     for (const entry of caveEntries) {
       if (!entry || typeof entry.id !== "number") continue;
-      if (world.caves.some((cave) => cave.id === entry.id)) continue;
+      const existingById = world.caves.find((cave) => cave.id === entry.id);
+      if (existingById) {
+        if (entry.spawnedByPlayer) existingById.spawnedByPlayer = true;
+        continue;
+      }
       if (typeof entry.tx !== "number" || typeof entry.ty !== "number") continue;
       const tx = Math.floor(entry.tx);
       const ty = Math.floor(entry.ty);
@@ -2552,7 +2567,7 @@
       const idx = tileIndex(tx, ty, world.size);
       if (!world.tiles[idx]) continue;
       if (world.caves.some((cave) => cave.tx === tx && cave.ty === ty)) continue;
-      addSurfaceCave(world, tx, ty, entry.id);
+      addSurfaceCave(world, tx, ty, entry.id, { spawnedByPlayer: !!entry.spawnedByPlayer });
     }
   }
 
@@ -2923,7 +2938,17 @@
     const sourcePlayer = conn
       ? { ...(net.players.get(conn.peer) || {}), unlocks: normalizeUnlocks(message.unlocks ?? net.players.get(conn.peer)?.unlocks) }
       : state.player;
-    const target = findNearestMonsterAt(world, { x: message.x, y: message.y }, MONSTER.attackRange + 8);
+    const sourceX = Number.isFinite(sourcePlayer?.x) ? sourcePlayer.x : Number(message.x);
+    const sourceY = Number.isFinite(sourcePlayer?.y) ? sourcePlayer.y : Number(message.y);
+    if (!Number.isFinite(sourceX) || !Number.isFinite(sourceY)) return;
+    const aimX = Number.isFinite(message.aimX) ? message.aimX : (Number.isFinite(message.x) ? message.x : sourceX);
+    const aimY = Number.isFinite(message.aimY) ? message.aimY : (Number.isFinite(message.y) ? message.y : sourceY);
+    const maxReach = MONSTER.attackRange + 12;
+
+    let target = findNearestMonsterAt(world, { x: aimX, y: aimY }, maxReach);
+    if (target && Math.hypot(target.x - sourceX, target.y - sourceY) > maxReach) {
+      target = findNearestMonsterAt(world, { x: sourceX, y: sourceY }, maxReach);
+    }
     if (target) {
       if (!canDamageMonsters(sourcePlayer)) return;
       const damage = clamp(getAppliedAttackDamage(sourcePlayer, target), 1, 12);
@@ -2938,7 +2963,10 @@
     }
     const surface = state.surfaceWorld || state.world;
     if (world !== surface) return;
-    const animal = findNearestAnimalAt(world, { x: message.x, y: message.y }, MONSTER.attackRange + 8);
+    let animal = findNearestAnimalAt(world, { x: aimX, y: aimY }, maxReach);
+    if (animal && Math.hypot(animal.x - sourceX, animal.y - sourceY) > maxReach) {
+      animal = findNearestAnimalAt(world, { x: sourceX, y: sourceY }, maxReach);
+    }
     if (!animal) return;
     const damage = clamp(getAppliedAttackDamage(sourcePlayer, animal), 1, 12);
     animal.hp -= damage;
@@ -3176,11 +3204,7 @@
     interactPressed = false;
     attackPressed = false;
     keyState.clear();
-    touch.active = false;
-    touch.pointerId = null;
-    touch.dx = 0;
-    touch.dy = 0;
-    if (stickKnobEl) stickKnobEl.style.transform = "translate(0px, 0px)";
+    resetTouchInput();
     closeStationMenu();
     closeChest();
     closeInventory();
@@ -4184,6 +4208,7 @@
         id: caves.length,
         tx,
         ty,
+        spawnedByPlayer: false,
         world: generateCaveWorld(seed, caves.length),
       });
       return true;
@@ -4909,6 +4934,7 @@
         id: cave.id,
         tx: cave.tx,
         ty: cave.ty,
+        spawnedByPlayer: !!cave.spawnedByPlayer,
         resourceStates: cave.world.resources.map((res) => serializeResource(res)),
         respawnTasks: cave.world.respawnTasks ?? [],
         drops: (cave.world.drops ?? []).map((drop) => ({
@@ -5780,7 +5806,12 @@
     }
   }
 
-  function addVillageHouse(world, tx, ty, type, rng, withChest, withBed) {
+  function buildVillageStructureMeta(spawnedByPlayer = false) {
+    if (spawnedByPlayer) return { village: true, spawnedByPlayer: true };
+    return { village: true };
+  }
+
+  function addVillageHouse(world, tx, ty, type, rng, withChest, withBed, spawnedByPlayer = false) {
     const footprintCheck = canUseStructureFootprint(world, type, tx, ty, { allowResourceClear: true });
     if (!footprintCheck.ok) return null;
     let villageTilesValid = true;
@@ -5790,7 +5821,7 @@
     });
     if (!villageTilesValid) return null;
     clearResourceTiles(world, footprintCheck.clearResourceTiles);
-    const house = addStructure(type, tx, ty, { meta: { village: true } });
+    const house = addStructure(type, tx, ty, { meta: buildVillageStructureMeta(spawnedByPlayer) });
     if (!house) return null;
     ensureHouseMeta(house);
     const interior = getHouseInterior(house);
@@ -5817,11 +5848,11 @@
     return house;
   }
 
-  function placeVillagePath(world, tx, ty) {
+  function placeVillagePath(world, tx, ty, spawnedByPlayer = false) {
     if (!canPlaceVillageTile(world, tx, ty)) return false;
     if (getStructureAt(tx, ty)) return false;
     clearResourceForStructure(world, tx, ty);
-    addStructure("village_path", tx, ty, { meta: { village: true } });
+    addStructure("village_path", tx, ty, { meta: buildVillageStructureMeta(spawnedByPlayer) });
     return true;
   }
 
@@ -5938,25 +5969,26 @@
     return spawned;
   }
 
-  function carveVillagePathLine(world, x0, y0, x1, y1) {
+  function carveVillagePathLine(world, x0, y0, x1, y1, spawnedByPlayer = false) {
     let x = x0;
     let y = y0;
     const stepX = x1 > x0 ? 1 : -1;
     const stepY = y1 > y0 ? 1 : -1;
     while (x !== x1) {
-      placeVillagePath(world, x, y);
+      placeVillagePath(world, x, y, spawnedByPlayer);
       x += stepX;
     }
     while (y !== y1) {
-      placeVillagePath(world, x, y);
+      placeVillagePath(world, x, y, spawnedByPlayer);
       y += stepY;
     }
-    placeVillagePath(world, x1, y1);
+    placeVillagePath(world, x1, y1, spawnedByPlayer);
   }
 
-  function spawnVillageAt(world, centerTx, centerTy, rng = Math.random) {
+  function spawnVillageAt(world, centerTx, centerTy, rng = Math.random, options = null) {
     if (!world) return { ok: false, reason: "No world" };
     if (!canPlaceVillageTile(world, centerTx, centerTy)) return { ok: false, reason: "Bad center" };
+    const spawnedByPlayer = !!options?.spawnedByPlayer;
     const layouts = [
       [
         { dx: -4, dy: -1 }, { dx: -1, dy: -4 }, { dx: 3, dy: -3 },
@@ -5990,7 +6022,7 @@
       const type = tierRoll < 0.52 ? "small_house" : (tierRoll < 0.87 ? "medium_house" : "large_house");
       const withChest = i % 2 === 0 || rng() < 0.3;
       const withBed = i % 3 !== 1 || rng() < 0.45;
-      const house = addVillageHouse(world, tx, ty, type, rng, withChest, withBed);
+      const house = addVillageHouse(world, tx, ty, type, rng, withChest, withBed, spawnedByPlayer);
       if (house) houses.push(house);
     }
 
@@ -6006,23 +6038,23 @@
       const footprint = getStructureFootprint(house.type);
       const pathTx = house.tx + Math.floor(footprint.w / 2);
       const pathTy = house.ty + Math.floor(footprint.h / 2);
-      carveVillagePathLine(world, centerTx, centerTy, pathTx, pathTy);
+      carveVillagePathLine(world, centerTx, centerTy, pathTx, pathTy, spawnedByPlayer);
     }
-    placeVillagePath(world, centerTx, centerTy);
+    placeVillagePath(world, centerTx, centerTy, spawnedByPlayer);
 
     const decorOffsets = [
       { dx: 0, dy: 0 }, { dx: 1, dy: 0 }, { dx: -1, dy: 0 }, { dx: 0, dy: 1 }, { dx: 0, dy: -1 },
     ];
     for (const spot of decorOffsets) {
-      placeVillagePath(world, centerTx + spot.dx, centerTy + spot.dy);
+      placeVillagePath(world, centerTx + spot.dx, centerTy + spot.dy, spawnedByPlayer);
     }
     if (canPlaceVillageTile(world, centerTx + 1, centerTy + 1) && !getStructureAt(centerTx + 1, centerTy + 1)) {
       clearResourceForStructure(world, centerTx + 1, centerTy + 1);
-      addStructure("campfire", centerTx + 1, centerTy + 1, { meta: { village: true } });
+      addStructure("campfire", centerTx + 1, centerTy + 1, { meta: buildVillageStructureMeta(spawnedByPlayer) });
     }
     if (canPlaceVillageTile(world, centerTx - 1, centerTy + 1) && !getStructureAt(centerTx - 1, centerTy + 1)) {
       clearResourceForStructure(world, centerTx - 1, centerTy + 1);
-      addStructure("bench", centerTx - 1, centerTy + 1, { meta: { village: true } });
+      addStructure("bench", centerTx - 1, centerTy + 1, { meta: buildVillageStructureMeta(spawnedByPlayer) });
     }
 
     const villagers = spawnVillageVillagers(world, centerTx, centerTy, houses, rng);
@@ -6500,6 +6532,22 @@
     return closest;
   }
 
+  function findNearestResourceAt(world, position, range = CONFIG.interactRange) {
+    if (!world || !Array.isArray(world.resources)) return null;
+    let closest = null;
+    let closestDist = Infinity;
+    for (const res of world.resources) {
+      if (!res || res.removed) continue;
+      if (res.stage && res.stage !== "alive") continue;
+      const dist = Math.hypot(res.x - position.x, res.y - position.y);
+      if (dist < range && dist < closestDist) {
+        closest = res;
+        closestDist = dist;
+      }
+    }
+    return closest;
+  }
+
   function getResourceDropId(resource) {
     if (!resource) return null;
     if (resource.type === "tree") return "wood";
@@ -6887,9 +6935,10 @@
     return false;
   }
 
-  function addSurfaceCave(world, tx, ty, preferredId = null) {
+  function addSurfaceCave(world, tx, ty, preferredId = null, options = null) {
     if (!world) return null;
     if (!Array.isArray(world.caves)) world.caves = [];
+    const spawnedByPlayer = !!options?.spawnedByPlayer;
     const seedInt = world.seedInt ?? seedToInt(world.seed || "island");
     const usedIds = new Set(world.caves.map((entry) => entry.id));
     let id = typeof preferredId === "number" ? preferredId : 0;
@@ -6902,6 +6951,7 @@
       id,
       tx,
       ty,
+      spawnedByPlayer,
       world: generateCaveWorld(seedInt, id),
     };
     world.caves.push(cave);
@@ -6985,13 +7035,15 @@
     return markers;
   }
 
-  function getVillageCenters(world) {
+  function getVillageCenters(world, options = null) {
     if (!world) return [];
+    const includePlayerSpawned = options?.includePlayerSpawned !== false;
     const villageNodes = state.structures
       .filter((structure) => (
         structure
         && !structure.removed
         && !!structure.meta?.village
+        && (includePlayerSpawned || !structure.meta?.spawnedByPlayer)
       ))
       .map((structure) => ({
         tx: structure.tx + 0.5,
@@ -7079,7 +7131,7 @@
       if (!netIsClient()) {
         ensureSurfaceVillagePresence(world);
       }
-      const villages = getVillageCenters(world);
+      const villages = getVillageCenters(world, { includePlayerSpawned: false });
       const nearestVillage = findNearestTarget(villages, fromX, fromY);
       if (!nearestVillage) return null;
       return {
@@ -7089,11 +7141,13 @@
       };
     }
     if (mapItemId === "cave_map") {
-      const caves = (world.caves || []).map((cave) => ({
-        key: `cave-${cave.id}`,
-        x: (cave.tx + 0.5) * CONFIG.tileSize,
-        y: (cave.ty + 0.5) * CONFIG.tileSize,
-      }));
+      const caves = (world.caves || [])
+        .filter((cave) => cave && !cave.spawnedByPlayer)
+        .map((cave) => ({
+          key: `cave-${cave.id}`,
+          x: (cave.tx + 0.5) * CONFIG.tileSize,
+          y: (cave.ty + 0.5) * CONFIG.tileSize,
+        }));
       const nearestCave = findNearestTarget(caves, fromX, fromY);
       if (!nearestCave) return null;
       return {
@@ -7991,6 +8045,24 @@
     return recipe.id ? { [recipe.id]: qty } : {};
   }
 
+  function renderRecipeCostWithHighlights(container, cost, inventory = state.inventory) {
+    if (!container || !cost || typeof cost !== "object") return;
+    const inv = Array.isArray(inventory) ? inventory : [];
+    const entries = Object.entries(cost);
+    for (let i = 0; i < entries.length; i += 1) {
+      const [itemId, qty] = entries[i];
+      if (i > 0) container.appendChild(document.createTextNode(", "));
+      const item = document.createElement("span");
+      item.className = "recipe-cost-item";
+      const itemName = ITEMS[itemId]?.name ?? itemId;
+      item.textContent = `${itemName} x${qty}`;
+      if (countItem(inv, itemId) >= qty) {
+        item.classList.add("met");
+      }
+      container.appendChild(item);
+    }
+  }
+
   function renderBuildMenu() {
     buildList.innerHTML = "";
     const recipes = getBuildRecipesForCategory(buildCategory);
@@ -8019,11 +8091,11 @@
       if (recipe.cost && isInfiniteResourcesEnabled()) {
         cost.textContent = "Free (Infinite Resources)";
       } else {
-        cost.textContent = recipe.cost
-          ? Object.entries(recipe.cost)
-              .map(([itemId, qty]) => `${ITEMS[itemId]?.name ?? itemId} x${qty}`)
-              .join(", ")
-          : "";
+        if (recipe.cost) {
+          renderRecipeCostWithHighlights(cost, recipe.cost, state.inventory);
+        } else {
+          cost.textContent = "";
+        }
       }
       const button = document.createElement("button");
 
@@ -8627,7 +8699,7 @@
       setPrompt("No spot for cave nearby", 1.2);
       return;
     }
-    const cave = addSurfaceCave(world, tile.tx, tile.ty);
+    const cave = addSurfaceCave(world, tile.tx, tile.ty, null, { spawnedByPlayer: true });
     if (!cave) {
       setPrompt("Cave spawn failed", 1.2);
       return;
@@ -8653,7 +8725,7 @@
     if (!world) return;
     const centerTx = Math.floor(state.player.x / CONFIG.tileSize);
     const centerTy = Math.floor(state.player.y / CONFIG.tileSize);
-    const result = spawnVillageAt(world, centerTx, centerTy, Math.random);
+    const result = spawnVillageAt(world, centerTx, centerTy, Math.random, { spawnedByPlayer: true });
     if (!result.ok) {
       setPrompt(result.reason || "Village spawn failed", 1.2);
       return;
@@ -9133,11 +9205,7 @@
     interactPressed = false;
     attackPressed = false;
     keyState.clear();
-    touch.active = false;
-    touch.pointerId = null;
-    touch.dx = 0;
-    touch.dy = 0;
-    if (stickKnobEl) stickKnobEl.style.transform = "translate(0px, 0px)";
+    resetTouchInput();
   }
 
   function handlePlayerDeath() {
@@ -9476,15 +9544,31 @@
     return state.surfaceWorld || state.world;
   }
 
-  function performAttack() {
+  function performAttack(preferredTargetPos = null) {
     if (state.player.attackTimer > 0) return;
     const combatWorld = getCombatWorld();
     if (!combatWorld) return;
+    const hasPreferredPos = preferredTargetPos
+      && Number.isFinite(preferredTargetPos.x)
+      && Number.isFinite(preferredTargetPos.y);
+    const searchOrigin = hasPreferredPos ? preferredTargetPos : state.player;
     const canFightMonsters = canDamageMonsters(state.player);
-    const targetMonster = findNearestMonsterAt(combatWorld, state.player, MONSTER.attackRange + 8);
-    const targetAnimal = targetMonster
+    let targetMonster = findNearestMonsterAt(combatWorld, searchOrigin, MONSTER.attackRange + 12);
+    let targetAnimal = targetMonster
       ? null
-      : findNearestAnimalAt(combatWorld, state.player, MONSTER.attackRange + 8);
+      : findNearestAnimalAt(combatWorld, searchOrigin, MONSTER.attackRange + 12);
+    if (targetMonster) {
+      const distToPlayer = Math.hypot(targetMonster.x - state.player.x, targetMonster.y - state.player.y);
+      if (distToPlayer > MONSTER.attackRange + 12) {
+        targetMonster = findNearestMonsterAt(combatWorld, state.player, MONSTER.attackRange + 8);
+      }
+    }
+    if (!targetMonster && targetAnimal) {
+      const distToPlayer = Math.hypot(targetAnimal.x - state.player.x, targetAnimal.y - state.player.y);
+      if (distToPlayer > MONSTER.attackRange + 12) {
+        targetAnimal = findNearestAnimalAt(combatWorld, state.player, MONSTER.attackRange + 8);
+      }
+    }
     if (targetMonster && !canFightMonsters) {
       setPrompt("Need a sword upgrade", 0.9);
       return;
@@ -9503,6 +9587,8 @@
         unlocks: normalizeUnlocks(state.player.unlocks),
         x: state.player.x,
         y: state.player.y,
+        aimX: hasPreferredPos ? preferredTargetPos.x : state.player.x,
+        aimY: hasPreferredPos ? preferredTargetPos.y : state.player.y,
       });
       return;
     }
@@ -10368,6 +10454,32 @@
     return !!world.beachGrid?.[tileIndex(tx, ty, world.size)];
   }
 
+  function canRobotOccupyPosition(world, structure, robot, x, y) {
+    if (!world || !Array.isArray(state.structures)) return true;
+    const minDist = Math.max(2, Number(ROBOT_CONFIG.minSeparationDistance) || 16);
+    const minDistSq = minDist * minDist;
+    const currentX = Number(robot?.x);
+    const currentY = Number(robot?.y);
+    for (const otherStructure of state.structures) {
+      if (!otherStructure || otherStructure === structure || otherStructure.removed || otherStructure.type !== "robot") continue;
+      const otherRobot = ensureRobotMeta(otherStructure);
+      if (!otherRobot) continue;
+      const nextDx = x - otherRobot.x;
+      const nextDy = y - otherRobot.y;
+      const nextDistSq = nextDx * nextDx + nextDy * nextDy;
+      if (nextDistSq >= minDistSq) continue;
+      // Allow move attempts that increase spacing when robots start stacked together.
+      if (Number.isFinite(currentX) && Number.isFinite(currentY)) {
+        const currentDx = currentX - otherRobot.x;
+        const currentDy = currentY - otherRobot.y;
+        const currentDistSq = currentDx * currentDx + currentDy * currentDy;
+        if (nextDistSq > currentDistSq + 0.15) continue;
+      }
+      return false;
+    }
+    return true;
+  }
+
   function tryRouteRobotTowardNearestBridge(world, structure, robot, target = null) {
     if (!world || !robot || !Array.isArray(state.structures)) return false;
     const startTx = Math.floor(robot.x / CONFIG.tileSize);
@@ -10515,6 +10627,7 @@
     const tx = Math.floor(x / CONFIG.tileSize);
     const ty = Math.floor(y / CONFIG.tileSize);
     if (!isRobotWalkableTile(world, structure, tx, ty)) return false;
+    if (!canRobotOccupyPosition(world, structure, robot, x, y)) return false;
     robot.x = x;
     robot.y = y;
     return true;
@@ -10613,6 +10726,65 @@
       nav.pathIndex = 0;
     }
     return moved;
+  }
+
+  function resolveRobotCrowding(world) {
+    if (!world || !Array.isArray(state.structures)) return false;
+    const robots = [];
+    for (const structure of state.structures) {
+      if (!structure || structure.removed || structure.type !== "robot") continue;
+      const robot = ensureRobotMeta(structure);
+      if (!robot) continue;
+      robots.push({ structure, robot });
+    }
+    if (robots.length < 2) return false;
+
+    const minDist = Math.max(2, Number(ROBOT_CONFIG.minSeparationDistance) || 16);
+    let changed = false;
+    const passes = Math.max(1, Number(ROBOT_CONFIG.crowdingResolvePasses) || 1);
+    for (let pass = 0; pass < passes; pass += 1) {
+      let movedInPass = false;
+      for (let i = 0; i < robots.length; i += 1) {
+        const a = robots[i];
+        for (let j = i + 1; j < robots.length; j += 1) {
+          const b = robots[j];
+          const dx = b.robot.x - a.robot.x;
+          const dy = b.robot.y - a.robot.y;
+          const dist = Math.hypot(dx, dy);
+          if (dist >= minDist) continue;
+
+          let nx = 1;
+          let ny = 0;
+          if (dist > 0.001) {
+            nx = dx / dist;
+            ny = dy / dist;
+          } else {
+            const angle = (((a.structure.id || 0) * 37 + (b.structure.id || 0) * 53) % 360) * (Math.PI / 180);
+            nx = Math.cos(angle);
+            ny = Math.sin(angle);
+          }
+          const push = Math.max(0.35, (minDist - dist) * 0.6);
+          const moveAX = a.robot.x - nx * push;
+          const moveAY = a.robot.y - ny * push;
+          const moveBX = b.robot.x + nx * push;
+          const moveBY = b.robot.y + ny * push;
+
+          const movedA = tryMoveRobotTo(world, a.structure, a.robot, moveAX, moveAY)
+            || tryMoveRobotTo(world, a.structure, a.robot, moveAX, a.robot.y)
+            || tryMoveRobotTo(world, a.structure, a.robot, a.robot.x, moveAY);
+          const movedB = tryMoveRobotTo(world, b.structure, b.robot, moveBX, moveBY)
+            || tryMoveRobotTo(world, b.structure, b.robot, moveBX, b.robot.y)
+            || tryMoveRobotTo(world, b.structure, b.robot, b.robot.x, moveBY);
+
+          if (movedA || movedB) {
+            movedInPass = true;
+            changed = true;
+          }
+        }
+      }
+      if (!movedInPass) break;
+    }
+    return changed;
   }
 
   function findRobotTargetResource(world, structure, robot) {
@@ -10834,9 +11006,53 @@
         changed = true;
       }
     }
+    if (resolveRobotCrowding(world)) {
+      changed = true;
+    }
     if (changed) {
       markDirty();
     }
+  }
+
+  function getActiveRobotInteractionTarget() {
+    const activeStationRobot = state.activeStation?.type === "robot" ? state.activeStation : null;
+    if (activeStationRobot && !activeStationRobot.removed && !activeStationRobot.interior) return activeStationRobot;
+    const activeChestRobot = state.activeChest?.type === "robot" ? state.activeChest : null;
+    if (activeChestRobot && !activeChestRobot.removed && !activeChestRobot.interior) return activeChestRobot;
+    const nearRobot = state.nearStation?.type === "robot" ? state.nearStation : null;
+    if (nearRobot && !nearRobot.removed && !nearRobot.interior) return nearRobot;
+    return null;
+  }
+
+  function drawRobotInteractionHighlight(camera) {
+    if (state.inCave || state.player?.inHut) return;
+    const target = getActiveRobotInteractionTarget();
+    if (!target) return;
+    const center = getStructureCenterWorld(target);
+    const screen = worldToScreen(center.x, center.y, camera);
+    if (
+      screen.x < -36
+      || screen.y < -36
+      || screen.x > viewWidth + 36
+      || screen.y > viewHeight + 36
+    ) {
+      return;
+    }
+    const pulse = 0.5 + 0.5 * Math.sin(performance.now() * 0.012);
+    const innerRadius = 18 + pulse * 2.4;
+    const outerRadius = innerRadius + 5.2;
+    ctx.save();
+    ctx.strokeStyle = `rgba(96, 246, 134, ${0.74 - pulse * 0.2})`;
+    ctx.lineWidth = 2.35;
+    ctx.beginPath();
+    ctx.arc(screen.x, screen.y, innerRadius, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.strokeStyle = `rgba(96, 246, 134, ${0.32 + pulse * 0.26})`;
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.arc(screen.x, screen.y, outerRadius, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
   }
 
   function getPlacementItem() {
@@ -13266,6 +13482,8 @@
       ctx.stroke();
     }
 
+    drawRobotInteractionHighlight(camera);
+
     const placement = getPlacementItem();
     if (placement) {
       const { tx, ty } = getPlacementTile();
@@ -13386,42 +13604,88 @@
     canvas.style.height = `${viewHeight}px`;
   }
 
+  function isTouchPointerType(pointerType) {
+    return pointerType === "touch" || pointerType === "pen";
+  }
+
+  function setStickVisualCenter(centerX, centerY) {
+    if (!stickEl) return;
+    const rect = stickEl.getBoundingClientRect();
+    const size = rect.width || 120;
+    stickEl.style.left = `${centerX - size * 0.5}px`;
+    stickEl.style.top = `${centerY - size * 0.5}px`;
+    stickEl.style.bottom = "auto";
+  }
+
+  function resetStickVisualPosition() {
+    if (!stickEl) return;
+    stickEl.style.left = "";
+    stickEl.style.top = "";
+    stickEl.style.bottom = "";
+  }
+
+  function resetTouchInput() {
+    touch.active = false;
+    touch.pointerId = null;
+    touch.dx = 0;
+    touch.dy = 0;
+    if (stickKnobEl) {
+      stickKnobEl.style.transform = "translate(0px, 0px)";
+    }
+    resetStickVisualPosition();
+  }
+
   function handleStickDown(event) {
+    if (touch.active && event.pointerId !== touch.pointerId) return;
     ensureAudioContext();
     touch.active = true;
     touch.pointerId = event.pointerId;
-    const rect = stickEl.getBoundingClientRect();
-    touch.centerX = rect.left + rect.width / 2;
-    touch.centerY = rect.top + rect.height / 2;
+    if (movePadEl && event.currentTarget === movePadEl) {
+      touch.centerX = event.clientX;
+      touch.centerY = event.clientY;
+      setStickVisualCenter(touch.centerX, touch.centerY);
+    } else {
+      const rect = stickEl.getBoundingClientRect();
+      touch.centerX = rect.left + rect.width / 2;
+      touch.centerY = rect.top + rect.height / 2;
+    }
     updateStick(event.clientX, event.clientY);
-    stickEl.setPointerCapture(event.pointerId);
+    if (event.currentTarget && typeof event.currentTarget.setPointerCapture === "function") {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    }
+    event.preventDefault();
   }
 
   function updateStick(x, y) {
-    const maxDist = 40;
     const dx = x - touch.centerX;
     const dy = y - touch.centerY;
     const dist = Math.hypot(dx, dy);
-    const clamped = dist > maxDist ? maxDist / dist : 1;
+    const clamped = dist > TOUCH_STICK_MAX_DIST ? TOUCH_STICK_MAX_DIST / dist : 1;
     const nx = dx * clamped;
     const ny = dy * clamped;
     stickKnobEl.style.transform = `translate(${nx}px, ${ny}px)`;
-    touch.dx = nx / maxDist;
-    touch.dy = ny / maxDist;
+    touch.dx = nx / TOUCH_STICK_MAX_DIST;
+    touch.dy = ny / TOUCH_STICK_MAX_DIST;
   }
 
   function handleStickMove(event) {
     if (!touch.active || event.pointerId !== touch.pointerId) return;
     updateStick(event.clientX, event.clientY);
+    event.preventDefault();
   }
 
   function handleStickUp(event) {
-    if (event.pointerId !== touch.pointerId) return;
-    touch.active = false;
-    touch.pointerId = null;
-    touch.dx = 0;
-    touch.dy = 0;
-    stickKnobEl.style.transform = "translate(0px, 0px)";
+    if (touch.pointerId === null || event.pointerId !== touch.pointerId) return;
+    if (
+      event.currentTarget
+      && typeof event.currentTarget.hasPointerCapture === "function"
+      && event.currentTarget.hasPointerCapture(event.pointerId)
+      && typeof event.currentTarget.releasePointerCapture === "function"
+    ) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    resetTouchInput();
+    event.preventDefault();
   }
 
   function handleCanvasMove(event) {
@@ -13434,17 +13698,141 @@
     pointer.active = false;
   }
 
-  function handleCanvasDown() {
+  function shouldProcessMobileTapAction(event) {
+    if (!event || !isTouchPointerType(event.pointerType)) return false;
+    if (!state.player || !state.world || state.gameWon) return false;
+    if (inventoryOpen || state.activeStation || state.activeChest) return false;
+    if (state.player.inHut) return false;
+    return true;
+  }
+
+  function setPlayerFacingToward(targetX, targetY) {
+    const dx = targetX - state.player.x;
+    const dy = targetY - state.player.y;
+    const len = Math.hypot(dx, dy);
+    if (len <= 0.0001) return;
+    state.player.facing.x = dx / len;
+    state.player.facing.y = dy / len;
+  }
+
+  function tryMobileTapAction(screenX, screenY) {
+    const combatWorld = getCombatWorld();
+    if (!combatWorld || !state.player) return false;
+
+    const worldPos = screenToWorld(screenX, screenY);
+    const tapRange = CONFIG.tileSize * 0.92;
+    const candidates = [];
+
+    const monster = findNearestMonsterAt(combatWorld, worldPos, tapRange);
+    if (monster) {
+      candidates.push({
+        kind: "monster",
+        target: monster,
+        dist: Math.hypot(monster.x - worldPos.x, monster.y - worldPos.y),
+        priority: 0,
+      });
+    }
+
+    const animal = findNearestAnimalAt(combatWorld, worldPos, tapRange);
+    if (animal) {
+      candidates.push({
+        kind: "animal",
+        target: animal,
+        dist: Math.hypot(animal.x - worldPos.x, animal.y - worldPos.y),
+        priority: 1,
+      });
+    }
+
+    const resource = findNearestResourceAt(combatWorld, worldPos, tapRange);
+    if (resource) {
+      candidates.push({
+        kind: "resource",
+        target: resource,
+        dist: Math.hypot(resource.x - worldPos.x, resource.y - worldPos.y),
+        priority: 2,
+      });
+    }
+
+    if (candidates.length === 0) return false;
+    candidates.sort((a, b) => {
+      if (a.dist !== b.dist) return a.dist - b.dist;
+      return a.priority - b.priority;
+    });
+    const selected = candidates[0];
+    const target = selected.target;
+    if (!target) return false;
+
+    setPlayerFacingToward(target.x, target.y);
+    const maxRange = selected.kind === "resource" ? CONFIG.interactRange : MONSTER.attackRange + 8;
+    const distToPlayer = Math.hypot(target.x - state.player.x, target.y - state.player.y);
+    if (distToPlayer > maxRange) {
+      setPrompt("Move closer", 0.65);
+      return true;
+    }
+
+    if (selected.kind === "resource") {
+      attemptHarvest(target);
+      return true;
+    }
+
+    performAttack({ x: target.x, y: target.y });
+    return true;
+  }
+
+  function handleCanvasDown(event) {
     ensureAudioContext();
+    pointer.x = event.clientX;
+    pointer.y = event.clientY;
+    pointer.active = true;
     const placement = getPlacementItem();
     if (placement) {
       attemptPlace();
+      return;
     }
+    if (shouldProcessMobileTapAction(event) && tryMobileTapAction(event.clientX, event.clientY)) {
+      event.preventDefault();
+    }
+  }
+
+  function setupMobileZoomLock() {
+    const hasTouch = "ontouchstart" in window || (navigator.maxTouchPoints || 0) > 0;
+    if (!hasTouch) return;
+
+    let lastTouchEndMs = 0;
+    document.addEventListener(
+      "touchend",
+      (event) => {
+        const now = performance.now();
+        if (now - lastTouchEndMs < 320) {
+          event.preventDefault();
+        }
+        lastTouchEndMs = now;
+      },
+      { passive: false }
+    );
+
+    document.addEventListener(
+      "touchmove",
+      (event) => {
+        if ((event.touches?.length || 0) > 1) {
+          event.preventDefault();
+        }
+      },
+      { passive: false }
+    );
+
+    const blockGesture = (event) => {
+      event.preventDefault();
+    };
+    document.addEventListener("gesturestart", blockGesture, { passive: false });
+    document.addEventListener("gesturechange", blockGesture, { passive: false });
+    document.addEventListener("gestureend", blockGesture, { passive: false });
   }
 
   function init() {
     loadUserSettings();
     setupSlots();
+    setupMobileZoomLock();
     resize();
     if (startScreen) startScreen.classList.remove("hidden");
     setSettingsTab("settings");
@@ -13461,10 +13849,13 @@
     window.addEventListener("keyup", handleKeyUp);
     window.addEventListener("beforeunload", saveGame);
 
-    stickEl.addEventListener("pointerdown", handleStickDown);
-    stickEl.addEventListener("pointermove", handleStickMove);
-    stickEl.addEventListener("pointerup", handleStickUp);
-    stickEl.addEventListener("pointercancel", handleStickUp);
+    const stickInputTarget = movePadEl || stickEl;
+    if (stickInputTarget) {
+      stickInputTarget.addEventListener("pointerdown", handleStickDown);
+      stickInputTarget.addEventListener("pointermove", handleStickMove);
+      stickInputTarget.addEventListener("pointerup", handleStickUp);
+      stickInputTarget.addEventListener("pointercancel", handleStickUp);
+    }
 
     actionBtn.addEventListener("pointerdown", () => {
       ensureAudioContext();

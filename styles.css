@@ -25,6 +25,8 @@ html, body {
 }
 
 #topbar {
+  position: relative;
+  z-index: 4;
   display: flex;
   justify-content: space-between;
   gap: 12px;
@@ -184,6 +186,7 @@ html, body {
   opacity: 0;
   transition: opacity 0.2s ease;
   box-shadow: 0 6px 16px rgba(0, 0, 0, 0.3);
+  z-index: 4;
 }
 
 #prompt.visible {
@@ -198,6 +201,7 @@ html, body {
   display: flex;
   gap: 8px;
   pointer-events: auto;
+  z-index: 4;
 }
 
 .panel {
@@ -212,6 +216,7 @@ html, body {
   pointer-events: auto;
   box-shadow: 0 14px 28px rgba(0, 0, 0, 0.35);
   backdrop-filter: blur(6px);
+  z-index: 5;
 }
 
 .panel-title {
@@ -569,8 +574,15 @@ html, body {
 
 .recipe-cost {
   font-size: 12px;
-  opacity: 0.75;
+  color: rgba(233, 242, 252, 0.75);
   margin-bottom: 6px;
+  line-height: 1.3;
+}
+
+.recipe-cost-item.met {
+  color: #86f4a9;
+  font-weight: 600;
+  text-shadow: 0 0 6px rgba(70, 176, 105, 0.28);
 }
 
 .recipe-lock {
@@ -619,6 +631,17 @@ button:active:not(:disabled) {
   position: absolute;
   inset: 0;
   pointer-events: none;
+  z-index: 2;
+}
+
+#movePad {
+  position: absolute;
+  left: 0;
+  top: calc(52px + env(safe-area-inset-top));
+  bottom: calc(8px + env(safe-area-inset-bottom));
+  width: min(56vw, 420px);
+  pointer-events: auto;
+  touch-action: none;
 }
 
 .overlay {
@@ -914,8 +937,9 @@ button:active:not(:disabled) {
   border-radius: 60px;
   border: 2px solid rgba(255, 255, 255, 0.35);
   background: rgba(10, 20, 34, 0.35);
-  pointer-events: auto;
+  pointer-events: none;
   touch-action: none;
+  transition: opacity 0.14s ease;
 }
 
 #stickKnob {
@@ -926,6 +950,7 @@ button:active:not(:disabled) {
   left: 35px;
   top: 35px;
   background: rgba(255, 255, 255, 0.5);
+  pointer-events: none;
 }
 
 #actionBtn {
@@ -1111,6 +1136,11 @@ button:active:not(:disabled) {
     left: 14px;
   }
 
+  #movePad {
+    width: min(60vw, 360px);
+    top: calc(56px + env(safe-area-inset-top));
+  }
+
   #stickKnob {
     width: 46px;
     height: 46px;
@@ -1161,6 +1191,11 @@ button:active:not(:disabled) {
     top: 54px;
     font-size: 13px;
     max-width: 88vw;
+  }
+
+  #movePad {
+    width: min(64vw, 330px);
+    top: calc(52px + env(safe-area-inset-top));
   }
 
   .panel {
