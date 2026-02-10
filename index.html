@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
   <title>Island Survival Game</title>
-  <link rel="stylesheet" href="styles.css?v=20260209-02" />
+  <link rel="stylesheet" href="styles.css?v=20260210-11" />
 </head>
 <body>
   <canvas id="game"></canvas>
@@ -58,10 +58,41 @@
 
     <div id="buildMenu" class="panel hidden">
       <div class="panel-title">Crafting Bench</div>
-      <div class="tabs">
-        <button class="tab-btn active" data-tab="buildings">Buildings</button>
-        <button class="tab-btn" data-tab="upgrades">Upgrades</button>
+      <div id="buildCategoryTabs" class="build-category-tabs" role="tablist" aria-label="Crafting categories">
+        <button class="build-category-btn active" data-category="navigation" type="button" title="Paths, bridges, and travel structures.">
+          <span class="build-category-icon" data-icon="bridge" aria-hidden="true"></span>
+          <span class="build-category-label">Travel</span>
+        </button>
+        <button class="build-category-btn" data-category="housing" type="button" title="Houses and comfort builds.">
+          <span class="build-category-icon" data-icon="small_house" aria-hidden="true"></span>
+          <span class="build-category-label">Homes</span>
+        </button>
+        <button class="build-category-btn" data-category="stations" type="button" title="Production stations and processing machines.">
+          <span class="build-category-icon" data-icon="sawmill" aria-hidden="true"></span>
+          <span class="build-category-label">Stations</span>
+        </button>
+        <button class="build-category-btn" data-category="survival" type="button" title="Survival utility and healing tools.">
+          <span class="build-category-icon" data-icon="campfire" aria-hidden="true"></span>
+          <span class="build-category-label">Survival</span>
+        </button>
+        <button class="build-category-btn" data-category="storage" type="button" title="Storage and item management.">
+          <span class="build-category-icon" data-icon="chest" aria-hidden="true"></span>
+          <span class="build-category-label">Storage</span>
+        </button>
+        <button class="build-category-btn" data-category="maps" type="button" title="Map tools to locate landmarks.">
+          <span class="build-category-icon" data-icon="village_map" aria-hidden="true"></span>
+          <span class="build-category-label">Maps</span>
+        </button>
+        <button class="build-category-btn" data-category="endgame" type="button" title="Late-game automation and rescue tech.">
+          <span class="build-category-icon" data-icon="beacon" aria-hidden="true"></span>
+          <span class="build-category-label">Endgame</span>
+        </button>
+        <button class="build-category-btn" data-category="upgrades" type="button" title="Weapon and tool progression upgrades.">
+          <span class="build-category-icon" data-icon="iron_ingot" aria-hidden="true"></span>
+          <span class="build-category-label">Upgrades</span>
+        </button>
       </div>
+      <div id="buildCategoryHint" class="build-category-hint">Paths, bridges, and travel structures.</div>
       <div id="buildList" class="recipe-list"></div>
     </div>
 
@@ -95,8 +126,9 @@
       <button id="forceNightBtn" class="action-btn">Set Night</button>
       <button id="mosesBtn" class="action-btn">Moses: Off</button>
       <button id="infiniteResourcesBtn" class="action-btn">Infinite Resources: Off</button>
+      <button id="debugWorldMapBtn" class="action-btn">World Mini-Map: Off</button>
       <div class="settings-row">
-        <span>Speed Amplifier</span>
+        <span>Player Speed</span>
         <span id="debugSpeedValue">1.0x</span>
       </div>
       <input
@@ -105,6 +137,19 @@
         type="range"
         min="100"
         max="400"
+        step="10"
+        value="100"
+      />
+      <div class="settings-row">
+        <span>World Speed</span>
+        <span id="debugWorldSpeedValue">1.0x</span>
+      </div>
+      <input
+        id="debugWorldSpeed"
+        class="settings-slider"
+        type="range"
+        min="100"
+        max="1000"
         step="10"
         value="100"
       />
@@ -158,6 +203,6 @@
   </div>
 
   <script src="https://unpkg.com/peerjs@1.5.5/dist/peerjs.min.js"></script>
-  <script src="src/main.js?v=20260209-02"></script>
+  <script src="src/main.js?v=20260210-16"></script>
 </body>
 </html>

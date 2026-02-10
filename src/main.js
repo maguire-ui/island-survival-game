@@ -57,6 +57,8 @@
   const debugPanel = document.getElementById("debugPanel");
   const debugSpeedInput = document.getElementById("debugSpeed");
   const debugSpeedValue = document.getElementById("debugSpeedValue");
+  const debugWorldSpeedInput = document.getElementById("debugWorldSpeed");
+  const debugWorldSpeedValue = document.getElementById("debugWorldSpeedValue");
   const giveBeaconBtn = document.getElementById("giveBeaconBtn");
   const giveRobotBtn = document.getElementById("giveRobotBtn");
   const spawnCaveBtn = document.getElementById("spawnCaveBtn");
@@ -65,8 +67,11 @@
   const forceNightBtn = document.getElementById("forceNightBtn");
   const mosesBtn = document.getElementById("mosesBtn");
   const infiniteResourcesBtn = document.getElementById("infiniteResourcesBtn");
+  const debugWorldMapBtn = document.getElementById("debugWorldMapBtn");
 
-  const buildTabs = Array.from(buildMenu.querySelectorAll(".tab-btn"));
+  const buildCategoryTabs = Array.from(buildMenu.querySelectorAll(".build-category-btn"));
+  const buildCategoryIcons = Array.from(buildMenu.querySelectorAll(".build-category-icon"));
+  const buildCategoryHint = document.getElementById("buildCategoryHint");
 
   const CONFIG = {
     tileSize: 32,
@@ -92,6 +97,33 @@
     attackCooldown: 1.1,
     aggroRange: 180,
   };
+
+  const MONSTER_CAMPFIRE_FEAR = Object.freeze({
+    radiusPadding: 6,
+    steerBuffer: 42,
+    steerWeight: 1.35,
+    panicWeight: 2.5,
+  });
+
+  const MONSTER_DAY_BURN = Object.freeze({
+    durationMin: 2.1,
+    durationMax: 3.2,
+    moveSpeedScale: 0.36,
+    staggerResetMin: 0.16,
+    staggerResetMax: 0.44,
+  });
+
+  const MONSTER_BURN_FX = Object.freeze({
+    burstMin: 10,
+    burstMax: 16,
+    spread: 14,
+    riseMin: 16,
+    riseMax: 42,
+    lifeMin: 0.5,
+    lifeMax: 1.2,
+    sizeMin: 1.8,
+    sizeMax: 4.6,
+  });
 
   const SKELETON_ARROW = {
     speed: 235,
@@ -146,6 +178,7 @@
     monsterSmooth: 10,
     animalSmooth: 10,
     villagerSmooth: 10,
+    robotSmooth: 14,
   };
 
   const PLAYER_COLORS = [
@@ -238,8 +271,10 @@
     iron_ingot: { name: "Iron Ingot", color: "#b6b2ac" },
     gold_ingot: { name: "Gold Ingot", color: "#d4b455" },
     plank: { name: "Plank", color: "#b58752" },
+    stick: { name: "Stick", color: "#a97a4c" },
     grass: { name: "Grass", color: "#6ec27c" },
     paper: { name: "Paper", color: "#ebe2bf" },
+    wayfinder_stone: { name: "Wayfinder Stone", color: "#77b5c9" },
     raw_meat: { name: "Raw Meat", color: "#c96a64" },
     cooked_meat: { name: "Cooked Meat", color: "#d7a172" },
     hide: { name: "Hide", color: "#9f7d57" },
@@ -253,8 +288,6 @@
     large_house: { name: "Large House", color: "#7f5534", placeable: true, placeType: "large_house" },
     bed: { name: "Bed", color: "#d8cab4", placeable: true, placeType: "bed" },
     campfire: { name: "Campfire", color: "#d37a3a", placeable: true, placeType: "campfire" },
-    lantern: { name: "Lantern", color: "#cfae5d", placeable: true, placeType: "lantern" },
-    torch: { name: "Torch", color: "#d99a4e" },
     medicine: { name: "Poultice", color: "#7ec98a" },
     village_map: { name: "Village Map", color: "#d0c394" },
     cave_map: { name: "Cave Map", color: "#a5b4d8" },
@@ -280,8 +313,10 @@
     iron_ingot: { symbol: "I-IN", bg: "#6f6c6a", border: "#c8c4bf", fg: "#f8f8f8" },
     gold_ingot: { symbol: "G-IN", bg: "#8a7430", border: "#ebcb63", fg: "#fff8dc" },
     plank: { symbol: "PLK", bg: "#94673a", border: "#d2a470", fg: "#fff0d7" },
+    stick: { symbol: "STK", bg: "#7f5a34", border: "#c59a63", fg: "#ffe9cd" },
     grass: { symbol: "GRS", bg: "#2b7f4a", border: "#78cf94", fg: "#ebffef" },
     paper: { symbol: "PPR", bg: "#8e8463", border: "#d8d0b0", fg: "#fffbe9" },
+    wayfinder_stone: { symbol: "WAY", bg: "#3e6f82", border: "#8fd4ea", fg: "#e6f9ff" },
     raw_meat: { symbol: "RAW", bg: "#8f403d", border: "#d47a75", fg: "#ffe1dd" },
     cooked_meat: { symbol: "FOOD", bg: "#9e5d3a", border: "#e0a77f", fg: "#fff0e2" },
     hide: { symbol: "HID", bg: "#7d603f", border: "#bc9a73", fg: "#f9e5c9" },
@@ -293,8 +328,6 @@
     large_house: { symbol: "HS-L", bg: "#5e3b24", border: "#a7734d", fg: "#ffdcc0" },
     bed: { symbol: "BED", bg: "#6f89a7", border: "#b7cee7", fg: "#eff7ff" },
     campfire: { symbol: "FIR", bg: "#8a3f26", border: "#d88956", fg: "#ffe5ce" },
-    lantern: { symbol: "LGT", bg: "#8b7638", border: "#d6bd62", fg: "#fff8dc" },
-    torch: { symbol: "TOR", bg: "#8a4d2f", border: "#d59363", fg: "#ffeada" },
     medicine: { symbol: "MED", bg: "#3f8357", border: "#80cd9a", fg: "#e9ffef" },
     village_map: { symbol: "VMP", bg: "#7f7051", border: "#cfbf8f", fg: "#fff9e7" },
     cave_map: { symbol: "CMP", bg: "#596587", border: "#a8b8e4", fg: "#edf2ff" },
@@ -314,6 +347,7 @@
   const VILLAGE_LOOT_TABLE = [
     { id: "plank", min: 3, max: 8, weight: 22 },
     { id: "wood", min: 5, max: 12, weight: 20 },
+    { id: "stick", min: 3, max: 8, weight: 16 },
     { id: "stone", min: 4, max: 10, weight: 18 },
     { id: "raw_meat", min: 1, max: 3, weight: 10 },
     { id: "cooked_meat", min: 1, max: 3, weight: 12 },
@@ -321,8 +355,7 @@
     { id: "coal", min: 1, max: 3, weight: 8 },
     { id: "iron_ore", min: 1, max: 2, weight: 7 },
     { id: "gold_ore", min: 1, max: 1, weight: 4 },
-    { id: "lantern", min: 1, max: 1, weight: 5 },
-    { id: "torch", min: 1, max: 2, weight: 7 },
+    { id: "campfire", min: 1, max: 1, weight: 5 },
   ];
 
   const ORE_LEVELS = Object.freeze({
@@ -398,7 +431,6 @@
     hut: { name: "Small House", color: "#8b5d3c", blocking: true, walkable: false, house: true },
     bed: { name: "Bed", color: "#d8cab4", blocking: true, walkable: false, sleep: true },
     campfire: { name: "Campfire", color: "#d37a3a", blocking: true, walkable: false, lightRadius: 90 },
-    lantern: { name: "Lantern", color: "#cfae5d", blocking: true, walkable: false, lightRadius: 70 },
     beacon: { name: "Rescue Beacon", color: "#d9c27a", blocking: true, walkable: false, lightRadius: 120, beacon: true },
     smelter: { name: "Smelter", color: "#b05b5b", blocking: true, walkable: false, station: true },
     sawmill: { name: "Sawmill", color: "#7d6a46", blocking: true, walkable: false, station: true },
@@ -419,7 +451,7 @@
       icon: "bridge",
       name: "Bridge Bundle",
       description: "Craft multiple bridges at once for rapid expansion.",
-      cost: { wood: 10, plank: 2 },
+      cost: { wood: 11, plank: 2, stick: 4 },
       output: { bridge: 3 },
     },
     {
@@ -433,49 +465,37 @@
       id: "dock",
       name: "Dock",
       description: "Shoreline checkpoint anchor; bind your respawn point here.",
-      cost: { wood: 3, plank: 1 },
+      cost: { wood: 3, plank: 1, stick: 2 },
     },
     {
       id: "small_house",
       name: "Small House",
       description: "Safe prep space with compact interior.",
-      cost: { wood: 18, plank: 6, stone: 6 },
+      cost: { wood: 19, plank: 7, stone: 6, stick: 8 },
     },
     {
       id: "medium_house",
       name: "Medium House Upgrade",
       description: "Upgrade a small house to expand interior space.",
-      cost: { wood: 28, plank: 12, stone: 12, hide: 4 },
+      cost: { wood: 29, plank: 13, stone: 12, hide: 4, stick: 12 },
     },
     {
       id: "large_house",
       name: "Large House Upgrade",
       description: "Upgrade a medium house to max interior capacity.",
-      cost: { wood: 44, plank: 20, iron_ingot: 6, hide: 8 },
+      cost: { wood: 45, plank: 21, iron_ingot: 6, hide: 8, stick: 16 },
     },
     {
       id: "bed",
       name: "Bed",
       description: "Sleep at night to skip to dawn. No healing.",
-      cost: { plank: 6, hide: 4 },
+      cost: { plank: 6, hide: 4, stick: 2 },
     },
     {
       id: "campfire",
       name: "Campfire",
-      description: "Permanent light source for nighttime safety.",
-      cost: { wood: 4, stone: 2 },
-    },
-    {
-      id: "lantern",
-      name: "Lantern",
-      description: "Compact high-visibility light source.",
-      cost: { plank: 2, iron_ingot: 1 },
-    },
-    {
-      id: "torch",
-      name: "Torch",
-      description: "Consume to light a timed torch buff for night vision and +1 attack.",
-      cost: { wood: 2, plank: 1 },
+      description: "Permanent light source for nighttime safety and monster deterrence.",
+      cost: { wood: 6, stone: 4 },
     },
     {
       id: "medicine",
@@ -484,18 +504,10 @@
       cost: { raw_meat: 1, hide: 1, wood: 1 },
     },
     {
-      id: "paper_bundle",
-      icon: "paper",
-      name: "Hand-Pressed Paper",
-      description: "Craft map paper without a sawmill (resource-inefficient).",
-      cost: { grass: 6, wood: 1 },
-      output: { paper: 1 },
-    },
-    {
       id: "chest",
       name: "Chest",
       description: "Extra storage for resources and crafted gear.",
-      cost: { wood: 6, plank: 2 },
+      cost: { wood: 6, plank: 2, stick: 2 },
     },
     {
       id: "smelter",
@@ -506,26 +518,26 @@
     {
       id: "sawmill",
       name: "Sawmill",
-      description: "Convert logs into planks for advanced builds.",
+      description: "Convert logs into planks and sticks for advanced builds.",
       cost: { wood: 8, stone: 2 },
     },
     {
       id: "kiln",
       name: "Kiln",
       description: "Bake bricks used to assemble the rescue beacon.",
-      cost: { stone: 6, wood: 2 },
+      cost: { stone: 6, wood: 2, stick: 2 },
     },
     {
       id: "village_map",
       name: "Village Map",
       description: "Shows a tracked village zone and all active players.",
-      cost: { paper: 8, plank: 12, grass: 10, hide: 5, stone: 14 },
+      cost: { wayfinder_stone: 1, paper: 4, plank: 2 },
     },
     {
       id: "cave_map",
       name: "Cave Map",
       description: "Shows a tracked cave zone and all active players.",
-      cost: { paper: 10, plank: 14, stone: 24, hide: 7, torch: 4, medicine: 2 },
+      cost: { wayfinder_stone: 1, paper: 5, plank: 3, stone: 4 },
     },
     {
       id: "beacon",
@@ -534,6 +546,7 @@
       cost: {
         beacon_core: 1,
         plank: 12,
+        stick: 10,
         iron_ingot: 4,
         gold_ingot: 2,
         brick: 6,
@@ -552,6 +565,7 @@
         gold_ingot: 16,
         iron_ingot: 26,
         plank: 42,
+        stick: 20,
         brick: 22,
         medicine: 10,
       },
@@ -595,7 +609,7 @@
       id: "unlock_gold_pickaxe",
       name: "Gold Pickaxe",
       description: "Lets you mine emerald and biome stones.",
-      cost: { iron_ingot: 3, gold_ingot: 4, plank: 6 },
+      cost: { iron_ingot: 3, gold_ingot: 4, plank: 6, stick: 4 },
       icon: "gold_ingot",
       unlock: "mythicPickaxe",
       track: "pickaxe",
@@ -606,7 +620,7 @@
       id: "unlock_emerald_pickaxe",
       name: "Emerald Pickaxe",
       description: "Lets you mine diamond ore and maxes cave progression.",
-      cost: { emerald: 4, gold_ingot: 5, plank: 8 },
+      cost: { emerald: 4, gold_ingot: 5, plank: 8, stick: 6 },
       icon: "emerald",
       unlock: "primalPickaxe",
       track: "pickaxe",
@@ -617,7 +631,7 @@
       id: "unlock_diamond_pickaxe",
       name: "Diamond Pickaxe",
       description: "Best mining speed and full resource access.",
-      cost: { diamond: 4, emerald: 3, gold_ingot: 4, plank: 10 },
+      cost: { diamond: 4, emerald: 3, gold_ingot: 4, plank: 10, stick: 8 },
       icon: "diamond",
       unlock: "apexPickaxe",
       track: "pickaxe",
@@ -628,7 +642,7 @@
       id: "unlock_wood_sword",
       name: "Wood Sword",
       description: "Unlocks basic melee damage versus monsters.",
-      cost: { wood: 8, plank: 2 },
+      cost: { wood: 8, plank: 2, stick: 2 },
       icon: "wood",
       unlock: "sword",
       track: "sword",
@@ -638,7 +652,7 @@
       id: "unlock_stone_sword",
       name: "Stone Sword",
       description: "Upgrades melee damage.",
-      cost: { stone: 8, plank: 2 },
+      cost: { stone: 8, plank: 2, stick: 3 },
       icon: "stone",
       unlock: "sword2",
       track: "sword",
@@ -649,7 +663,7 @@
       id: "unlock_iron_sword",
       name: "Iron Sword",
       description: "Strong all-purpose combat weapon.",
-      cost: { iron_ingot: 4, plank: 4 },
+      cost: { iron_ingot: 4, plank: 4, stick: 4 },
       icon: "iron_ingot",
       unlock: "sword3",
       track: "sword",
@@ -660,7 +674,7 @@
       id: "unlock_gold_sword",
       name: "Gold Sword",
       description: "High burst damage for tougher nights.",
-      cost: { gold_ingot: 4, iron_ingot: 2, plank: 4 },
+      cost: { gold_ingot: 4, iron_ingot: 2, plank: 4, stick: 5 },
       icon: "gold_ingot",
       unlock: "sword4",
       track: "sword",
@@ -671,7 +685,7 @@
       id: "unlock_diamond_sword",
       name: "Diamond Sword",
       description: "Maximum melee damage tier.",
-      cost: { diamond: 4, gold_ingot: 3, plank: 5 },
+      cost: { diamond: 4, gold_ingot: 3, plank: 5, stick: 6 },
       icon: "diamond",
       unlock: "sword5",
       track: "sword",
@@ -679,6 +693,72 @@
       requires: ["sword4"],
     },
   ];
+
+  const BUILD_CATEGORY_DEFS = Object.freeze([
+    {
+      id: "navigation",
+      label: "Travel",
+      description: "Paths, bridges, and travel structures.",
+    },
+    {
+      id: "housing",
+      label: "Homes",
+      description: "Houses, beds, and living upgrades.",
+    },
+    {
+      id: "stations",
+      label: "Stations",
+      description: "Crafting stations for processing resources.",
+    },
+    {
+      id: "survival",
+      label: "Survival",
+      description: "Fire, medicine, and defensive utility.",
+    },
+    {
+      id: "storage",
+      label: "Storage",
+      description: "Storage builds to organize supplies.",
+    },
+    {
+      id: "maps",
+      label: "Maps",
+      description: "Landmark tracking maps and exploration tools.",
+    },
+    {
+      id: "endgame",
+      label: "Endgame",
+      description: "Late-game automation and rescue objectives.",
+    },
+    {
+      id: "upgrades",
+      label: "Upgrades",
+      description: "Unlock stronger tools and weapons.",
+    },
+  ]);
+
+  const BUILD_RECIPE_CATEGORIES = Object.freeze({
+    bridge: "navigation",
+    bridge_bundle: "navigation",
+    village_path: "navigation",
+    dock: "navigation",
+    small_house: "housing",
+    medium_house: "housing",
+    large_house: "housing",
+    bed: "housing",
+    smelter: "stations",
+    sawmill: "stations",
+    kiln: "stations",
+    campfire: "survival",
+    medicine: "survival",
+    chest: "storage",
+    village_map: "maps",
+    cave_map: "maps",
+    beacon: "endgame",
+    robot: "endgame",
+  });
+
+  const UPGRADE_RECIPE_IDS = new Set(UPGRADE_RECIPES.map((recipe) => recipe.id));
 
   const STATION_RECIPES = {
     smelter: [
@@ -702,8 +782,9 @@
       },
       {
         name: "Cook Meat",
-        description: "Cooked meat restores health when consumed.",
-        input: { raw_meat: 1, wood: 1 },
+        description: "Cooked meat restores health when consumed. Fuel with wood or coal.",
+        input: { raw_meat: 1 },
+        inputAny: [{ wood: 1 }, { coal: 1 }],
         output: { cooked_meat: 1 },
       },
       {
@@ -721,6 +802,12 @@
         output: { plank: 1 },
       },
       {
+        name: "Whittle Sticks",
+        description: "Carve wood into stick bundles for tools and framing.",
+        input: { wood: 1 },
+        output: { stick: 2 },
+      },
+      {
         name: "Press Paper",
         description: "Refine cut grass into map paper.",
         input: { grass: 4 },
@@ -733,6 +820,12 @@
         description: "Convert stone into beacon-grade bricks.",
         input: { stone: 2, wood: 1 },
         output: { brick: 1 },
+      },
+      {
+        name: "Forge Wayfinder Stone",
+        description: "Shape a wayfinder charm-stone used to craft maps.",
+        input: { brick: 1, paper: 1, stick: 1, gold_ingot: 1 },
+        output: { wayfinder_stone: 1 },
       },
     ],
   };
@@ -835,6 +928,7 @@
     debugUnlocked: false,
     debugInfiniteResources: false,
     debugSpeedMultiplier: 1,
+    debugWorldSpeedMultiplier: 1,
   });
   const MAP_ITEM_SET = new Set(["village_map", "cave_map"]);
   const MAP_PANEL = Object.freeze({
@@ -855,8 +949,10 @@
     mineDamage: 1,
     interactionPause: 0.9,
     retargetInterval: 0.8,
+    retargetIdleInterval: 0.2,
     maxPathNodes: 14000,
     retargetPathChecks: 6,
+    retargetPathFallbackChecks: 32,
     pathNodeSnapDistance: 5,
     stuckMoveEpsilon: 0.1,
     stuckRetargetTime: 1.1,
@@ -872,7 +968,7 @@
   let interactPressed = false;
   let attackPressed = false;
   let inventoryOpen = false;
-  let buildTab = "buildings";
+  let buildCategory = "navigation";
   let selectedSlot = null;
   let activeSlot = 0;
 
@@ -936,7 +1032,6 @@
     nextAnimalId: 1,
     respawnLock: false,
     checkpointTimer: 0,
-    torchTimer: 0,
     animalVocalTimer: 2.6,
     settingsTab: "settings",
     musicVolume: SETTINGS_DEFAULTS.musicVolume,
@@ -944,7 +1039,9 @@
     debugUnlocked: SETTINGS_DEFAULTS.debugUnlocked,
     debugMoses: false,
     debugInfiniteResources: SETTINGS_DEFAULTS.debugInfiniteResources,
+    debugWorldMapVisible: false,
     debugSpeedMultiplier: SETTINGS_DEFAULTS.debugSpeedMultiplier,
+    debugWorldSpeedMultiplier: SETTINGS_DEFAULTS.debugWorldSpeedMultiplier,
   };
 
   let wasNearBench = false;
@@ -1063,6 +1160,12 @@
     return clamp(num, 1, 4);
   }
 
+  function clampDebugWorldSpeedMultiplier(value) {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return SETTINGS_DEFAULTS.debugWorldSpeedMultiplier;
+    return clamp(num, 1, 10);
+  }
+
   function saveUserSettings() {
     const payload = {
       musicVolume: clampVolume(state.musicVolume, SETTINGS_DEFAULTS.musicVolume),
@@ -1070,6 +1173,7 @@
       debugUnlocked: !!state.debugUnlocked,
       debugInfiniteResources: !!state.debugInfiniteResources,
       debugSpeedMultiplier: clampDebugSpeedMultiplier(state.debugSpeedMultiplier),
+      debugWorldSpeedMultiplier: clampDebugWorldSpeedMultiplier(state.debugWorldSpeedMultiplier),
     };
     try {
       window.localStorage.setItem(SETTINGS_KEY, JSON.stringify(payload));
@@ -1090,16 +1194,19 @@
       const data = JSON.parse(raw);
       state.musicVolume = clampVolume(data.musicVolume, SETTINGS_DEFAULTS.musicVolume);
       state.sfxVolume = clampVolume(data.sfxVolume, SETTINGS_DEFAULTS.sfxVolume);
-      state.debugUnlocked = !!data.debugUnlocked;
+      // Debug access is session-based: always start locked on every load/join.
+      state.debugUnlocked = false;
       // Always start sessions with infinite resources off; users can toggle it per run.
       state.debugInfiniteResources = false;
       state.debugSpeedMultiplier = clampDebugSpeedMultiplier(data.debugSpeedMultiplier);
+      state.debugWorldSpeedMultiplier = clampDebugWorldSpeedMultiplier(data.debugWorldSpeedMultiplier);
     } catch (err) {
       state.musicVolume = SETTINGS_DEFAULTS.musicVolume;
       state.sfxVolume = SETTINGS_DEFAULTS.sfxVolume;
-      state.debugUnlocked = SETTINGS_DEFAULTS.debugUnlocked;
+      state.debugUnlocked = false;
       state.debugInfiniteResources = SETTINGS_DEFAULTS.debugInfiniteResources;
       state.debugSpeedMultiplier = SETTINGS_DEFAULTS.debugSpeedMultiplier;
+      state.debugWorldSpeedMultiplier = SETTINGS_DEFAULTS.debugWorldSpeedMultiplier;
     }
   }
 
@@ -1123,6 +1230,12 @@
     return clampDebugSpeedMultiplier(state.debugSpeedMultiplier);
   }
 
+  function getDebugWorldSpeedMultiplier() {
+    if (!state.debugUnlocked) return 1;
+    if (netIsClient()) return 1;
+    return clampDebugWorldSpeedMultiplier(state.debugWorldSpeedMultiplier);
+  }
+
   function updateDebugSpeedUI() {
     const mult = clampDebugSpeedMultiplier(state.debugSpeedMultiplier);
     if (debugSpeedInput) {
@@ -1134,10 +1247,28 @@
     }
   }
 
+  function updateDebugWorldSpeedUI() {
+    const mult = clampDebugWorldSpeedMultiplier(state.debugWorldSpeedMultiplier);
+    if (debugWorldSpeedInput) {
+      debugWorldSpeedInput.value = String(Math.round(mult * 100));
+      debugWorldSpeedInput.disabled = !state.debugUnlocked;
+    }
+    if (debugWorldSpeedValue) {
+      debugWorldSpeedValue.textContent = `${mult.toFixed(1)}x`;
+    }
+  }
+
   function setDebugSpeedFromPercent(percent, persist = true) {
     const mult = clampDebugSpeedMultiplier((Number(percent) || 100) / 100);
     state.debugSpeedMultiplier = mult;
     updateDebugSpeedUI();
+    if (persist) saveUserSettings();
+  }
+
+  function setDebugWorldSpeedFromPercent(percent, persist = true) {
+    const mult = clampDebugWorldSpeedMultiplier((Number(percent) || 100) / 100);
+    state.debugWorldSpeedMultiplier = mult;
+    updateDebugWorldSpeedUI();
     if (persist) saveUserSettings();
   }
 
@@ -1188,7 +1319,9 @@
     if (!state.debugUnlocked) {
       state.debugMoses = false;
       state.debugInfiniteResources = false;
+      state.debugWorldMapVisible = false;
       state.debugSpeedMultiplier = 1;
+      state.debugWorldSpeedMultiplier = 1;
       if (buildMenu && !buildMenu.classList.contains("hidden")) {
         renderBuildMenu();
       }
@@ -1198,7 +1331,9 @@
     }
     updateMosesButton();
     updateInfiniteResourcesButton();
+    updateDebugWorldMapButton();
     updateDebugSpeedUI();
+    updateDebugWorldSpeedUI();
     if (persist) saveUserSettings();
   }
 
@@ -1219,6 +1354,16 @@
       ? "Infinite Resources: On"
       : "Infinite Resources: Off";
     infiniteResourcesBtn.setAttribute("aria-pressed", enabled ? "true" : "false");
+  }
+
+  function updateDebugWorldMapButton() {
+    if (!debugWorldMapBtn) return;
+    const enabled = !!state.debugWorldMapVisible && !!state.debugUnlocked;
+    debugWorldMapBtn.disabled = !state.debugUnlocked;
+    debugWorldMapBtn.textContent = enabled
+      ? "World Mini-Map: On"
+      : "World Mini-Map: Off";
+    debugWorldMapBtn.setAttribute("aria-pressed", enabled ? "true" : "false");
   }
 
   function ensureAudioContext() {
@@ -2021,7 +2166,6 @@
         houseY: state.player.inHut ? state.housePlayer?.y ?? null : null,
         inCave: state.inCave,
         caveId: state.activeCave?.id ?? null,
-        torchTimer: state.torchTimer,
         unlocks: normalizeUnlocks(state.player.unlocks),
       });
     }
@@ -2043,7 +2187,6 @@
         houseY: player.houseY ?? null,
         inCave: player.inCave,
         caveId: player.caveId,
-        torchTimer: player.torchTimer ?? 0,
         unlocks: normalizeUnlocks(player.unlocks),
       });
     }
@@ -2067,6 +2210,9 @@
         y: monster.y,
         hp: monster.hp,
         maxHp: monster.maxHp,
+        dayBurning: !!monster.dayBurning,
+        burnTimer: Math.max(0, Number(monster.burnTimer) || 0),
+        burnDuration: Math.max(0, Number(monster.burnDuration) || 0),
       })),
       projectiles: (world.projectiles ?? []).map((projectile) => ({
         id: projectile.id,
@@ -2129,6 +2275,7 @@
           x: robot.x,
           y: robot.y,
           mode: robot.mode,
+          manualStop: !!robot.manualStop,
           state: robot.state,
           targetResourceId: Number.isInteger(robot.targetResourceId) ? robot.targetResourceId : null,
           mineTimer: robot.mineTimer,
@@ -2159,15 +2306,29 @@
     return null;
   }
 
-  function buildMonstersFromSnapshot(previous, snapshotMonsters) {
+  function buildMonstersFromSnapshot(previous, snapshotMonsters, world = null) {
     const prevMap = new Map(
       Array.isArray(previous) ? previous.map((monster) => [monster.id, monster]) : []
     );
     if (!Array.isArray(snapshotMonsters)) return [];
-    return snapshotMonsters.map((monster) => {
+    const seenIds = new Set();
+    const built = snapshotMonsters.map((monster) => {
+      seenIds.add(monster.id);
       const prev = prevMap.get(monster.id);
       const type = monster.type ?? "crawler";
       const variant = getMonsterVariant(type);
+      const burnTimer = Math.max(
+        0,
+        typeof monster.burnTimer === "number"
+          ? monster.burnTimer
+          : (prev?.burnTimer ?? 0)
+      );
+      const burnDuration = Math.max(
+        0,
+        typeof monster.burnDuration === "number"
+          ? monster.burnDuration
+          : (prev?.burnDuration ?? 0)
+      );
       return {
         id: monster.id,
         type,
@@ -2185,11 +2346,25 @@
         attackTimer: 0,
         hitTimer: 0,
         wanderTimer: 0,
+        dayBurning: !!monster.dayBurning || burnTimer > 0,
+        burnTimer,
+        burnDuration,
         dir: { x: 0, y: 0 },
         renderX: prev?.renderX ?? monster.x,
         renderY: prev?.renderY ?? monster.y,
       };
     });
+    if (world) {
+      for (const [id, prev] of prevMap.entries()) {
+        if (seenIds.has(id)) continue;
+        if (!prev || (!prev.dayBurning && (prev.burnTimer ?? 0) <= 0)) continue;
+        const x = Number.isFinite(prev.x) ? prev.x : prev.renderX;
+        const y = Number.isFinite(prev.y) ? prev.y : prev.renderY;
+        if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+        spawnMonsterBurnBurst(world, x, y, 8);
+      }
+    }
+    return built;
   }
 
   function buildProjectilesFromSnapshot(previous, snapshotProjectiles) {
@@ -2239,6 +2414,16 @@
   function applySnapshotStructures(structures) {
     const world = state.surfaceWorld;
     if (!world) return;
+    const previousRobotRender = new Map();
+    for (const structure of state.structures) {
+      if (!structure || structure.removed || structure.type !== "robot") continue;
+      const robot = ensureRobotMeta(structure);
+      if (!robot) continue;
+      previousRobotRender.set(`${structure.tx},${structure.ty}`, {
+        x: Number.isFinite(robot.renderX) ? robot.renderX : robot.x,
+        y: Number.isFinite(robot.renderY) ? robot.renderY : robot.y,
+      });
+    }
     const activeHousePos = state.activeHouse ? { tx: state.activeHouse.tx, ty: state.activeHouse.ty } : null;
     const activeChestPos = (state.activeChest && !state.activeChest.interior)
       ? { tx: state.activeChest.tx, ty: state.activeChest.ty }
@@ -2256,17 +2441,30 @@
     );
     for (const entry of structures) {
       if (!entry) continue;
-      const normalized = { ...entry, type: entry.type === "hut" ? "small_house" : entry.type };
+      const normalized = { ...entry, type: normalizeLegacyStructureType(entry.type) };
       if (!isStructureValidOnLoad(world, normalized, bridgeSet)) continue;
+      const storageSize = normalized.type === "robot"
+        ? ROBOT_STORAGE_SIZE
+        : (normalized.type === "chest" ? CHEST_SIZE : null);
       clearResourcesForFootprint(world, normalized.type, normalized.tx, normalized.ty);
       const structure = addStructure(normalized.type, normalized.tx, normalized.ty, {
-        storage: entry.storage
-          ? entry.storage.map((slot) => ({ id: slot.id, qty: slot.qty }))
+        storage: Array.isArray(entry.storage)
+          ? sanitizeInventorySlots(
+              entry.storage,
+              Number.isInteger(storageSize) ? storageSize : entry.storage.length
+            )
           : null,
         meta: entry.meta ? JSON.parse(JSON.stringify(entry.meta)) : null,
       });
-      if (structure.type === "chest" && !structure.storage) {
-        structure.storage = createEmptyInventory(CHEST_SIZE);
+      if (structure.type === "chest") structure.storage = sanitizeInventorySlots(structure.storage, CHEST_SIZE);
+      if (structure.type === "robot") structure.storage = sanitizeInventorySlots(structure.storage, ROBOT_STORAGE_SIZE);
+      if (structure.type === "robot") {
+        const robot = ensureRobotMeta(structure);
+        const previous = previousRobotRender.get(`${structure.tx},${structure.ty}`);
+        if (robot && previous) {
+          robot.renderX = previous.x;
+          robot.renderY = previous.y;
+        }
       }
     }
 
@@ -2310,9 +2508,6 @@
         if (typeof entry.hp === "number") state.player.hp = entry.hp;
         if (typeof entry.maxHp === "number") state.player.maxHp = entry.maxHp;
         if (typeof entry.toolTier === "number") state.player.toolTier = entry.toolTier;
-        if (typeof entry.torchTimer === "number") {
-          state.torchTimer = Math.max(0, entry.torchTimer);
-        }
         state.player.unlocks = normalizeUnlocks(entry.unlocks ?? state.player.unlocks);
         state.player.checkpoint = normalizeCheckpoint(entry.checkpoint) ?? state.player.checkpoint;
         updateHealthUI();
@@ -2337,9 +2532,6 @@
         houseY: typeof entry.houseY === "number" ? entry.houseY : null,
         inCave: !!entry.inCave,
         caveId: entry.caveId ?? null,
-        torchTimer: typeof entry.torchTimer === "number"
-          ? Math.max(0, entry.torchTimer)
-          : Math.max(0, prev?.torchTimer ?? 0),
         unlocks: normalizeUnlocks(entry.unlocks ?? prev?.unlocks),
         renderX: prev?.renderX ?? entry.x ?? 0,
         renderY: prev?.renderY ?? entry.y ?? 0,
@@ -2411,7 +2603,7 @@
     applyDrops(world, snapshot.world?.drops ?? []);
     applyAnimals(world, snapshot.world?.animals ?? []);
     applyVillagers(world, snapshot.world?.villagers ?? []);
-    world.monsters = buildMonstersFromSnapshot(world.monsters, snapshot.world?.monsters);
+    world.monsters = buildMonstersFromSnapshot(world.monsters, snapshot.world?.monsters, world);
     world.projectiles = buildProjectilesFromSnapshot(world.projectiles, snapshot.world?.projectiles);
 
     if (Array.isArray(world.caves) && Array.isArray(snapshot.caves)) {
@@ -2423,7 +2615,7 @@
         applyDrops(cave.world, caveSnapshot.world?.drops ?? []);
         applyAnimals(cave.world, caveSnapshot.world?.animals ?? []);
         applyVillagers(cave.world, caveSnapshot.world?.villagers ?? []);
-        cave.world.monsters = buildMonstersFromSnapshot(cave.world.monsters, caveSnapshot.world?.monsters);
+        cave.world.monsters = buildMonstersFromSnapshot(cave.world.monsters, caveSnapshot.world?.monsters, cave.world);
         cave.world.projectiles = buildProjectilesFromSnapshot(cave.world.projectiles, caveSnapshot.world?.projectiles);
       }
     }
@@ -2483,7 +2675,6 @@
       houseY: null,
       inCave: false,
       caveId: null,
-      torchTimer: 0,
     };
     net.players.set(conn.peer, player);
     const snapshot = buildSnapshot();
@@ -2512,7 +2703,6 @@
       houseY: player.houseY,
       inCave: player.inCave,
       caveId: player.caveId,
-      torchTimer: player.torchTimer ?? 0,
     }, conn.peer);
   }
 
@@ -2535,9 +2725,6 @@
       state.player.toolTier = message.playerState.toolTier ?? state.player.toolTier;
       state.player.unlocks = normalizeUnlocks(message.playerState.unlocks ?? state.player.unlocks);
       state.player.checkpoint = normalizeCheckpoint(message.playerState.checkpoint) ?? state.player.checkpoint;
-      if (typeof message.playerState.torchTimer === "number") {
-        state.torchTimer = Math.max(0, message.playerState.torchTimer);
-      }
       updateHealthUI();
       updateToolDisplay();
     }
@@ -2564,9 +2751,6 @@
     player.houseY = typeof message.houseY === "number" ? message.houseY : null;
     player.inCave = !!message.inCave;
     player.caveId = message.caveId ?? null;
-    if (typeof message.torchTimer === "number") {
-      player.torchTimer = Math.max(0, message.torchTimer);
-    }
     if (!player.inCave && !player.inHut && state.surfaceWorld && !normalizeCheckpoint(player.checkpoint)) {
       setPlayerCheckpoint(player, state.surfaceWorld, player.x, player.y, true);
     }
@@ -2591,7 +2775,6 @@
       houseY: player.houseY,
       inCave: player.inCave,
       caveId: player.caveId,
-      torchTimer: player.torchTimer ?? 0,
     }, conn.peer);
   }
 
@@ -2604,9 +2787,6 @@
       if (message.unlocks) {
         state.player.unlocks = normalizeUnlocks(message.unlocks);
         updateToolDisplay();
-      }
-      if (typeof message.torchTimer === "number") {
-        state.torchTimer = Math.max(0, message.torchTimer);
       }
       if (message.checkpoint) {
         state.player.checkpoint = normalizeCheckpoint(message.checkpoint) ?? state.player.checkpoint;
@@ -2632,9 +2812,6 @@
       houseY: typeof message.houseY === "number" ? message.houseY : current.houseY ?? null,
       inCave: !!message.inCave,
       caveId: message.caveId ?? null,
-      torchTimer: typeof message.torchTimer === "number"
-        ? Math.max(0, message.torchTimer)
-        : Math.max(0, current.torchTimer ?? 0),
       renderX: current.renderX ?? (typeof message.x === "number" ? message.x : current.x ?? 0),
       renderY: current.renderY ?? (typeof message.y === "number" ? message.y : current.y ?? 0),
     });
@@ -2788,9 +2965,8 @@
     if (structure.type === "robot") {
       ensureRobotMeta(structure);
     }
-    structure.storage = Array.isArray(message.storage)
-      ? message.storage.map((slot) => ({ id: slot.id, qty: slot.qty }))
-      : createEmptyInventory(structure.type === "robot" ? ROBOT_STORAGE_SIZE : CHEST_SIZE);
+    const storageSize = structure.type === "robot" ? ROBOT_STORAGE_SIZE : CHEST_SIZE;
+    structure.storage = sanitizeInventorySlots(message.storage, storageSize);
     markDirty();
   }
 
@@ -2816,9 +2992,23 @@
       const nextMode = normalizeRobotMode(message.mode);
       if (!isRobotMode(nextMode)) return;
       robot.mode = nextMode;
+      robot.manualStop = false;
       robot.targetResourceId = null;
       robot.retargetTimer = 0;
+      robot.mineTimer = 0;
       robot.state = "idle";
+      clearRobotNavigation(robot);
+      setRobotInteractionPause(structure, ROBOT_CONFIG.interactionPause);
+      markDirty();
+      return;
+    }
+
+    if (message.action === "stop") {
+      robot.manualStop = true;
+      robot.targetResourceId = null;
+      robot.retargetTimer = 0;
+      robot.mineTimer = 0;
+      robot.state = "returning";
       clearRobotNavigation(robot);
       setRobotInteractionPause(structure, ROBOT_CONFIG.interactionPause);
       markDirty();
@@ -2835,9 +3025,7 @@
     if (!house || !isHouseType(house.type)) return;
     const chest = getInteriorStructureAt(house, message.tx, message.ty);
     if (!chest || chest.type !== "chest") return;
-    chest.storage = Array.isArray(message.storage)
-      ? message.storage.map((slot) => ({ id: slot.id, qty: slot.qty }))
-      : createEmptyInventory(CHEST_SIZE);
+    chest.storage = sanitizeInventorySlots(message.storage, CHEST_SIZE);
     markDirty();
   }
 
@@ -2876,13 +3064,11 @@
     state.timeOfDay = 0;
     state.isNight = false;
     state.checkpointTimer = 0;
-    state.torchTimer = 0;
     state.animalVocalTimer = 2.4 + Math.random() * 1.8;
     state.surfaceSpawnTimer = MONSTER.spawnInterval;
     state.gameWon = false;
     if (state.surfaceWorld) {
-      state.surfaceWorld.monsters = [];
-      state.surfaceWorld.projectiles = [];
+      igniteSurfaceMonstersForDay(state.surfaceWorld);
     }
     updateTimeUI();
 
@@ -3055,7 +3241,6 @@
       houseY: state.player.inHut ? state.housePlayer?.y ?? null : null,
       inCave: state.inCave,
       caveId: state.activeCave?.id ?? null,
-      torchTimer: state.torchTimer,
     };
     if (net.isHost) {
       broadcastNet(payload);
@@ -3104,9 +3289,6 @@
 
   function updateRemoteRender(dt) {
     for (const player of net.players.values()) {
-      if (player.torchTimer > 0) {
-        player.torchTimer = Math.max(0, player.torchTimer - dt);
-      }
       if (player.renderX == null || player.renderY == null) {
         player.renderX = player.x;
         player.renderY = player.y;
@@ -3131,6 +3313,9 @@
 
     if (!net.isHost && state.world?.monsters) {
       for (const monster of state.world.monsters) {
+        if (monster.dayBurning && (monster.burnTimer ?? 0) > 0) {
+          monster.burnTimer = Math.max(0, monster.burnTimer - dt);
+        }
         if (monster.renderX == null || monster.renderY == null) {
           monster.renderX = monster.x;
           monster.renderY = monster.y;
@@ -3161,6 +3346,27 @@
         } else {
           villager.renderX = smoothValue(villager.renderX, villager.x, dt, NET_CONFIG.villagerSmooth);
           villager.renderY = smoothValue(villager.renderY, villager.y, dt, NET_CONFIG.villagerSmooth);
+        }
+      }
+    }
+
+    if (!net.isHost && Array.isArray(state.structures)) {
+      for (const structure of state.structures) {
+        if (!structure || structure.removed || structure.type !== "robot") continue;
+        const robot = ensureRobotMeta(structure);
+        if (!robot) continue;
+        if (robot.renderX == null || robot.renderY == null) {
+          robot.renderX = robot.x;
+          robot.renderY = robot.y;
+        } else {
+          const drift = Math.hypot(robot.x - robot.renderX, robot.y - robot.renderY);
+          if (drift > CONFIG.tileSize * 8) {
+            robot.renderX = robot.x;
+            robot.renderY = robot.y;
+          } else {
+            robot.renderX = smoothValue(robot.renderX, robot.x, dt, NET_CONFIG.robotSmooth);
+            robot.renderY = smoothValue(robot.renderY, robot.y, dt, NET_CONFIG.robotSmooth);
+          }
         }
       }
     }
@@ -3663,6 +3869,9 @@
           attackTimer: 0,
           hitTimer: 0,
           wanderTimer: 0,
+          dayBurning: false,
+          burnTimer: 0,
+          burnDuration: 0,
           dir: { x: 0, y: 0 },
         });
         break;
@@ -3683,6 +3892,7 @@
       caves: [],
       monsters,
       nextMonsterId,
+      monsterBurnFx: [],
       projectiles: [],
       nextProjectileId: 1,
       villagers: [],
@@ -4087,6 +4297,7 @@
       respawnTasks: [],
       monsters: [],
       nextMonsterId: 1,
+      monsterBurnFx: [],
       projectiles: [],
       nextProjectileId: 1,
       animals: [],
@@ -4158,6 +4369,52 @@
 
   function createEmptyInventory(size) {
     return Array.from({ length: size }, () => ({ id: null, qty: 0 }));
+  }
+
+  function normalizeLegacyItemId(itemId) {
+    if (itemId === "lantern") return "campfire";
+    return itemId;
+  }
+
+  function isKnownItemId(itemId) {
+    const normalized = normalizeLegacyItemId(itemId);
+    return typeof normalized === "string" && !!ITEMS[normalized];
+  }
+
+  function sanitizeInventorySlots(slots, expectedSize = null) {
+    const size = Number.isInteger(expectedSize) && expectedSize >= 0
+      ? expectedSize
+      : (Array.isArray(slots) ? slots.length : 0);
+    const source = Array.isArray(slots) ? slots : [];
+    const output = [];
+    for (let i = 0; i < size; i += 1) {
+      const slot = source[i] || {};
+      const normalizedId = normalizeLegacyItemId(slot.id);
+      const id = isKnownItemId(normalizedId) ? normalizedId : null;
+      const qty = id
+        ? clamp(Math.floor(Number(slot.qty) || 0), 1, MAX_STACK)
+        : 0;
+      output.push({ id: qty > 0 ? id : null, qty: qty > 0 ? qty : 0 });
+    }
+    return output;
+  }
+
+  function sanitizeDropEntries(drops) {
+    if (!Array.isArray(drops)) return [];
+    const output = [];
+    for (const drop of drops) {
+      const normalizedId = normalizeLegacyItemId(drop?.itemId);
+      if (!drop || !isKnownItemId(normalizedId)) continue;
+      const qty = clamp(Math.floor(Number(drop.qty) || 0), 1, MAX_STACK);
+      if (qty <= 0) continue;
+      output.push({
+        itemId: normalizedId,
+        qty,
+        x: Number.isFinite(drop.x) ? drop.x : 0,
+        y: Number.isFinite(drop.y) ? drop.y : 0,
+      });
+    }
+    return output;
   }
 
   function addItem(inventory, itemId, amount) {
@@ -4892,15 +5149,13 @@
   }
 
   function applyDrops(world, drops) {
-    world.drops = Array.isArray(drops)
-      ? drops.map((drop) => ({
-          id: state.nextDropId++,
-          itemId: drop.itemId,
-          qty: drop.qty,
-          x: drop.x,
-          y: drop.y,
-        }))
-      : [];
+    world.drops = sanitizeDropEntries(drops).map((drop) => ({
+      id: state.nextDropId++,
+      itemId: drop.itemId,
+      qty: drop.qty,
+      x: drop.x,
+      y: drop.y,
+    }));
   }
 
   function applyRespawnTasks(world, tasks) {
@@ -5198,6 +5453,13 @@
     return type === "hut" || type === "small_house" || type === "medium_house" || type === "large_house";
   }
 
+  function normalizeLegacyStructureType(type) {
+    if (type === "hut") return "small_house";
+    // Lanterns were removed; fold old saves/snapshots into campfires.
+    if (type === "lantern") return "campfire";
+    return type;
+  }
+
   function getStructureFootprint(type) {
     if (type === "medium_house") return { w: 2, h: 1 };
     if (type === "large_house") return { w: 2, h: 2 };
@@ -5266,6 +5528,15 @@
     }
     structure.meta.house.width = tier.width;
     structure.meta.house.height = tier.height;
+    for (const item of structure.meta.house.items) {
+      if (!item || typeof item !== "object") continue;
+      item.type = normalizeLegacyStructureType(item.type);
+      if (item.type === "chest") {
+        item.storage = sanitizeInventorySlots(item.storage, CHEST_SIZE);
+      } else {
+        item.storage = null;
+      }
+    }
   }
 
   function getHouseInterior(structure) {
@@ -5294,7 +5565,8 @@
         homeTy: ty,
         x: (tx + 0.5) * CONFIG.tileSize,
         y: (ty + 0.5) * CONFIG.tileSize,
-        mode: ROBOT_MODE.trees,
+        mode: null,
+        manualStop: false,
         state: "idle",
         targetResourceId: null,
         mineTimer: 0,
@@ -5317,15 +5589,16 @@
     if (!Number.isFinite(robot.homeTy)) robot.homeTy = structure.ty;
     if (!Number.isFinite(robot.x)) robot.x = (robot.homeTx + 0.5) * CONFIG.tileSize;
     if (!Number.isFinite(robot.y)) robot.y = (robot.homeTy + 0.5) * CONFIG.tileSize;
-    robot.mode = normalizeRobotMode(robot.mode) ?? ROBOT_MODE.trees;
+    if (!Number.isFinite(robot.renderX)) robot.renderX = robot.x;
+    if (!Number.isFinite(robot.renderY)) robot.renderY = robot.y;
+    robot.mode = normalizeRobotMode(robot.mode);
+    robot.manualStop = !!robot.manualStop;
     if (typeof robot.state !== "string") robot.state = "idle";
     if (!Number.isFinite(robot.mineTimer)) robot.mineTimer = 0;
     if (!Number.isFinite(robot.retargetTimer)) robot.retargetTimer = 0;
     if (!Number.isFinite(robot.pauseTimer)) robot.pauseTimer = 0;
     if (!Number.isInteger(robot.targetResourceId)) robot.targetResourceId = null;
-    if (!Array.isArray(structure.storage)) {
-      structure.storage = createEmptyInventory(ROBOT_STORAGE_SIZE);
-    }
+    structure.storage = sanitizeInventorySlots(structure.storage, ROBOT_STORAGE_SIZE);
     return robot;
   }
 
@@ -5351,6 +5624,7 @@
   }
 
   function getRobotModeLabel(mode) {
+    if (!isRobotMode(mode)) return "Unassigned";
     if (mode === ROBOT_MODE.stone) return "Mine Stone";
     if (mode === ROBOT_MODE.grass) return "Mine Grass";
     return "Mine Trees";
@@ -5360,6 +5634,11 @@
     const robot = ensureRobotMeta(structure);
     if (!robot) return "Idle";
     if (robot.pauseTimer > 0) return "Paused (interacting)";
+    if (robot.manualStop) {
+      if (robot.state === "returning") return "Stopping (returning to spawn bench)";
+      return "Stopped at spawn bench";
+    }
+    if (!isRobotMode(robot.mode)) return "Awaiting assignment";
     if (robot.state === "returning") return "Returning to base";
     if (robot.state === "waiting") return "Waiting (inventory full)";
     if (robot.state === "moving") return "Moving to target";
@@ -5530,7 +5809,7 @@
     if (rng() < 0.6) {
       addInteriorStructure(
         house,
-        rng() < 0.55 ? "lantern" : "campfire",
+        "campfire",
         Math.max(0, Math.floor(interior.width / 2)),
         Math.max(0, Math.floor(interior.height / 2) - 1)
       );
@@ -5931,7 +6210,6 @@
     state.timeOfDay = 0;
     state.isNight = false;
     state.checkpointTimer = 0;
-    state.torchTimer = 0;
     state.surfaceSpawnTimer = MONSTER.spawnInterval;
     state.gameWon = false;
     state.winSequencePlayed = false;
@@ -5968,7 +6246,7 @@
     state.activeChest = null;
 
     const benchSpot = findBenchSpot(world, spawn);
-    addStructure("bench", benchSpot.tx, benchSpot.ty);
+    addStructure("bench", benchSpot.tx, benchSpot.ty, { meta: { spawnBench: true } });
     seedSurfaceVillages(world);
 
     state.dirty = true;
@@ -6033,9 +6311,7 @@
 
       state.surfaceWorld = world;
       state.world = world;
-      state.inventory = Array.isArray(saved.inventory) && saved.inventory.length === INVENTORY_SIZE
-        ? saved.inventory
-        : createEmptyInventory(INVENTORY_SIZE);
+      state.inventory = sanitizeInventorySlots(saved.inventory, INVENTORY_SIZE);
       state.structures = [];
       state.structureGrid = new Array(world.size * world.size).fill(null);
 
@@ -6047,18 +6323,23 @@
         );
         for (const entry of saved.structures) {
           if (!entry) continue;
-          const normalized = { ...entry, type: entry.type === "hut" ? "small_house" : entry.type };
+          const normalized = { ...entry, type: normalizeLegacyStructureType(entry.type) };
           if (!isStructureValidOnLoad(world, normalized, bridgeSet)) continue;
+          const storageSize = normalized.type === "robot"
+            ? ROBOT_STORAGE_SIZE
+            : (normalized.type === "chest" ? CHEST_SIZE : null);
           clearResourcesForFootprint(world, normalized.type, normalized.tx, normalized.ty);
           const structure = addStructure(normalized.type, normalized.tx, normalized.ty, {
-            storage: entry.storage
-              ? entry.storage.map((slot) => ({ id: slot.id, qty: slot.qty }))
+            storage: Array.isArray(entry.storage)
+              ? sanitizeInventorySlots(
+                  entry.storage,
+                  Number.isInteger(storageSize) ? storageSize : entry.storage.length
+                )
               : null,
             meta: entry.meta ? JSON.parse(JSON.stringify(entry.meta)) : null,
           });
-          if (structure.type === "chest" && !structure.storage) {
-            structure.storage = createEmptyInventory(CHEST_SIZE);
-          }
+          if (structure.type === "chest") structure.storage = sanitizeInventorySlots(structure.storage, CHEST_SIZE);
+          if (structure.type === "robot") structure.storage = sanitizeInventorySlots(structure.storage, ROBOT_STORAGE_SIZE);
         }
       }
 
@@ -6086,7 +6367,6 @@
       state.spawnTile = spawnTile;
       state.timeOfDay = typeof saved.timeOfDay === "number" ? saved.timeOfDay : 0;
       state.checkpointTimer = 0;
-      state.torchTimer = 0;
       state.animalVocalTimer = 2.4 + Math.random() * 1.8;
       state.gameWon = !!saved.gameWon;
       state.winSequencePlayed = false;
@@ -6129,12 +6409,12 @@
         }
       }
 
-      let bench = state.structures.find((s) => s.type === "bench" && !s.removed);
+      let bench = state.structures.find((s) => s.type === "bench" && !s.removed && !s.meta?.village);
       const benchIdx = bench ? tileIndex(bench.tx, bench.ty, world.size) : -1;
       if (!bench || !world.tiles[benchIdx]) {
         if (bench) removeStructure(bench);
         const benchSpot = findBenchSpot(world, spawnTile);
-        addStructure("bench", benchSpot.tx, benchSpot.ty);
+        addStructure("bench", benchSpot.tx, benchSpot.ty, { meta: { spawnBench: true } });
       }
 
       const villagesAdded = ensureSurfaceVillagePresence(world);
@@ -6319,8 +6599,7 @@
     const swordTier = getSwordTier(player);
     const swordData = SWORD_TIER_DATA[swordTier] || SWORD_TIER_DATA[0];
     const base = 1 + swordData.damage;
-    const torchBonus = player === state.player && state.torchTimer > 0 ? 1 : 0;
-    return Math.max(1, base + torchBonus);
+    return Math.max(1, base);
   }
 
   function getAppliedAttackDamage(player, target) {
@@ -6416,7 +6695,6 @@
     return placeType === "bed"
       || placeType === "chest"
       || placeType === "campfire"
-      || placeType === "lantern"
       || placeType === "smelter"
       || placeType === "sawmill"
       || placeType === "kiln";
@@ -6670,6 +6948,43 @@
     };
   }
 
+  function getDebugSurfacePlayerMarkers() {
+    const markers = [];
+    const local = getLocalSurfaceMapPosition();
+    if (local) {
+      markers.push({
+        id: net.playerId || "local",
+        name: net.localName || "You",
+        color: net.localColor || COLORS.player,
+        x: local.x,
+        y: local.y,
+        inCave: !!state.inCave,
+      });
+    }
+
+    for (const player of net.players.values()) {
+      if (!player) continue;
+      const checkpoint = normalizeCheckpoint(player.checkpoint);
+      const worldX = player.inCave
+        ? (checkpoint?.x ?? (Number.isFinite(player.x) ? player.x : null))
+        : (Number.isFinite(player.renderX) ? player.renderX : player.x);
+      const worldY = player.inCave
+        ? (checkpoint?.y ?? (Number.isFinite(player.y) ? player.y : null))
+        : (Number.isFinite(player.renderY) ? player.renderY : player.y);
+      if (!Number.isFinite(worldX) || !Number.isFinite(worldY)) continue;
+      markers.push({
+        id: player.id || `${worldX.toFixed(2)}:${worldY.toFixed(2)}`,
+        name: player.name || "Survivor",
+        color: player.color || "#6fa8ff",
+        x: worldX,
+        y: worldY,
+        inCave: !!player.inCave,
+      });
+    }
+
+    return markers;
+  }
+
   function getVillageCenters(world) {
     if (!world) return [];
     const villageNodes = state.structures
@@ -6735,19 +7050,27 @@
     return closest;
   }
 
-  function createMapHintTarget(world, mapItemId, baseTarget) {
-    if (!world || !baseTarget) return null;
-    const markerSeed = seedToInt(`${world.seed}:${mapItemId}:${baseTarget.key || "target"}`);
-    const rng = makeRng(markerSeed);
-    const angle = rng() * Math.PI * 2;
-    const radiusTiles = 3 + rng() * 4.5;
-    const radius = radiusTiles * CONFIG.tileSize;
-    const limit = world.size * CONFIG.tileSize;
-    return {
-      x: clamp(baseTarget.x + Math.cos(angle) * radius, CONFIG.tileSize * 0.5, limit - CONFIG.tileSize * 0.5),
-      y: clamp(baseTarget.y + Math.sin(angle) * radius, CONFIG.tileSize * 0.5, limit - CONFIG.tileSize * 0.5),
-      label: mapItemId === "village_map" ? "Village zone" : "Cave zone",
-    };
+  function getCompassDirectionLabel(dx, dy) {
+    if (!Number.isFinite(dx) || !Number.isFinite(dy)) return "unknown";
+    if (Math.hypot(dx, dy) <= CONFIG.tileSize * 0.5) return "here";
+    const heading = (Math.atan2(dx, -dy) * 180 / Math.PI + 360) % 360;
+    const labels = [
+      "north",
+      "northeast",
+      "east",
+      "southeast",
+      "south",
+      "southwest",
+      "west",
+      "northwest",
+    ];
+    const idx = Math.round(heading / 45) % labels.length;
+    return labels[idx];
+  }
+
+  function getMapItemTitle(mapItemId) {
+    if (mapItemId === "village_map") return "Village Wayfinder";
+    return "Cave Wayfinder";
   }
 
   function getMapTargetForItem(world, mapItemId, fromX, fromY) {
@@ -6758,7 +7081,12 @@
       }
       const villages = getVillageCenters(world);
       const nearestVillage = findNearestTarget(villages, fromX, fromY);
-      return createMapHintTarget(world, mapItemId, nearestVillage);
+      if (!nearestVillage) return null;
+      return {
+        x: nearestVillage.x,
+        y: nearestVillage.y,
+        label: "Nearest village",
+      };
     }
     if (mapItemId === "cave_map") {
       const caves = (world.caves || []).map((cave) => ({
@@ -6767,45 +7095,14 @@
         y: (cave.ty + 0.5) * CONFIG.tileSize,
       }));
       const nearestCave = findNearestTarget(caves, fromX, fromY);
-      return createMapHintTarget(world, mapItemId, nearestCave);
+      if (!nearestCave) return null;
+      return {
+        x: nearestCave.x,
+        y: nearestCave.y,
+        label: "Nearest cave",
+      };
     }
     return null;
-  }
-
-  function ensureSurfaceMapTexture(world, size) {
-    if (!world) return null;
-    const texSize = Math.max(64, Math.floor(size));
-    if (world.mapTexture && world.mapTextureSize === texSize) {
-      return world.mapTexture;
-    }
-    const texture = document.createElement("canvas");
-    texture.width = texSize;
-    texture.height = texSize;
-    const textureCtx = texture.getContext("2d");
-    textureCtx.fillStyle = "#1f537b";
-    textureCtx.fillRect(0, 0, texSize, texSize);
-    const pxStep = Math.max(1, Math.ceil(texSize / world.size));
-    for (let y = 0; y < world.size; y += 1) {
-      for (let x = 0; x < world.size; x += 1) {
-        const idx = tileIndex(x, y, world.size);
-        if (!world.tiles[idx]) continue;
-        const biomeId = world.biomeGrid?.[idx] ?? 0;
-        const biome = BIOMES[biomeId] || BIOMES[0];
-        const isBeach = !!world.beachGrid?.[idx];
-        const base = isBeach ? biome.sand : biome.land;
-        const shade = clamp(world.shades?.[idx] ?? 1, 0.75, 1.2);
-        const r = Math.floor(clamp(base[0] * shade, 0, 255));
-        const g = Math.floor(clamp(base[1] * shade, 0, 255));
-        const b = Math.floor(clamp(base[2] * shade, 0, 255));
-        const px = Math.floor((x / world.size) * texSize);
-        const py = Math.floor((y / world.size) * texSize);
-        textureCtx.fillStyle = `rgb(${r}, ${g}, ${b})`;
-        textureCtx.fillRect(px, py, pxStep, pxStep);
-      }
-    }
-    world.mapTexture = texture;
-    world.mapTextureSize = texSize;
-    return texture;
   }
 
   function spawnDrop(itemId, qty, x, y, world = state.world) {
@@ -7113,18 +7410,30 @@
     switch (itemId) {
       case "wood":
       case "plank":
+      case "stick":
         iconCtx.fillStyle = "#8f6238";
         iconCtx.fillRect(cx - s * 0.26, cy - s * 0.18, s * 0.52, s * 0.36);
         iconCtx.strokeStyle = "#c69461";
         iconCtx.lineWidth = 1.2;
         iconCtx.strokeRect(cx - s * 0.26, cy - s * 0.18, s * 0.52, s * 0.36);
-        iconCtx.strokeStyle = "rgba(54,35,20,0.4)";
-        iconCtx.beginPath();
-        iconCtx.moveTo(cx - s * 0.18, cy - s * 0.11);
-        iconCtx.lineTo(cx + s * 0.18, cy - s * 0.11);
-        iconCtx.moveTo(cx - s * 0.18, cy);
-        iconCtx.lineTo(cx + s * 0.18, cy);
-        iconCtx.stroke();
+        if (itemId === "stick") {
+          iconCtx.strokeStyle = "#e3c08d";
+          iconCtx.lineWidth = 2;
+          iconCtx.beginPath();
+          iconCtx.moveTo(cx - s * 0.18, cy + s * 0.13);
+          iconCtx.lineTo(cx + s * 0.17, cy - s * 0.12);
+          iconCtx.moveTo(cx - s * 0.18, cy - s * 0.12);
+          iconCtx.lineTo(cx + s * 0.16, cy + s * 0.13);
+          iconCtx.stroke();
+        } else {
+          iconCtx.strokeStyle = "rgba(54,35,20,0.4)";
+          iconCtx.beginPath();
+          iconCtx.moveTo(cx - s * 0.18, cy - s * 0.11);
+          iconCtx.lineTo(cx + s * 0.18, cy - s * 0.11);
+          iconCtx.moveTo(cx - s * 0.18, cy);
+          iconCtx.lineTo(cx + s * 0.18, cy);
+          iconCtx.stroke();
+        }
         break;
       case "grass":
         iconCtx.strokeStyle = "#7bd494";
@@ -7288,9 +7597,7 @@
         iconCtx.fillRect(cx - s * 0.24, cy - s * 0.12, s * 0.48, s * 0.1);
         break;
       case "campfire":
-      case "torch":
-      case "lantern":
-        iconCtx.fillStyle = itemId === "lantern" ? "#d8bb67" : "#a86b3e";
+        iconCtx.fillStyle = "#a86b3e";
         iconCtx.beginPath();
         iconCtx.arc(cx, cy, s * 0.14, 0, Math.PI * 2);
         iconCtx.fill();
@@ -7638,6 +7945,43 @@
     });
   }
 
+  function getBuildCategoryDefinition(categoryId) {
+    return BUILD_CATEGORY_DEFS.find((entry) => entry.id === categoryId) || BUILD_CATEGORY_DEFS[0];
+  }
+
+  function getBuildRecipeCategory(recipeId) {
+    return BUILD_RECIPE_CATEGORIES[recipeId] || "survival";
+  }
+
+  function getBuildRecipesForCategory(categoryId) {
+    if (categoryId === "upgrades") {
+      return getVisibleUpgradeRecipes(state.player);
+    }
+    return BUILD_RECIPES.filter((recipe) => getBuildRecipeCategory(recipe.id) === categoryId);
+  }
+
+  function setBuildCategoryHint(categoryId) {
+    if (!buildCategoryHint) return;
+    const def = getBuildCategoryDefinition(categoryId);
+    buildCategoryHint.textContent = def?.description || "";
+  }
+
+  function setBuildCategory(categoryId, shouldRender = true) {
+    const def = getBuildCategoryDefinition(categoryId);
+    buildCategory = def.id;
+    for (const tab of buildCategoryTabs) {
+      const active = tab.dataset.category === buildCategory;
+      tab.classList.toggle("active", active);
+      tab.setAttribute("aria-selected", active ? "true" : "false");
+    }
+    setBuildCategoryHint(buildCategory);
+    if (shouldRender) renderBuildMenu();
+  }
+
+  function isUpgradeRecipe(recipe) {
+    return !!recipe && UPGRADE_RECIPE_IDS.has(recipe.id);
+  }
+
   function getRecipeOutput(recipe) {
     if (!recipe) return {};
     if (recipe.output && typeof recipe.output === "object") {
@@ -7649,10 +7993,16 @@
 
   function renderBuildMenu() {
     buildList.innerHTML = "";
-    const recipes = buildTab === "buildings"
-      ? BUILD_RECIPES
-      : getVisibleUpgradeRecipes(state.player);
+    const recipes = getBuildRecipesForCategory(buildCategory);
+    if (!recipes.length) {
+      const empty = document.createElement("div");
+      empty.className = "recipe-desc";
+      empty.textContent = "No recipes available in this category yet.";
+      buildList.appendChild(empty);
+      return;
+    }
     for (const recipe of recipes) {
+      const upgradeRecipe = isUpgradeRecipe(recipe);
       const card = document.createElement("div");
       card.className = "recipe-card";
       const icon = document.createElement("div");
@@ -7679,7 +8029,7 @@
 
       let disabled = false;
       let lockReason = "";
-      if (buildTab === "upgrades") {
+      if (upgradeRecipe) {
         const unlockKey = recipe.unlock;
         if (unlockKey && hasPlayerUnlock(state.player, unlockKey)) {
           button.textContent = "Owned";
@@ -7722,7 +8072,7 @@
       card.appendChild(title);
       card.appendChild(desc);
       if (recipe.cost) card.appendChild(cost);
-      if (buildTab !== "upgrades") {
+      if (!upgradeRecipe) {
         const outputLabel = document.createElement("div");
         outputLabel.className = "recipe-cost";
         const output = getRecipeOutput(recipe);
@@ -7748,16 +8098,7 @@
       return;
     }
 
-    if (recipe.id === "medium_house" && !state.structures.some((s) => !s.removed && (s.type === "small_house" || s.type === "hut"))) {
-      setPrompt("Build a small house first", 1.1);
-      return;
-    }
-    if (recipe.id === "large_house" && !state.structures.some((s) => !s.removed && s.type === "medium_house")) {
-      setPrompt("Upgrade to medium house first", 1.1);
-      return;
-    }
-
-    if (buildTab === "upgrades") {
+    if (isUpgradeRecipe(recipe)) {
       const unlockKey = recipe.unlock;
       if (!unlockKey) return;
       if (hasPlayerUnlock(state.player, unlockKey)) return;
@@ -7777,6 +8118,15 @@
       return;
     }
 
+    if (recipe.id === "medium_house" && !state.structures.some((s) => !s.removed && (s.type === "small_house" || s.type === "hut"))) {
+      setPrompt("Build a small house first", 1.1);
+      return;
+    }
+    if (recipe.id === "large_house" && !state.structures.some((s) => !s.removed && s.type === "medium_house")) {
+      setPrompt("Upgrade to medium house first", 1.1);
+      return;
+    }
+
     const output = getRecipeOutput(recipe);
     if (!canAddItems(state.inventory, output)) {
       setPrompt("Inventory full", 1.2);
@@ -7791,6 +8141,51 @@
     markDirty();
     playSfx("ui");
     setPrompt(`${recipe.name} crafted`, 1.2);
+  }
+
+  function mergeCostObjects(...costs) {
+    const merged = {};
+    for (const cost of costs) {
+      if (!cost || typeof cost !== "object") continue;
+      for (const [itemId, qty] of Object.entries(cost)) {
+        const amount = Number.isFinite(qty) ? qty : Number(qty);
+        if (!Number.isFinite(amount) || amount <= 0) continue;
+        merged[itemId] = (merged[itemId] || 0) + amount;
+      }
+    }
+    return merged;
+  }
+
+  function formatCostItems(cost) {
+    if (!cost || typeof cost !== "object") return "";
+    return Object.entries(cost)
+      .map(([itemId, qty]) => `${ITEMS[itemId]?.name ?? itemId} x${qty}`)
+      .join(", ");
+  }
+
+  function getStationRecipeInputVariants(recipe) {
+    const baseInput = recipe?.input && typeof recipe.input === "object" ? recipe.input : {};
+    if (!Array.isArray(recipe?.inputAny) || recipe.inputAny.length === 0) {
+      return [baseInput];
+    }
+    return recipe.inputAny.map((inputExtra) => mergeCostObjects(baseInput, inputExtra));
+  }
+
+  function getAvailableStationRecipeInput(recipe, inventory = state.inventory) {
+    const variants = getStationRecipeInputVariants(recipe);
+    for (const cost of variants) {
+      if (hasCost(inventory, cost)) return cost;
+    }
+    return null;
+  }
+
+  function formatStationRecipeInputText(recipe) {
+    const variants = getStationRecipeInputVariants(recipe)
+      .map((cost) => formatCostItems(cost))
+      .filter((text) => text.length > 0);
+    if (variants.length === 0) return "";
+    if (variants.length === 1) return variants[0];
+    return variants.map((text) => `(${text})`).join(" or ");
   }
 
   function renderStationMenu() {
@@ -7833,20 +8228,16 @@
       } else {
         const cost = document.createElement("div");
         cost.className = "recipe-cost";
+        const outputText = formatCostItems(recipe.output);
         if (isInfiniteResourcesEnabled()) {
-          cost.textContent = `Free (Infinite Resources) → ${Object.entries(recipe.output)
-            .map(([itemId, qty]) => `${ITEMS[itemId]?.name ?? itemId} x${qty}`)
-            .join(", ")}`;
+          cost.textContent = `Free (Infinite Resources) → ${outputText}`;
         } else {
-          cost.textContent = `${Object.entries(recipe.input)
-            .map(([itemId, qty]) => `${ITEMS[itemId]?.name ?? itemId} x${qty}`)
-            .join(", ")} → ${Object.entries(recipe.output)
-            .map(([itemId, qty]) => `${ITEMS[itemId]?.name ?? itemId} x${qty}`)
-            .join(", ")}`;
+          const inputText = formatStationRecipeInputText(recipe);
+          cost.textContent = `${inputText} → ${outputText}`;
         }
         card.appendChild(cost);
         const btn = document.createElement("button");
-        const hasInput = hasCost(state.inventory, recipe.input);
+        const hasInput = !!getAvailableStationRecipeInput(recipe, state.inventory);
         const hasSpace = canAddItems(state.inventory, recipe.output);
         const canAfford = hasInput && hasSpace;
         btn.textContent = canAfford ? "Refine" : "Locked";
@@ -7871,13 +8262,33 @@
     const robot = ensureRobotMeta(structure);
     if (!robot) return;
     robot.mode = normalizedMode;
+    robot.manualStop = false;
     robot.targetResourceId = null;
     robot.retargetTimer = 0;
+    robot.mineTimer = 0;
     robot.state = "idle";
     clearRobotNavigation(robot);
     setRobotInteractionPause(structure, ROBOT_CONFIG.interactionPause);
     if (netIsClientReady()) {
       sendRobotCommand(structure, "setMode", { mode: normalizedMode });
+    } else {
+      markDirty();
+    }
+  }
+
+  function stopRobotMovement(structure) {
+    if (!structure || structure.type !== "robot") return;
+    const robot = ensureRobotMeta(structure);
+    if (!robot) return;
+    robot.manualStop = true;
+    robot.targetResourceId = null;
+    robot.retargetTimer = 0;
+    robot.mineTimer = 0;
+    robot.state = "returning";
+    clearRobotNavigation(robot);
+    setRobotInteractionPause(structure, ROBOT_CONFIG.interactionPause);
+    if (netIsClientReady()) {
+      sendRobotCommand(structure, "stop");
     } else {
       markDirty();
     }
@@ -7897,7 +8308,7 @@
     statusTitle.textContent = "Automation Control";
     const statusDesc = document.createElement("div");
     statusDesc.className = "recipe-desc";
-    statusDesc.textContent = "Robot mines selected resources automatically and returns home when full.";
+    statusDesc.textContent = "Robot mines selected resources and returns to spawn crafting bench when full.";
     const statusLine = document.createElement("div");
     statusLine.className = "recipe-cost";
     statusLine.textContent = `Status: ${getRobotStatusLabel(structure)}`;
@@ -7988,11 +8399,32 @@
     invCard.appendChild(invDesc);
     invCard.appendChild(invBtn);
     stationOptions.appendChild(invCard);
+
+    const stopCard = document.createElement("div");
+    stopCard.className = "recipe-card";
+    const stopTitle = document.createElement("div");
+    stopTitle.className = "recipe-title";
+    stopTitle.textContent = "Emergency Control";
+    const stopDesc = document.createElement("div");
+    stopDesc.className = "recipe-desc";
+    stopDesc.textContent = "Stop mining now and send robot back to spawn crafting bench.";
+    const stopBtn = document.createElement("button");
+    stopBtn.textContent = robot.manualStop ? "Stopped" : "Stop Movement";
+    stopBtn.disabled = !!robot.manualStop && robot.state !== "returning";
+    stopBtn.addEventListener("click", () => {
+      stopRobotMovement(structure);
+      renderRobotStationMenu();
+    });
+    stopCard.appendChild(stopTitle);
+    stopCard.appendChild(stopDesc);
+    stopCard.appendChild(stopBtn);
+    stationOptions.appendChild(stopCard);
   }
 
   function craftStationRecipe(recipe) {
     if (recipe.locked) return;
-    if (!hasCost(state.inventory, recipe.input)) {
+    const selectedInput = getAvailableStationRecipeInput(recipe, state.inventory);
+    if (!selectedInput) {
       setPrompt("Not enough resources", 1.2);
       return;
     }
@@ -8000,7 +8432,7 @@
       setPrompt("Inventory full", 1.2);
       return;
     }
-    applyCost(state.inventory, recipe.input);
+    applyCost(state.inventory, selectedInput);
     for (const [itemId, qty] of Object.entries(recipe.output)) {
       addItem(state.inventory, itemId, qty);
     }
@@ -8163,51 +8595,10 @@
       setPrompt("Host only", 1);
       return;
     }
-    const world = state.surfaceWorld || state.world;
-    if (!state.player || !world || state.inCave) {
-      setPrompt("Leave cave first", 1);
-      return;
-    }
-
-    const startTx = Math.floor(state.player.x / CONFIG.tileSize);
-    const startTy = Math.floor(state.player.y / CONFIG.tileSize);
-    let spawnTile = null;
-    let tilesToClear = null;
-    for (let radius = 0; radius <= 8; radius += 1) {
-      if (spawnTile) break;
-      for (let dy = -radius; dy <= radius; dy += 1) {
-        if (spawnTile) break;
-        for (let dx = -radius; dx <= radius; dx += 1) {
-          const tx = startTx + dx;
-          const ty = startTy + dy;
-          const place = canPlaceItemAt(world, false, "robot", tx, ty);
-          if (!place.ok) continue;
-          spawnTile = { tx, ty };
-          tilesToClear = place.clearResourceTiles || null;
-          break;
-        }
-      }
-    }
-
-    if (spawnTile) {
-      if (tilesToClear?.length) {
-        clearResourceTiles(world, tilesToClear);
-      }
-      addStructure("robot", spawnTile.tx, spawnTile.ty, {
-        storage: createEmptyInventory(ROBOT_STORAGE_SIZE),
-      });
-      setPrompt("Robot spawned", 1.2);
-      markDirty();
-      if (net.isHost && net.connections.size > 0) {
-        broadcastNet(buildSnapshot());
-      }
-      return;
-    }
-
     if (!state.inventory) return;
     const left = addItem(state.inventory, "robot", 1);
     if (left > 0) {
-      setPrompt("No room to spawn or store robot", 1.2);
+      setPrompt("Inventory full", 1.2);
       return;
     }
     const hotbarIndex = state.inventory.findIndex((slot, idx) => idx < HOTBAR_SIZE && slot?.id === "robot");
@@ -8284,8 +8675,7 @@
     state.isNight = false;
     state.surfaceSpawnTimer = MONSTER.spawnInterval;
     if (state.surfaceWorld) {
-      state.surfaceWorld.monsters = [];
-      state.surfaceWorld.projectiles = [];
+      igniteSurfaceMonstersForDay(state.surfaceWorld);
     }
     updateTimeUI();
     setPrompt("Time set to day", 1);
@@ -8347,6 +8737,21 @@
       state.debugInfiniteResources
         ? "Infinite resources enabled"
         : "Infinite resources disabled",
+      1.2
+    );
+  }
+
+  function toggleDebugWorldMap() {
+    if (!state.debugUnlocked) {
+      setPrompt("Debug is locked. Open Settings to unlock.", 1.2);
+      return;
+    }
+    state.debugWorldMapVisible = !state.debugWorldMapVisible;
+    updateDebugWorldMapButton();
+    setPrompt(
+      state.debugWorldMapVisible
+        ? "World mini-map enabled"
+        : "World mini-map disabled",
       1.2
     );
   }
@@ -8570,9 +8975,13 @@
   }
 
   function updatePlayerEffects(dt) {
-    if (state.torchTimer > 0) {
-      state.torchTimer = Math.max(0, state.torchTimer - dt);
-    }
+    void dt;
+  }
+
+  function updatePlayerCombatTimers(dt) {
+    if (!state.player) return;
+    if (state.player.invincible > 0) state.player.invincible = Math.max(0, state.player.invincible - dt);
+    if (state.player.attackTimer > 0) state.player.attackTimer = Math.max(0, state.player.attackTimer - dt);
   }
 
   function updateWorldResources(world, dt) {
@@ -8667,8 +9076,7 @@
       updateTimeUI();
       state.surfaceSpawnTimer = MONSTER.spawnInterval;
       if (!state.isNight && state.surfaceWorld) {
-        state.surfaceWorld.monsters = [];
-        state.surfaceWorld.projectiles = [];
+        igniteSurfaceMonstersForDay(state.surfaceWorld);
       }
     }
   }
@@ -8838,6 +9246,9 @@
       attackTimer: 0,
       hitTimer: 0,
       wanderTimer: 0,
+      dayBurning: !!options.dayBurning,
+      burnTimer: Math.max(0, Number(options.burnTimer) || 0),
+      burnDuration: Math.max(0, Number(options.burnDuration) || 0),
       dir: { x: 0, y: 0 },
     };
     world.monsters.push(monster);
@@ -9249,6 +9660,90 @@
     });
   }
 
+  function ensureMonsterBurnFx(world) {
+    if (!world) return [];
+    if (!Array.isArray(world.monsterBurnFx)) world.monsterBurnFx = [];
+    return world.monsterBurnFx;
+  }
+
+  function spawnMonsterBurnBurst(world, x, y, burstCount = null) {
+    if (!world || !Number.isFinite(x) || !Number.isFinite(y)) return;
+    const fx = ensureMonsterBurnFx(world);
+    const minBurst = MONSTER_BURN_FX.burstMin;
+    const maxBurst = MONSTER_BURN_FX.burstMax;
+    const count = Number.isFinite(burstCount)
+      ? Math.max(1, Math.floor(burstCount))
+      : (minBurst + Math.floor(Math.random() * (maxBurst - minBurst + 1)));
+    for (let i = 0; i < count; i += 1) {
+      const maxLife = MONSTER_BURN_FX.lifeMin + Math.random() * (MONSTER_BURN_FX.lifeMax - MONSTER_BURN_FX.lifeMin);
+      fx.push({
+        x: x + (Math.random() - 0.5) * 10,
+        y: y + (Math.random() - 0.5) * 8,
+        vx: (Math.random() - 0.5) * MONSTER_BURN_FX.spread,
+        vy: -(MONSTER_BURN_FX.riseMin + Math.random() * (MONSTER_BURN_FX.riseMax - MONSTER_BURN_FX.riseMin)),
+        life: maxLife,
+        maxLife,
+        size: MONSTER_BURN_FX.sizeMin + Math.random() * (MONSTER_BURN_FX.sizeMax - MONSTER_BURN_FX.sizeMin),
+        ash: Math.random() < 0.58,
+      });
+    }
+  }
+
+  function updateMonsterBurnEffects(world, dt) {
+    const fx = ensureMonsterBurnFx(world);
+    if (!Array.isArray(fx) || fx.length === 0) return;
+    for (let i = fx.length - 1; i >= 0; i -= 1) {
+      const p = fx[i];
+      if (!p) {
+        fx.splice(i, 1);
+        continue;
+      }
+      p.life -= dt;
+      if (p.life <= 0) {
+        fx.splice(i, 1);
+        continue;
+      }
+      p.x += (p.vx || 0) * dt;
+      p.y += (p.vy || 0) * dt;
+      p.vx *= Math.max(0, 1 - dt * 2.3);
+      p.vy -= dt * 8;
+      p.size *= Math.max(0.96, 1 - dt * 0.35);
+    }
+  }
+
+  function updateAllMonsterBurnEffects(dt) {
+    const surface = state.surfaceWorld || state.world;
+    if (!surface) return;
+    updateMonsterBurnEffects(surface, dt);
+    if (Array.isArray(surface.caves)) {
+      for (const cave of surface.caves) {
+        if (!cave?.world) continue;
+        updateMonsterBurnEffects(cave.world, dt);
+      }
+    }
+  }
+
+  function igniteMonsterForDay(monster) {
+    if (!monster) return;
+    if (monster.dayBurning && (monster.burnTimer ?? 0) > 0) return;
+    const duration = MONSTER_DAY_BURN.durationMin
+      + Math.random() * (MONSTER_DAY_BURN.durationMax - MONSTER_DAY_BURN.durationMin);
+    monster.dayBurning = true;
+    monster.burnDuration = duration;
+    monster.burnTimer = duration;
+    monster.wanderTimer = 0;
+    monster.attackTimer = Math.max(monster.attackTimer || 0, 0.2);
+  }
+
+  function igniteSurfaceMonstersForDay(world) {
+    if (!world || !Array.isArray(world.monsters)) return;
+    for (const monster of world.monsters) {
+      if (!monster || monster.hp <= 0) continue;
+      igniteMonsterForDay(monster);
+    }
+    world.projectiles = [];
+  }
+
   function updateMonsterProjectiles(world, dt, players, isSurface) {
     if (!world) return;
     if (!Array.isArray(world.projectiles) || world.projectiles.length === 0) return;
@@ -9295,6 +9790,109 @@
     }
   }
 
+  function getSurfaceCampfireFearZones(world) {
+    const surface = state.surfaceWorld || state.world;
+    if (!world || world !== surface) return [];
+    if (!Array.isArray(state.structures)) return [];
+    const zones = [];
+    for (const structure of state.structures) {
+      if (!structure || structure.removed || structure.type !== "campfire") continue;
+      const def = STRUCTURE_DEFS[structure.type];
+      const baseRadius = Number(def?.lightRadius) || 0;
+      if (baseRadius <= 0) continue;
+      const avoidRadius = baseRadius + MONSTER_CAMPFIRE_FEAR.radiusPadding;
+      zones.push({
+        x: (structure.tx + 0.5) * CONFIG.tileSize,
+        y: (structure.ty + 0.5) * CONFIG.tileSize,
+        avoidRadius,
+        steerRadius: avoidRadius + MONSTER_CAMPFIRE_FEAR.steerBuffer,
+      });
+    }
+    return zones;
+  }
+
+  function getNearestCampfireFear(zones, x, y) {
+    if (!Array.isArray(zones) || zones.length === 0) return null;
+    let nearest = null;
+    for (const zone of zones) {
+      if (!zone) continue;
+      const dx = x - zone.x;
+      const dy = y - zone.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist > zone.steerRadius) continue;
+      if (!nearest || dist < nearest.dist) {
+        nearest = {
+          x: zone.x,
+          y: zone.y,
+          avoidRadius: zone.avoidRadius,
+          steerRadius: zone.steerRadius,
+          dx,
+          dy,
+          dist,
+        };
+      }
+    }
+    return nearest;
+  }
+
+  function applyCampfireFearToDirection(dirX, dirY, fear) {
+    const baseX = Number(dirX) || 0;
+    const baseY = Number(dirY) || 0;
+    if (!fear) return { x: baseX, y: baseY };
+
+    const dist = Math.max(0.0001, fear.dist);
+    const awayX = fear.dx / dist;
+    const awayY = fear.dy / dist;
+
+    let weight = MONSTER_CAMPFIRE_FEAR.steerWeight;
+    if (fear.dist < fear.avoidRadius) {
+      weight = MONSTER_CAMPFIRE_FEAR.panicWeight;
+    } else {
+      const span = Math.max(1, fear.steerRadius - fear.avoidRadius);
+      const closeness = 1 - clamp((fear.dist - fear.avoidRadius) / span, 0, 1);
+      weight *= (0.35 + closeness * 0.95);
+    }
+
+    const blendedX = baseX + awayX * weight;
+    const blendedY = baseY + awayY * weight;
+    const blendedLen = Math.hypot(blendedX, blendedY);
+    if (blendedLen <= 0.0001) return { x: awayX, y: awayY };
+    return { x: blendedX / blendedLen, y: blendedY / blendedLen };
+  }
+
+  function moveMonsterWithCampfireFear(world, monster, dirX, dirY, step, campfireZones) {
+    if (!monster || !Number.isFinite(step) || step <= 0) return;
+
+    let moveX = Number(dirX) || 0;
+    let moveY = Number(dirY) || 0;
+    const startFear = getNearestCampfireFear(campfireZones, monster.x, monster.y);
+    if (startFear) {
+      const steered = applyCampfireFearToDirection(moveX, moveY, startFear);
+      moveX = steered.x;
+      moveY = steered.y;
+    }
+
+    const len = Math.hypot(moveX, moveY);
+    if (len <= 0.0001) return;
+    moveX /= len;
+    moveY /= len;
+
+    let nextX = monster.x + moveX * step;
+    let nextY = monster.y + moveY * step;
+    const nextFear = getNearestCampfireFear(campfireZones, nextX, nextY);
+    const enteringLight = !!nextFear
+      && nextFear.dist < nextFear.avoidRadius
+      && (!startFear || startFear.dist >= startFear.avoidRadius - 0.1);
+    if (enteringLight) {
+      const panic = applyCampfireFearToDirection(0, 0, nextFear);
+      nextX = monster.x + panic.x * step;
+      nextY = monster.y + panic.y * step;
+    }
+
+    if (isWalkableAtWorld(world, nextX, monster.y)) monster.x = nextX;
+    if (isWalkableAtWorld(world, monster.x, nextY)) monster.y = nextY;
+  }
+
   function updateMonstersInWorld(world, dt, players, isSurface) {
     if (!world) return;
     if (!world.monsters) world.monsters = [];
@@ -9305,7 +9903,7 @@
       if (players.length === 0) {
         // No surface players active: clear transient arrows so they do not freeze mid-flight.
         world.projectiles = [];
-        return;
+        if (state.isNight) return;
       }
       if (state.isNight) {
         state.surfaceSpawnTimer -= dt;
@@ -9314,12 +9912,12 @@
           state.surfaceSpawnTimer = MONSTER.spawnInterval;
         }
       } else {
-        world.monsters = [];
-        world.projectiles = [];
+        igniteSurfaceMonstersForDay(world);
       }
     }
 
     updateMonsterProjectiles(world, dt, players, isSurface);
+    const campfireFearZones = isSurface ? getSurfaceCampfireFearZones(world) : [];
 
     for (let i = world.monsters.length - 1; i >= 0; i -= 1) {
       const monster = world.monsters[i];
@@ -9328,6 +9926,29 @@
 
       if (monster.hp <= 0) {
         world.monsters.splice(i, 1);
+        continue;
+      }
+
+      if (isSurface && !state.isNight) {
+        igniteMonsterForDay(monster);
+        monster.burnTimer = Math.max(0, (monster.burnTimer ?? 0) - dt);
+
+        monster.wanderTimer = Number.isFinite(monster.wanderTimer) ? (monster.wanderTimer - dt) : 0;
+        if (monster.wanderTimer <= 0) {
+          const angle = Math.random() * Math.PI * 2;
+          monster.dir.x = Math.cos(angle);
+          monster.dir.y = Math.sin(angle);
+          monster.wanderTimer = MONSTER_DAY_BURN.staggerResetMin
+            + Math.random() * (MONSTER_DAY_BURN.staggerResetMax - MONSTER_DAY_BURN.staggerResetMin);
+        }
+
+        const burnStep = monster.speed * MONSTER_DAY_BURN.moveSpeedScale * dt;
+        moveMonsterWithCampfireFear(world, monster, monster.dir.x, monster.dir.y, burnStep, campfireFearZones);
+
+        if (monster.burnTimer <= 0) {
+          spawnMonsterBurnBurst(world, monster.x, monster.y);
+          world.monsters.splice(i, 1);
+        }
         continue;
       }
 
@@ -9353,6 +9974,14 @@
       const hitDamage = monster.damage ?? MONSTER.damage;
       const hitCooldown = monster.attackCooldown ?? MONSTER.attackCooldown;
       const rangedRange = monster.rangedRange ?? 0;
+      const campfireFear = getNearestCampfireFear(campfireFearZones, monster.x, monster.y);
+
+      if (campfireFear && campfireFear.dist < campfireFear.avoidRadius) {
+        monster.wanderTimer = 0;
+        const panicStep = monster.speed * dt * 0.95;
+        moveMonsterWithCampfireFear(world, monster, 0, 0, panicStep, campfireFearZones);
+        continue;
+      }
 
       if (target && targetDist < aggroRange) {
         const dx = target.x - monster.x;
@@ -9374,17 +10003,11 @@
           else if (dist > desired * 1.18) moveDir = 1;
           if (moveDir !== 0) {
             const step = monster.speed * 0.7 * dt;
-            const nextX = monster.x + vx * step * moveDir;
-            const nextY = monster.y + vy * step * moveDir;
-            if (isWalkableAtWorld(world, nextX, monster.y)) monster.x = nextX;
-            if (isWalkableAtWorld(world, monster.x, nextY)) monster.y = nextY;
+            moveMonsterWithCampfireFear(world, monster, vx * moveDir, vy * moveDir, step, campfireFearZones);
           }
         } else {
           const step = monster.speed * dt;
-          const nextX = monster.x + vx * step;
-          const nextY = monster.y + vy * step;
-          if (isWalkableAtWorld(world, nextX, monster.y)) monster.x = nextX;
-          if (isWalkableAtWorld(world, monster.x, nextY)) monster.y = nextY;
+          moveMonsterWithCampfireFear(world, monster, vx, vy, step, campfireFearZones);
 
           if (dist < meleeRange && monster.attackTimer <= 0) {
             if (target.id === (net.playerId || "local")) {
@@ -9404,18 +10027,13 @@
           monster.wanderTimer = 1.5 + Math.random() * 1.5;
         }
         const step = monster.speed * 0.4 * dt;
-        const nextX = monster.x + monster.dir.x * step;
-        const nextY = monster.y + monster.dir.y * step;
-        if (isWalkableAtWorld(world, nextX, monster.y)) monster.x = nextX;
-        if (isWalkableAtWorld(world, monster.x, nextY)) monster.y = nextY;
+        moveMonsterWithCampfireFear(world, monster, monster.dir.x, monster.dir.y, step, campfireFearZones);
       }
     }
   }
 
   function updateMonsters(dt) {
     if (!state.player) return;
-    if (state.player.invincible > 0) state.player.invincible -= dt;
-    if (state.player.attackTimer > 0) state.player.attackTimer -= dt;
     if (netIsClient()) return;
     if (state.gameWon) {
       if (state.surfaceWorld) {
@@ -9605,7 +10223,80 @@
     }
   }
 
-  function getRobotHomeWorldPosition(robot) {
+  function getSpawnCraftingBench(world) {
+    if (!world || !Array.isArray(state.structures)) return null;
+    const spawn = state.spawnTile || findSpawnTile(world);
+    let nearestSpawnBench = null;
+    let nearestSpawnDist = Infinity;
+    let nearestBench = null;
+    let nearestBenchDist = Infinity;
+    for (const structure of state.structures) {
+      if (!structure || structure.removed || structure.type !== "bench") continue;
+      const dist = Math.hypot((structure.tx ?? 0) - spawn.x, (structure.ty ?? 0) - spawn.y);
+      if (dist < nearestBenchDist) {
+        nearestBench = structure;
+        nearestBenchDist = dist;
+      }
+      if (structure.meta?.village) continue;
+      if (dist < nearestSpawnDist) {
+        nearestSpawnBench = structure;
+        nearestSpawnDist = dist;
+      }
+    }
+    return nearestSpawnBench || nearestBench || null;
+  }
+
+  function getSpawnCraftingReturnTile(world, structure, robot) {
+    if (!world) return null;
+    const bench = getSpawnCraftingBench(world);
+    if (bench) {
+      const candidates = [
+        { tx: bench.tx + 1, ty: bench.ty },
+        { tx: bench.tx - 1, ty: bench.ty },
+        { tx: bench.tx, ty: bench.ty + 1 },
+        { tx: bench.tx, ty: bench.ty - 1 },
+        { tx: bench.tx + 1, ty: bench.ty + 1 },
+        { tx: bench.tx - 1, ty: bench.ty + 1 },
+        { tx: bench.tx + 1, ty: bench.ty - 1 },
+        { tx: bench.tx - 1, ty: bench.ty - 1 },
+      ];
+      let best = null;
+      let bestDist = Infinity;
+      for (const candidate of candidates) {
+        if (!isRobotWalkableTile(world, structure, candidate.tx, candidate.ty)) continue;
+        const cx = (candidate.tx + 0.5) * CONFIG.tileSize;
+        const cy = (candidate.ty + 0.5) * CONFIG.tileSize;
+        const dist = robot ? Math.hypot(cx - robot.x, cy - robot.y) : 0;
+        if (dist < bestDist) {
+          best = candidate;
+          bestDist = dist;
+        }
+      }
+      if (best) return best;
+    }
+
+    const spawn = state.spawnTile || findSpawnTile(world);
+    const nearSpawn = findOpenSurfaceTileNear(world, spawn.x, spawn.y, 10);
+    if (nearSpawn && isRobotWalkableTile(world, structure, nearSpawn.tx, nearSpawn.ty)) {
+      return { tx: nearSpawn.tx, ty: nearSpawn.ty };
+    }
+    if (isRobotWalkableTile(world, structure, spawn.x, spawn.y)) {
+      return { tx: spawn.x, ty: spawn.y };
+    }
+    if (robot && isRobotWalkableTile(world, structure, robot.homeTx, robot.homeTy)) {
+      return { tx: robot.homeTx, ty: robot.homeTy };
+    }
+    return null;
+  }
+
+  function getRobotHomeWorldPosition(world, structure, robot) {
+    const homeTile = getSpawnCraftingReturnTile(world, structure, robot);
+    if (homeTile) {
+      return {
+        x: (homeTile.tx + 0.5) * CONFIG.tileSize,
+        y: (homeTile.ty + 0.5) * CONFIG.tileSize,
+      };
+    }
     return {
       x: (robot.homeTx + 0.5) * CONFIG.tileSize,
       y: (robot.homeTy + 0.5) * CONFIG.tileSize,
@@ -9926,13 +10617,9 @@
 
   function findRobotTargetResource(world, structure, robot) {
     if (!world || !robot || !Array.isArray(world.resources)) return null;
-    const home = getRobotHomeWorldPosition(robot);
-    const maxHomeDist = CONFIG.tileSize * 36;
     const candidates = [];
     for (const resource of world.resources) {
       if (!robotCanMineResource(robot, resource)) continue;
-      const homeDist = Math.hypot(resource.x - home.x, resource.y - home.y);
-      if (homeDist > maxHomeDist) continue;
       const dist = Math.hypot(resource.x - robot.x, resource.y - robot.y);
       candidates.push({ resource, dist });
     }
@@ -9944,6 +10631,19 @@
     const startTy = Math.floor(robot.y / CONFIG.tileSize);
     const checks = Math.min(candidates.length, ROBOT_CONFIG.retargetPathChecks);
     for (let i = 0; i < checks; i += 1) {
+      const candidate = candidates[i].resource;
+      const rawTargetTx = Number.isFinite(candidate.tx) ? candidate.tx : (candidate.x / CONFIG.tileSize);
+      const rawTargetTy = Number.isFinite(candidate.ty) ? candidate.ty : (candidate.y / CONFIG.tileSize);
+      const targetTx = Math.floor(rawTargetTx);
+      const targetTy = Math.floor(rawTargetTy);
+      const path = findRobotTilePath(world, structure, startTx, startTy, targetTx, targetTy);
+      if (path) return candidate;
+    }
+    const fallbackChecks = Math.min(
+      candidates.length,
+      Math.max(checks, ROBOT_CONFIG.retargetPathFallbackChecks)
+    );
+    for (let i = checks; i < fallbackChecks; i += 1) {
       const candidate = candidates[i].resource;
       const rawTargetTx = Number.isFinite(candidate.tx) ? candidate.tx : (candidate.x / CONFIG.tileSize);
       const rawTargetTy = Number.isFinite(candidate.ty) ? candidate.ty : (candidate.y / CONFIG.tileSize);
@@ -9977,7 +10677,30 @@
       return;
     }
 
-    const home = getRobotHomeWorldPosition(robot);
+    const home = getRobotHomeWorldPosition(world, structure, robot);
+
+    if (robot.manualStop) {
+      robot.targetResourceId = null;
+      robot.retargetTimer = 0;
+      const stopDist = Math.hypot(home.x - robot.x, home.y - robot.y);
+      if (stopDist > CONFIG.tileSize * 0.5) {
+        robot.state = "returning";
+        moveRobotToward(world, structure, robot, home.x, home.y, dt);
+      } else {
+        robot.state = "stopped";
+        clearRobotNavigation(robot);
+      }
+      return;
+    }
+
+    if (!isRobotMode(robot.mode)) {
+      robot.targetResourceId = null;
+      robot.retargetTimer = 0;
+      robot.state = "idle";
+      clearRobotNavigation(robot);
+      return;
+    }
+
     const storageFull = isInventoryFull(structure.storage);
     if (storageFull) {
       const homeDist = Math.hypot(home.x - robot.x, home.y - robot.y);
@@ -10004,11 +10727,25 @@
     if (!target && robot.retargetTimer <= 0) {
       target = findRobotTargetResource(world, structure, robot);
       robot.targetResourceId = target ? target.id : null;
-      robot.retargetTimer = ROBOT_CONFIG.retargetInterval;
+      robot.retargetTimer = target
+        ? ROBOT_CONFIG.retargetInterval
+        : ROBOT_CONFIG.retargetIdleInterval;
       if (!target) clearRobotNavigation(robot);
     }
 
     if (!target) {
+      const bridgeRouted = tryRouteRobotTowardNearestBridge(world, structure, robot, null);
+      if (bridgeRouted && nav && Number.isInteger(nav.goalTx) && Number.isInteger(nav.goalTy)) {
+        const bridgeX = (nav.goalTx + 0.5) * CONFIG.tileSize;
+        const bridgeY = (nav.goalTy + 0.5) * CONFIG.tileSize;
+        robot.state = "moving";
+        moveRobotToward(world, structure, robot, bridgeX, bridgeY, dt);
+        robot.retargetTimer = Math.min(
+          robot.retargetTimer || ROBOT_CONFIG.retargetIdleInterval,
+          ROBOT_CONFIG.retargetIdleInterval
+        );
+        return;
+      }
       const homeDist = Math.hypot(home.x - robot.x, home.y - robot.y);
       if (homeDist > CONFIG.tileSize * 0.5) {
         robot.state = "returning";
@@ -10030,7 +10767,7 @@
           ? ROBOT_CONFIG.sandStuckRetargetTime
           : ROBOT_CONFIG.stuckRetargetTime;
         if (nav.stuckTimer >= stuckLimit) {
-          if (onBeach && tryRouteRobotTowardNearestBridge(world, structure, robot, target)) {
+          if (tryRouteRobotTowardNearestBridge(world, structure, robot, target)) {
             robot.state = "moving";
             return;
           }
@@ -10421,19 +11158,7 @@
     const slot = state.inventory[activeSlot];
     if (!slot?.id) return false;
     const consumedId = slot.id;
-    if (consumedId !== "medicine" && consumedId !== "cooked_meat" && consumedId !== "torch") return false;
-    if (consumedId === "torch") {
-      state.torchTimer = Math.max(state.torchTimer, 90);
-      slot.qty -= 1;
-      if (slot.qty <= 0) {
-        slot.id = null;
-        slot.qty = 0;
-      }
-      updateAllSlotUI();
-      markDirty();
-      setPrompt("Torch lit: brighter nights and stronger attacks", 1.1);
-      return true;
-    }
+    if (consumedId !== "medicine" && consumedId !== "cooked_meat") return false;
     const healAmount = consumedId === "cooked_meat" ? 18 : 24;
     if (state.player.hp >= state.player.maxHp) {
       setPrompt("Already healthy", 0.9);
@@ -10467,8 +11192,7 @@
     state.surfaceSpawnTimer = MONSTER.spawnInterval;
     updateTimeUI();
     if (state.surfaceWorld) {
-      state.surfaceWorld.monsters = [];
-      state.surfaceWorld.projectiles = [];
+      igniteSurfaceMonstersForDay(state.surfaceWorld);
     }
     setPrompt("You slept until dawn", 1.2);
     markDirty();
@@ -10720,13 +11444,21 @@
     updateStructureEffects(dt);
     updateCheckpoint(dt);
     updateWinSequence(dt);
-    updateDayNight(dt);
-    updateResources(dt);
-    updateMonsters(dt);
-    updateAnimals(dt);
-    updateVillagers(dt);
+    updatePlayerCombatTimers(dt);
     maintainRobotInteractionPause(dt);
-    updateRobots(dt);
+    const worldSpeed = getDebugWorldSpeedMultiplier();
+    let worldDtRemaining = Math.max(0, dt * worldSpeed);
+    while (worldDtRemaining > 0.0001) {
+      const worldStep = Math.min(worldDtRemaining, 0.05);
+      updateDayNight(worldStep);
+      updateResources(worldStep);
+      updateMonsters(worldStep);
+      updateAnimals(worldStep);
+      updateVillagers(worldStep);
+      updateRobots(worldStep);
+      updateAllMonsterBurnEffects(worldStep);
+      worldDtRemaining -= worldStep;
+    }
     updatePlayerEffects(dt);
     updateDrops();
     updateInteraction();
@@ -10915,6 +11647,52 @@
     }
   }
 
+  function drawMonsterBurning(monster, screen) {
+    if (!monster || !monster.dayBurning || (monster.burnTimer ?? 0) <= 0) return;
+    const duration = Math.max(0.01, Number(monster.burnDuration) || MONSTER_DAY_BURN.durationMax);
+    const ratio = clamp((monster.burnTimer ?? 0) / duration, 0, 1);
+    const intensity = 1 - ratio;
+    const t = (performance.now() * 0.01) + ((monster.id ?? 0) * 1.37);
+
+    ctx.save();
+    ctx.globalCompositeOperation = "screen";
+    const glowRadius = 12 + intensity * 8 + Math.sin(t * 0.7) * 1.5;
+    const glow = ctx.createRadialGradient(screen.x, screen.y + 2, 3, screen.x, screen.y + 2, glowRadius);
+    glow.addColorStop(0, `rgba(255, 226, 132, ${0.3 + intensity * 0.2})`);
+    glow.addColorStop(0.52, `rgba(255, 140, 62, ${0.2 + intensity * 0.22})`);
+    glow.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(screen.x, screen.y + 2, glowRadius, 0, Math.PI * 2);
+    ctx.fill();
+
+    const flameCount = 3;
+    for (let i = 0; i < flameCount; i += 1) {
+      const phase = t + i * 1.9;
+      const fx = screen.x + Math.sin(phase) * (3.6 + intensity * 2.2);
+      const fy = screen.y + 7 - i * 2 - (Math.cos(phase * 1.4) * 1.7);
+      const flameH = 6 + intensity * 4 + (Math.sin(phase * 2.2) + 1) * 1.2;
+      const flameW = 3 + (i * 0.5);
+
+      ctx.fillStyle = `rgba(255, 130, 40, ${0.55 + intensity * 0.28})`;
+      ctx.beginPath();
+      ctx.moveTo(fx, fy - flameH);
+      ctx.lineTo(fx - flameW, fy + 1);
+      ctx.lineTo(fx + flameW, fy + 1);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.fillStyle = `rgba(255, 216, 128, ${0.42 + intensity * 0.26})`;
+      ctx.beginPath();
+      ctx.moveTo(fx, fy - flameH * 0.62);
+      ctx.lineTo(fx - flameW * 0.55, fy - 1);
+      ctx.lineTo(fx + flameW * 0.55, fy - 1);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
   function drawMonster(monster, camera) {
     const mx = monster.renderX ?? monster.x;
     const my = monster.renderY ?? monster.y;
@@ -11001,12 +11779,42 @@
       ctx.fill();
     }
 
+    drawMonsterBurning(monster, screen);
+
     if (monster.hitTimer > 0) {
       ctx.strokeStyle = "rgba(255,255,255,0.7)";
       ctx.lineWidth = 2;
       ctx.beginPath();
       ctx.arc(screen.x, screen.y, 13, 0, Math.PI * 2);
       ctx.stroke();
+    }
+  }
+
+  function drawMonsterBurnEffects(world, camera) {
+    if (!world) return;
+    const fx = ensureMonsterBurnFx(world);
+    if (!Array.isArray(fx) || fx.length === 0) return;
+    for (const p of fx) {
+      if (!p || p.life <= 0 || p.maxLife <= 0) continue;
+      const alpha = clamp(p.life / p.maxLife, 0, 1);
+      const screen = worldToScreen(p.x, p.y, camera);
+      if (
+        screen.x < -24
+        || screen.y < -24
+        || screen.x > viewWidth + 24
+        || screen.y > viewHeight + 24
+      ) {
+        continue;
+      }
+      const radius = Math.max(0.6, p.size * (0.45 + alpha * 0.9));
+      if (p.ash) {
+        ctx.fillStyle = `rgba(84, 84, 84, ${alpha * 0.34})`;
+      } else {
+        ctx.fillStyle = `rgba(236, 138, 64, ${alpha * 0.52})`;
+      }
+      ctx.beginPath();
+      ctx.arc(screen.x, screen.y, radius, 0, Math.PI * 2);
+      ctx.fill();
     }
   }
 
@@ -11144,8 +11952,10 @@
     if (structure.type === "robot") {
       const robot = ensureRobotMeta(structure);
       if (robot) {
-        worldX = robot.x - CONFIG.tileSize * 0.5;
-        worldY = robot.y - CONFIG.tileSize * 0.5;
+        const drawX = (!net.isHost && Number.isFinite(robot.renderX)) ? robot.renderX : robot.x;
+        const drawY = (!net.isHost && Number.isFinite(robot.renderY)) ? robot.renderY : robot.y;
+        worldX = drawX - CONFIG.tileSize * 0.5;
+        worldY = drawY - CONFIG.tileSize * 0.5;
       }
     }
     const screenX = worldX - camera.x;
@@ -11326,15 +12136,6 @@
         ctx.fill();
         break;
       }
-      case "lantern": {
-        ctx.fillStyle = tintColor(def.color, -0.2);
-        ctx.fillRect(baseX + baseSize / 2 - 2, baseY + 6, 4, baseSize - 10);
-        ctx.fillStyle = "#f7d77a";
-        ctx.fillRect(baseX + baseSize / 2 - 6, baseY + 8, 12, 10);
-        ctx.strokeStyle = "rgba(255,215,140,0.6)";
-        ctx.strokeRect(baseX + baseSize / 2 - 6, baseY + 8, 12, 10);
-        break;
-      }
       case "beacon": {
         ctx.fillStyle = tintColor(def.color, -0.15);
         ctx.fillRect(baseX + baseSize / 2 - 3, baseY + 4, 6, baseSize - 8);
@@ -11454,48 +12255,13 @@
       const radius = def.lightRadius;
       const warmInner = structure.type === "campfire"
         ? "rgba(255, 178, 98, 0.44)"
-        : structure.type === "lantern"
-          ? "rgba(255, 221, 154, 0.36)"
-          : "rgba(255, 232, 188, 0.3)";
+        : "rgba(255, 232, 188, 0.3)";
       const warmMid = structure.type === "campfire"
         ? "rgba(255, 122, 64, 0.2)"
-        : structure.type === "lantern"
-          ? "rgba(248, 189, 95, 0.16)"
-          : "rgba(216, 188, 140, 0.14)";
+        : "rgba(216, 188, 140, 0.14)";
       const gradient = ctx.createRadialGradient(cx, cy, radius * 0.1, cx, cy, radius);
       gradient.addColorStop(0, warmInner);
       gradient.addColorStop(0.55, warmMid);
-      gradient.addColorStop(1, "rgba(0,0,0,0)");
-      ctx.fillStyle = gradient;
-      ctx.beginPath();
-      ctx.arc(cx, cy, radius, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    if (state.player && state.torchTimer > 0) {
-      const cx = state.player.x - camera.x;
-      const cy = state.player.y - camera.y;
-      const radius = 130;
-      const gradient = ctx.createRadialGradient(cx, cy, 18, cx, cy, radius);
-      gradient.addColorStop(0, "rgba(255, 214, 145, 0.35)");
-      gradient.addColorStop(0.52, "rgba(250, 176, 90, 0.16)");
-      gradient.addColorStop(1, "rgba(0,0,0,0)");
-      ctx.fillStyle = gradient;
-      ctx.beginPath();
-      ctx.arc(cx, cy, radius, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    for (const remote of net.players.values()) {
-      if (!remote || remote.inCave || remote.inHut) continue;
-      if ((remote.torchTimer ?? 0) <= 0) continue;
-      const px = typeof remote.renderX === "number" ? remote.renderX : remote.x;
-      const py = typeof remote.renderY === "number" ? remote.renderY : remote.y;
-      if (typeof px !== "number" || typeof py !== "number") continue;
-      const cx = px - camera.x;
-      const cy = py - camera.y;
-      const radius = 130;
-      const gradient = ctx.createRadialGradient(cx, cy, 18, cx, cy, radius);
-      gradient.addColorStop(0, "rgba(255, 214, 145, 0.35)");
-      gradient.addColorStop(0.52, "rgba(250, 176, 90, 0.16)");
       gradient.addColorStop(1, "rgba(0,0,0,0)");
       ctx.fillStyle = gradient;
       ctx.beginPath();
@@ -11675,11 +12441,6 @@
       ctx.lineTo(x + size / 2 + 6, y + size / 2 + 8);
       ctx.closePath();
       ctx.fill();
-    } else if (item.type === "lantern") {
-      ctx.fillStyle = tintColor(color, -0.2);
-      ctx.fillRect(x + size / 2 - 2, y + 8, 4, size - 14);
-      ctx.fillStyle = "#f7d77a";
-      ctx.fillRect(x + size / 2 - 6, y + 10, 12, 10);
     } else {
       ctx.fillStyle = color;
       ctx.fillRect(x + 6, y + 6, size - 12, size - 12);
@@ -11789,6 +12550,7 @@
       ctx.fillText(remote.name ?? "Survivor", rx, ry - 14);
     }
     drawGuidanceMapOverlay();
+    drawDebugWorldMiniMapOverlay();
   }
 
   function drawGuidanceMapOverlay() {
@@ -11798,104 +12560,267 @@
     if (!world || !Array.isArray(world.tiles)) return;
     const localPos = getLocalSurfaceMapPosition();
     if (!localPos) return;
-
-    const panelSize = clamp(
-      Math.floor(Math.min(viewWidth, viewHeight) * MAP_PANEL.screenScale),
-      MAP_PANEL.minSize,
-      MAP_PANEL.maxSize
+    const marker = getMapTargetForItem(world, mapItemId, localPos.x, localPos.y);
+    const panelW = clamp(
+      Math.floor(Math.min(viewWidth, viewHeight) * (MAP_PANEL.screenScale + 0.08)),
+      MAP_PANEL.minSize + 52,
+      MAP_PANEL.maxSize + 96
     );
+    const panelH = clamp(Math.floor(panelW * 0.6), 136, 182);
     const panelX = 16;
     const panelY = 70;
-    const titleH = 22;
-    const pad = 10;
-    const mapSize = panelSize - pad * 2;
-    const mapX = panelX + pad;
-    const mapY = panelY + titleH + 4;
-    const mapBottom = mapY + mapSize;
-
-    const mapTexture = ensureSurfaceMapTexture(world, mapSize);
-    if (!mapTexture) return;
-
-    const worldPxSize = world.size * CONFIG.tileSize;
-    const toMap = (wx, wy) => ({
-      x: mapX + clamp(wx / worldPxSize, 0, 1) * mapSize,
-      y: mapY + clamp(wy / worldPxSize, 0, 1) * mapSize,
-    });
-
-    const marker = getMapTargetForItem(world, mapItemId, localPos.x, localPos.y);
+    const compassCX = panelX + 62;
+    const compassCY = panelY + 88;
+    const compassR = 34;
+    const accent = mapItemId === "village_map" ? "#6a4a23" : "#4b5669";
+    const ink = "#3e2a18";
 
     ctx.save();
-    drawRoundedRect(ctx, panelX, panelY, panelSize, panelSize + titleH + 12, 12);
-    ctx.fillStyle = "rgba(8, 20, 34, 0.86)";
+    drawRoundedRect(ctx, panelX + 2, panelY + 3, panelW, panelH, 11);
+    ctx.fillStyle = "rgba(0,0,0,0.24)";
     ctx.fill();
-    ctx.strokeStyle = "rgba(130, 185, 228, 0.4)";
-    ctx.lineWidth = 1.5;
+
+    drawRoundedRect(ctx, panelX, panelY, panelW, panelH, 11);
+    const paper = ctx.createLinearGradient(panelX, panelY, panelX, panelY + panelH);
+    paper.addColorStop(0, "rgba(218, 196, 152, 0.96)");
+    paper.addColorStop(0.55, "rgba(196, 167, 112, 0.95)");
+    paper.addColorStop(1, "rgba(173, 139, 89, 0.94)");
+    ctx.fillStyle = paper;
+    ctx.fill();
+    ctx.strokeStyle = "rgba(89, 61, 34, 0.85)";
+    ctx.lineWidth = 2;
     ctx.stroke();
+
+    ctx.strokeStyle = "rgba(82, 55, 30, 0.35)";
+    ctx.lineWidth = 1;
+    for (let i = 0; i < 8; i += 1) {
+      const notchX = panelX + 16 + i * ((panelW - 32) / 7);
+      ctx.beginPath();
+      ctx.moveTo(notchX - 4, panelY + 30);
+      ctx.lineTo(notchX, panelY + 26);
+      ctx.lineTo(notchX + 4, panelY + 30);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(notchX - 4, panelY + panelH - 20);
+      ctx.lineTo(notchX, panelY + panelH - 16);
+      ctx.lineTo(notchX + 4, panelY + panelH - 20);
+      ctx.stroke();
+    }
+
+    ctx.font = "bold 14px Georgia";
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = ink;
+    ctx.fillText(getMapItemTitle(mapItemId), panelX + 12, panelY + 15);
+    ctx.font = "11px Georgia";
+    ctx.fillStyle = "rgba(62, 42, 24, 0.78)";
+    ctx.fillText("etched reed compass", panelX + 12, panelY + 31);
+
+    ctx.strokeStyle = "rgba(85, 61, 38, 0.62)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(compassCX, compassCY, compassR, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(compassCX, compassCY, compassR - 8, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.strokeStyle = "rgba(74, 52, 31, 0.5)";
+    ctx.beginPath();
+    ctx.moveTo(compassCX - compassR, compassCY);
+    ctx.lineTo(compassCX + compassR, compassCY);
+    ctx.moveTo(compassCX, compassCY - compassR);
+    ctx.lineTo(compassCX, compassCY + compassR);
+    ctx.stroke();
+
+    ctx.font = "bold 10px Georgia";
+    ctx.fillStyle = "rgba(64, 43, 24, 0.9)";
+    ctx.textAlign = "center";
+    ctx.fillText("N", compassCX, compassCY - compassR - 8);
+    ctx.fillText("S", compassCX, compassCY + compassR + 10);
+    ctx.fillText("W", compassCX - compassR - 10, compassCY);
+    ctx.fillText("E", compassCX + compassR + 10, compassCY);
+
+    if (marker) {
+      const dx = marker.x - localPos.x;
+      const dy = marker.y - localPos.y;
+      const dist = Math.hypot(dx, dy);
+      const distTiles = Math.max(0, Math.round(dist / CONFIG.tileSize));
+      const dirLabel = getCompassDirectionLabel(dx, dy);
+      const ux = dist > 0.0001 ? dx / dist : 0;
+      const uy = dist > 0.0001 ? dy / dist : -1;
+      const tipX = compassCX + ux * (compassR - 7);
+      const tipY = compassCY + uy * (compassR - 7);
+      const tailX = compassCX - ux * 9;
+      const tailY = compassCY - uy * 9;
+      const sideX = -uy;
+      const sideY = ux;
+
+      ctx.strokeStyle = accent;
+      ctx.fillStyle = accent;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(tailX, tailY);
+      ctx.lineTo(tipX, tipY);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(tipX, tipY);
+      ctx.lineTo(tipX - ux * 11 + sideX * 5.5, tipY - uy * 11 + sideY * 5.5);
+      ctx.lineTo(tipX - ux * 11 - sideX * 5.5, tipY - uy * 11 - sideY * 5.5);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.fillStyle = "rgba(62, 42, 24, 0.85)";
+      ctx.beginPath();
+      ctx.arc(compassCX, compassCY, 3.6, 0, Math.PI * 2);
+      ctx.fill();
+
+      const textX = panelX + 112;
+      ctx.textAlign = "left";
+      ctx.font = "bold 12px Georgia";
+      ctx.fillStyle = ink;
+      ctx.fillText(`${marker.label}: ${dirLabel}`, textX, panelY + 64);
+      ctx.font = "11px Georgia";
+      ctx.fillStyle = "rgba(62, 42, 24, 0.9)";
+      if (dirLabel === "here" || distTiles <= 1) {
+        ctx.fillText("You are at the marked place.", textX, panelY + 84);
+      } else {
+        ctx.fillText(`Walk ${dirLabel}.`, textX, panelY + 84);
+        ctx.fillText(`About ${distTiles} paces away.`, textX, panelY + 101);
+      }
+      ctx.font = "10px Georgia";
+      ctx.fillStyle = "rgba(62, 42, 24, 0.72)";
+      ctx.fillText("Follow the reed arrow.", textX, panelY + 124);
+    } else {
+      ctx.fillStyle = "rgba(62, 42, 24, 0.85)";
+      ctx.beginPath();
+      ctx.arc(compassCX, compassCY, 3.6, 0, Math.PI * 2);
+      ctx.fill();
+      const textX = panelX + 112;
+      ctx.textAlign = "left";
+      ctx.font = "bold 12px Georgia";
+      ctx.fillStyle = ink;
+      ctx.fillText("No sign found yet.", textX, panelY + 72);
+      ctx.font = "11px Georgia";
+      ctx.fillStyle = "rgba(62, 42, 24, 0.85)";
+      ctx.fillText("Explore further islands", textX, panelY + 92);
+      ctx.fillText("to reveal this trail.", textX, panelY + 108);
+    }
+    ctx.restore();
+  }
+
+  function drawDebugWorldMiniMapOverlay() {
+    if (!state.debugUnlocked || !state.debugWorldMapVisible) return;
+    const world = state.surfaceWorld || state.world;
+    if (!world || !Array.isArray(world.tiles)) return;
+    const worldPixelSize = world.size * CONFIG.tileSize;
+    if (!Number.isFinite(worldPixelSize) || worldPixelSize <= 0) return;
+
+    const panelW = clamp(
+      Math.floor(Math.min(viewWidth, viewHeight) * 0.38),
+      186,
+      320
+    );
+    const panelH = panelW + 36;
+    const panelX = viewWidth - panelW - 16;
+    const panelY = 70;
+    const mapX = panelX + 10;
+    const mapY = panelY + 24;
+    const mapW = panelW - 20;
+    const mapH = panelH - 34;
+    const players = getDebugSurfacePlayerMarkers();
+
+    ctx.save();
+
+    drawRoundedRect(ctx, panelX + 2, panelY + 2, panelW, panelH, 11);
+    ctx.fillStyle = "rgba(0, 0, 0, 0.3)";
+    ctx.fill();
+
+    drawRoundedRect(ctx, panelX, panelY, panelW, panelH, 11);
+    const panelGradient = ctx.createLinearGradient(panelX, panelY, panelX, panelY + panelH);
+    panelGradient.addColorStop(0, "rgba(12, 20, 30, 0.9)");
+    panelGradient.addColorStop(1, "rgba(9, 16, 24, 0.86)");
+    ctx.fillStyle = panelGradient;
+    ctx.fill();
+    ctx.strokeStyle = "rgba(150, 210, 245, 0.45)";
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+
+    drawRoundedRect(ctx, mapX, mapY, mapW, mapH, 7);
+    const waterGradient = ctx.createLinearGradient(mapX, mapY, mapX, mapY + mapH);
+    waterGradient.addColorStop(0, "rgba(33, 95, 141, 0.9)");
+    waterGradient.addColorStop(1, "rgba(23, 72, 116, 0.92)");
+    ctx.fillStyle = waterGradient;
+    ctx.fill();
+    ctx.strokeStyle = "rgba(142, 206, 240, 0.38)";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    if (Array.isArray(world.islands)) {
+      for (const island of world.islands) {
+        if (!island) continue;
+        const ix = mapX + (((island.x + 0.5) * CONFIG.tileSize) / worldPixelSize) * mapW;
+        const iy = mapY + (((island.y + 0.5) * CONFIG.tileSize) / worldPixelSize) * mapH;
+        const radius = Math.max(1.4, ((island.radius * CONFIG.tileSize) / worldPixelSize) * mapW);
+        const biomeLand = BIOMES[island.biomeId]?.land;
+        let landColor = "rgba(92, 156, 96, 0.92)";
+        if (Array.isArray(biomeLand) && biomeLand.length >= 3) {
+          landColor = `rgba(${biomeLand[0]}, ${biomeLand[1]}, ${biomeLand[2]}, 0.92)`;
+        }
+        ctx.fillStyle = landColor;
+        ctx.beginPath();
+        ctx.arc(ix, iy, radius, 0, Math.PI * 2);
+        ctx.fill();
+        if (island.starter) {
+          ctx.strokeStyle = "rgba(246, 232, 153, 0.95)";
+          ctx.lineWidth = 1.4;
+          ctx.beginPath();
+          ctx.arc(ix, iy, radius + 1.4, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+      }
+    }
+
+    for (const marker of players) {
+      const mx = mapX + (marker.x / worldPixelSize) * mapW;
+      const my = mapY + (marker.y / worldPixelSize) * mapH;
+      if (!Number.isFinite(mx) || !Number.isFinite(my)) continue;
+      if (mx < mapX || mx > mapX + mapW || my < mapY || my > mapY + mapH) continue;
+
+      ctx.fillStyle = "rgba(0, 0, 0, 0.32)";
+      ctx.beginPath();
+      ctx.arc(mx, my + 1, 4.2, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = marker.color || "#6fa8ff";
+      ctx.beginPath();
+      ctx.arc(mx, my, 3.2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "rgba(240, 248, 255, 0.9)";
+      ctx.lineWidth = 1.2;
+      ctx.stroke();
+
+      if (marker.inCave) {
+        ctx.strokeStyle = "rgba(255, 214, 129, 0.95)";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(mx, my, 5.6, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    }
 
     ctx.font = "bold 12px Trebuchet MS";
     ctx.textAlign = "left";
     ctx.textBaseline = "middle";
-    ctx.fillStyle = "#e9f4ff";
-    ctx.fillText(mapItemId === "village_map" ? "Village Map" : "Cave Map", panelX + 10, panelY + 13);
-
-    ctx.drawImage(mapTexture, mapX, mapY, mapSize, mapSize);
-    ctx.strokeStyle = "rgba(225, 245, 255, 0.45)";
-    ctx.lineWidth = 1;
-    ctx.strokeRect(mapX + 0.5, mapY + 0.5, mapSize - 1, mapSize - 1);
-
-    if (marker) {
-      const hint = toMap(marker.x, marker.y);
-      ctx.strokeStyle = mapItemId === "village_map" ? "rgba(255, 213, 124, 0.92)" : "rgba(164, 201, 255, 0.92)";
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(hint.x - 6, hint.y - 6);
-      ctx.lineTo(hint.x + 6, hint.y + 6);
-      ctx.moveTo(hint.x + 6, hint.y - 6);
-      ctx.lineTo(hint.x - 6, hint.y + 6);
-      ctx.stroke();
-      ctx.strokeStyle = "rgba(255,255,255,0.32)";
-      ctx.beginPath();
-      ctx.arc(hint.x, hint.y, 13, 0, Math.PI * 2);
-      ctx.stroke();
-    }
-
-    const localDot = toMap(localPos.x, localPos.y);
-    ctx.fillStyle = "#7ec4ff";
-    ctx.beginPath();
-    ctx.arc(localDot.x, localDot.y, 4, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = "rgba(255,255,255,0.9)";
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
-
-    if (net.enabled) {
-      for (const player of net.players.values()) {
-        if (!player) continue;
-        let px = player.x;
-        let py = player.y;
-        if (player.inCave) {
-          const cp = normalizeCheckpoint(player.checkpoint);
-          if (!cp) continue;
-          px = cp.x;
-          py = cp.y;
-        }
-        if (!Number.isFinite(px) || !Number.isFinite(py)) continue;
-        const dot = toMap(px, py);
-        ctx.fillStyle = player.color || "#f4f7ff";
-        ctx.beginPath();
-        ctx.arc(dot.x, dot.y, 3, 0, Math.PI * 2);
-        ctx.fill();
-      }
-    }
-
+    ctx.fillStyle = "rgba(226, 243, 255, 0.95)";
+    ctx.fillText("Debug World Mini-Map", panelX + 10, panelY + 13);
     ctx.font = "10px Trebuchet MS";
-    ctx.textAlign = "left";
-    ctx.fillStyle = "rgba(230, 244, 255, 0.82)";
-    if (marker) {
-      ctx.fillText(`X: ${marker.label}`, mapX, mapBottom + 11);
-    } else {
-      ctx.fillText("No target found in this world yet", mapX, mapBottom + 11);
+    ctx.fillStyle = "rgba(189, 216, 235, 0.88)";
+    ctx.fillText(`Players: ${players.length}`, panelX + panelW - 82, panelY + 13);
+    if (world.seed) {
+      ctx.fillText(`Seed: ${world.seed}`, panelX + 10, panelY + panelH - 10);
     }
+
     ctx.restore();
   }
 
@@ -12255,6 +13180,8 @@
       drawMonster(monster, camera);
     }
 
+    drawMonsterBurnEffects(state.world, camera);
+
     for (const projectile of state.world.projectiles || []) {
       drawProjectile(projectile, camera);
     }
@@ -12411,6 +13338,7 @@
     drawBeaconBeam(camera);
     drawRescueSequence(camera);
     drawGuidanceMapOverlay();
+    drawDebugWorldMiniMapOverlay();
   }
 
   function gameLoop() {
@@ -12523,6 +13451,7 @@
     updateVolumeUI();
     setDebugUnlocked(state.debugUnlocked, false);
     updateDebugSpeedUI();
+    updateDebugWorldSpeedUI();
     updateMosesButton();
     updateInfiniteResourcesButton();
     if (settingsPanel) settingsPanel.classList.add("hidden");
@@ -12566,14 +13495,20 @@
     canvas.addEventListener("pointerleave", handleCanvasLeave);
     canvas.addEventListener("pointerdown", handleCanvasDown);
 
-    buildTabs.forEach((tab) => {
-      tab.addEventListener("click", () => {
-        buildTabs.forEach((btn) => btn.classList.remove("active"));
-        tab.classList.add("active");
-        buildTab = tab.dataset.tab;
-        renderBuildMenu();
-      });
+    buildCategoryIcons.forEach((icon) => {
+      applyItemVisual(icon, icon.dataset.icon, true);
     });
+    buildCategoryTabs.forEach((tab) => {
+      const categoryId = tab.dataset.category;
+      const preview = () => setBuildCategoryHint(categoryId);
+      const restore = () => setBuildCategoryHint(buildCategory);
+      tab.addEventListener("click", () => setBuildCategory(categoryId, true));
+      tab.addEventListener("mouseenter", preview);
+      tab.addEventListener("focus", preview);
+      tab.addEventListener("mouseleave", restore);
+      tab.addEventListener("blur", restore);
+    });
+    setBuildCategory(buildCategory, false);
 
     destroyChestBtn.addEventListener("click", destroyActiveChest);
     if (newRunBtn) {
@@ -12625,6 +13560,11 @@
         setDebugSpeedFromPercent(debugSpeedInput.value);
       });
     }
+    if (debugWorldSpeedInput) {
+      debugWorldSpeedInput.addEventListener("input", () => {
+        setDebugWorldSpeedFromPercent(debugWorldSpeedInput.value);
+      });
+    }
     if (resetWorldBtn) resetWorldBtn.addEventListener("click", resetWorldFromSettings);
     if (unlockDebugBtn) unlockDebugBtn.addEventListener("click", unlockDebugFromSettings);
     if (debugToggle) debugToggle.addEventListener("click", toggleDebugMenu);
@@ -12636,6 +13576,7 @@
     if (forceNightBtn) forceNightBtn.addEventListener("click", forceDebugNight);
     if (mosesBtn) mosesBtn.addEventListener("click", toggleDebugMoses);
     if (infiniteResourcesBtn) infiniteResourcesBtn.addEventListener("click", toggleInfiniteResources);
+    if (debugWorldMapBtn) debugWorldMapBtn.addEventListener("click", toggleDebugWorldMap);
     gameLoop();
   }
 

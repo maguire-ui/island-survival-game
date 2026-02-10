@@ -448,6 +448,71 @@ html, body {
   box-shadow: 0 6px 14px rgba(15, 35, 60, 0.45);
 }
 
+.build-category-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.build-category-btn {
+  border-radius: 8px;
+  border: 1px solid rgba(120, 170, 220, 0.28);
+  background: linear-gradient(150deg, rgba(12, 22, 36, 0.9), rgba(10, 18, 28, 0.8));
+  color: #f4f7ff;
+  padding: 5px 4px 6px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  min-height: 58px;
+  box-shadow: inset 0 0 8px rgba(0, 0, 0, 0.25);
+  transition: border-color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.build-category-btn:hover,
+.build-category-btn:focus-visible {
+  border-color: rgba(160, 220, 255, 0.7);
+  transform: translateY(-1px);
+}
+
+.build-category-btn.active {
+  background: linear-gradient(135deg, rgba(88, 160, 230, 0.55), rgba(40, 90, 140, 0.5));
+  border-color: rgba(140, 210, 255, 0.8);
+  box-shadow: 0 6px 14px rgba(15, 35, 60, 0.45);
+}
+
+.build-category-icon {
+  width: 100%;
+  min-height: 20px;
+  border-radius: 6px;
+  font-size: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.build-category-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  line-height: 1;
+  opacity: 0.94;
+}
+
+.build-category-hint {
+  font-size: 11px;
+  line-height: 1.32;
+  opacity: 0.86;
+  margin-bottom: 8px;
+  min-height: 28px;
+  padding: 5px 7px;
+  border-radius: 7px;
+  border: 1px solid rgba(120, 170, 220, 0.2);
+  background: linear-gradient(155deg, rgba(10, 18, 30, 0.72), rgba(10, 16, 24, 0.64));
+}
+
 .recipe-list {
   display: flex;
   flex-direction: column;
@@ -986,6 +1051,19 @@ button:active:not(:disabled) {
     right: auto;
     transform: translateX(-50%);
     bottom: calc(152px + env(safe-area-inset-bottom));
+  }
+
+  .build-category-tabs {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .build-category-btn {
+    min-height: 54px;
+    padding: 4px 3px 5px;
+  }
+
+  .build-category-label {
+    font-size: 9px;
   }
 
   #stationMenu {
