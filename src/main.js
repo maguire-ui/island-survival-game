@@ -79,7 +79,7 @@
 
   const CONFIG = {
     tileSize: 32,
-    worldSize: 400,
+    worldSize: 520,
     playerRadius: 12,
     moveSpeed: 150,
     interactRange: 55,
@@ -131,6 +131,14 @@
     sizeMax: 4.6,
   });
 
+  const POISON_STATUS = Object.freeze({
+    minHp: 1,
+    maxDuration: 18,
+    minDps: 0.2,
+    maxDps: 4.2,
+    defaultDps: 1.25,
+  });
+
   const SKELETON_ARROW = {
     speed: 235,
     radius: 9,
@@ -174,7 +182,55 @@
       aggroRange: 260,
       rangedRange: 230,
     },
+    marsh_stalker: {
+      name: "Marsh Stalker",
+      color: "#4e8e68",
+      hp: 8,
+      speed: 62,
+      damage: 8,
+      attackRange: 25,
+      attackCooldown: 1.0,
+      aggroRange: 225,
+      rangedRange: 0,
+      poisonDuration: 8.5,
+      poisonDps: 1.35,
+    },
   };
+
+  const MONSTER_AUDIO_PROFILES = Object.freeze({
+    crawler: {
+      idleIntervalMin: 2.8,
+      idleIntervalMax: 5.8,
+      stepIntervalMin: 0.28,
+      stepIntervalMax: 0.55,
+      idleRange: CONFIG.tileSize * 11.5,
+      moveThreshold: 8,
+    },
+    brute: {
+      idleIntervalMin: 3.2,
+      idleIntervalMax: 6.6,
+      stepIntervalMin: 0.36,
+      stepIntervalMax: 0.72,
+      idleRange: CONFIG.tileSize * 12.5,
+      moveThreshold: 5,
+    },
+    skeleton: {
+      idleIntervalMin: 2.5,
+      idleIntervalMax: 4.9,
+      stepIntervalMin: 0.24,
+      stepIntervalMax: 0.46,
+      idleRange: CONFIG.tileSize * 13.2,
+      moveThreshold: 7,
+    },
+    marsh_stalker: {
+      idleIntervalMin: 2.2,
+      idleIntervalMax: 4.5,
+      stepIntervalMin: 0.22,
+      stepIntervalMax: 0.48,
+      idleRange: CONFIG.tileSize * 12.2,
+      moveThreshold: 6,
+    },
+  });
 
   const NET_CONFIG = {
     snapshotInterval: 0.3,
@@ -253,6 +309,10 @@
     { id: "jungle_stone", name: "Jungle Stone", color: "#4fbf86" },
     { id: "snow_stone", name: "Snow Stone", color: "#a7c9e8" },
     { id: "volcanic_stone", name: "Volcanic Stone", color: "#d07b54" },
+    { id: "mangrove_stone", name: "Mangrove Stone", color: "#7bbd93" },
+    { id: "redwood_stone", name: "Redwood Stone", color: "#5f8f62" },
+    { id: "ashlands_stone", name: "Ashlands Stone", color: "#8f6f64" },
+    { id: "marsh_stone", name: "Marsh Stone", color: "#7fb089" },
   ];
 
   const BIOME_STONE_ITEMS = BIOME_STONES.reduce((acc, stone) => {
@@ -349,6 +409,10 @@
     jungle_stone: { symbol: "J-ST", bg: "#2f7f56", border: "#62c89a", fg: "#e7fff3" },
     snow_stone: { symbol: "S-ST", bg: "#587a99", border: "#a9d4f3", fg: "#ecf8ff" },
     volcanic_stone: { symbol: "V-ST", bg: "#7f513f", border: "#d08c6b", fg: "#fff0e6" },
+    mangrove_stone: { symbol: "M-ST", bg: "#456f56", border: "#8bc8a2", fg: "#eefff4" },
+    redwood_stone: { symbol: "R-ST", bg: "#3f6b43", border: "#77ab7c", fg: "#eefde9" },
+    ashlands_stone: { symbol: "A-ST", bg: "#66555a", border: "#a98b80", fg: "#fff1ea" },
+    marsh_stone: { symbol: "MR-S", bg: "#466c59", border: "#88c29d", fg: "#effff6" },
   };
 
   const VILLAGE_LOOT_TABLE = [
@@ -842,6 +906,7 @@
       key: "temperate",
       land: [43, 122, 61],
       tree: "#2d8a4c",
+      grassColor: "#79c66f",
       rock: "#8b8f9c",
       ore: "#8d5aa3",
       stoneColor: BIOME_STONES[0].color,
@@ -856,6 +921,7 @@
       key: "jungle",
       land: [23, 124, 72],
       tree: "#1fb869",
+      grassColor: "#59d88f",
       rock: "#7c8a90",
       ore: "#7a4c8b",
       stoneColor: BIOME_STONES[1].color,
@@ -870,6 +936,7 @@
       key: "snow",
       land: [198, 214, 230],
       tree: "#e8f3ff",
+      grassColor: "#b8d8f1",
       rock: "#9fa7b5",
       ore: "#7f6a9f",
       stoneColor: BIOME_STONES[2].color,
@@ -884,6 +951,7 @@
       key: "volcanic",
       land: [90, 72, 64],
       tree: "#8a6648",
+      grassColor: "#8f7357",
       rock: "#6d6f7a",
       ore: "#c0724c",
       stoneColor: BIOME_STONES[3].color,
@@ -894,6 +962,87 @@
       oreRate: 0.03,
       stoneRate: 0.00055,
     },
+    {
+      key: "mangrove",
+      land: [58, 96, 74],
+      tree: "#3f835f",
+      grassColor: "#6fa487",
+      rock: "#6f7b74",
+      ore: "#5a6a7c",
+      stoneColor: BIOME_STONES[4].color,
+      sand: [186, 163, 116],
+      treeRate: 0.128,
+      rockRate: 0.025,
+      grassRate: 0.044,
+      oreRate: 0.008,
+      stoneRate: 0.00045,
+      moveSpeedScale: 0.84,
+      coastMoveSpeedScale: 0.74,
+      animalSpawnScale: 0.85,
+    },
+    {
+      key: "redwood",
+      land: [34, 96, 52],
+      tree: "#2f6b45",
+      grassColor: "#6eac74",
+      rock: "#7b857f",
+      ore: "#6a778f",
+      stoneColor: BIOME_STONES[5].color,
+      sand: [198, 176, 132],
+      treeRate: 0.142,
+      rockRate: 0.016,
+      grassRate: 0.019,
+      oreRate: 0.009,
+      stoneRate: 0.00045,
+      animalSpawnScale: 0.95,
+      nightMonsterStrength: 1.3,
+    },
+    {
+      key: "ashlands",
+      land: [72, 66, 68],
+      tree: "#74625e",
+      grassColor: "#8d7d77",
+      rock: "#5f646d",
+      ore: "#c07d57",
+      stoneColor: BIOME_STONES[6].color,
+      sand: [156, 140, 122],
+      treeRate: 0.018,
+      rockRate: 0.066,
+      grassRate: 0.008,
+      oreRate: 0.03,
+      stoneRate: 0.0004,
+      coalRockChance: 0.62,
+      animalSpawnScale: 0.2,
+    },
+    {
+      key: "marsh",
+      land: [40, 109, 76],
+      tree: "#4f9166",
+      grassColor: "#78c192",
+      rock: "#75877f",
+      ore: "#5b6f63",
+      stoneColor: BIOME_STONES[7].color,
+      sand: [170, 156, 123],
+      treeRate: 0.082,
+      rockRate: 0.022,
+      grassRate: 0.055,
+      oreRate: 0.009,
+      stoneRate: 0.00045,
+      moveSpeedScale: 0.92,
+      animalSpawnScale: 0.78,
+      poisonMonsterChance: 0.62,
+    },
+  ];
+
+  const BIOME_PICK_WEIGHTS = [
+    0.24, // temperate
+    0.13, // jungle
+    0.1,  // snow
+    0.1,  // volcanic
+    0.14, // mangrove
+    0.12, // redwood
+    0.08, // ashlands
+    0.09, // marsh
   ];
 
   const TREE_TRUNK = "#7a5a2f";
@@ -920,13 +1069,29 @@
     caveEntrance: "#3c2a22",
   };
 
-  const AMBIENT_CHORDS = [
-    [261.63, 329.63, 392.0],
-    [293.66, 369.99, 440.0],
-    [329.63, 415.3, 493.88],
-    [246.94, 329.63, 392.0],
+  const DRIFTWOOD_THEME = Object.freeze({
+    bpm: 80,
+    beatsPerBar: 4,
+    introDuration: 20,
+    mainLoopBars: 32,
+    variationFadeStart: 180,
+    variationFadeDuration: 80,
+  });
+
+  // Am - F - C - G - Am - F - G - Em
+  const DRIFTWOOD_CHORDS = [
+    [220.0, 261.63, 329.63],
+    [174.61, 220.0, 261.63],
+    [130.81, 164.81, 196.0],
+    [196.0, 246.94, 293.66],
+    [220.0, 261.63, 329.63],
+    [174.61, 220.0, 261.63],
+    [196.0, 246.94, 293.66],
+    [164.81, 196.0, 246.94],
   ];
-  const AMBIENT_NOTE_PATTERN = [0, 1, 2, 1, 2, 1, 0, 2];
+
+  const DRIFTWOOD_MELODY_PATTERN = [2, 1, 0, 1, 2, 4, 2, 1, 2, 1, 0, 1, 2, 3, 4, 2];
+  const DRIFTWOOD_COUNTER_PATTERN = [3, 4, 2, 5, 4, 3, 5, 4];
   const SETTINGS_KEY = "island_survival_settings_v1";
   const DEBUG_PASSCODE = "123";
   const SETTINGS_DEFAULTS = Object.freeze({
@@ -1081,10 +1246,18 @@
     sfxBus: null,
     musicBus: null,
     musicGain: null,
+    padGain: null,
     filter: null,
     oscA: null,
     oscB: null,
     oscC: null,
+    bassGain: null,
+    bassFilter: null,
+    bassOsc: null,
+    textureSource: null,
+    textureGain: null,
+    textureFilter: null,
+    variationGain: null,
     lfo: null,
     lfoGain: null,
     noiseBuffer: null,
@@ -1092,6 +1265,17 @@
     chordTimer: 0,
     noteTimer: 0,
     noteIndex: 0,
+    themeTime: 0,
+    introPluckTimer: 0,
+    mainTime: 0,
+    prevMainBeat: -1,
+    loopBeats: 0,
+    variationMix: 0,
+    monsterStates: new Map(),
+    nightWindTimer: 0,
+    caveWindTimer: 0,
+    distantMonsterTimer: 0,
+    dayWindTimer: 0,
     enabled: false,
   };
 
@@ -1413,8 +1597,42 @@
     return buffer;
   }
 
+  function getDriftwoodBeatDuration() {
+    return 60 / DRIFTWOOD_THEME.bpm;
+  }
+
+  function getDriftwoodLoopBeats() {
+    return DRIFTWOOD_THEME.mainLoopBars * DRIFTWOOD_THEME.beatsPerBar;
+  }
+
+  function driftwoodNoise(seed) {
+    const value = Math.sin(seed * 12.9898 + 78.233) * 43758.5453123;
+    return value - Math.floor(value);
+  }
+
+  function getDriftwoodChordIndexAtBeat(beatIndex) {
+    const beatsPerChord = DRIFTWOOD_THEME.beatsPerBar;
+    const chordCycleBeats = DRIFTWOOD_CHORDS.length * beatsPerChord;
+    const wrapped = ((beatIndex % chordCycleBeats) + chordCycleBeats) % chordCycleBeats;
+    return Math.floor(wrapped / beatsPerChord);
+  }
+
+  function getDriftwoodTone(chord, step) {
+    if (!Array.isArray(chord) || chord.length < 3) return 220;
+    const tones = [
+      chord[0],
+      chord[1],
+      chord[2],
+      chord[0] * 2,
+      chord[1] * 2,
+      chord[2] * 2,
+    ];
+    const index = ((step % tones.length) + tones.length) % tones.length;
+    return tones[index];
+  }
+
   function stopAmbientAudio() {
-    for (const key of ["oscA", "oscB", "oscC", "lfo"]) {
+    for (const key of ["oscA", "oscB", "oscC", "lfo", "bassOsc", "textureSource"]) {
       const node = audio[key];
       if (!node) continue;
       try {
@@ -1429,46 +1647,60 @@
       }
       audio[key] = null;
     }
-    if (audio.lfoGain) {
+    for (const key of [
+      "lfoGain",
+      "filter",
+      "musicGain",
+      "padGain",
+      "bassGain",
+      "bassFilter",
+      "textureGain",
+      "textureFilter",
+      "variationGain",
+    ]) {
+      const node = audio[key];
+      if (!node) continue;
       try {
-        audio.lfoGain.disconnect();
+        node.disconnect();
       } catch (err) {
         // ignore disconnect errors
       }
-      audio.lfoGain = null;
+      audio[key] = null;
     }
-    if (audio.filter) {
-      try {
-        audio.filter.disconnect();
-      } catch (err) {
-        // ignore disconnect errors
-      }
-      audio.filter = null;
-    }
-    if (audio.musicGain) {
-      try {
-        audio.musicGain.disconnect();
-      } catch (err) {
-        // ignore disconnect errors
-      }
-      audio.musicGain = null;
-    }
+    audio.themeTime = 0;
+    audio.introPluckTimer = 0;
+    audio.mainTime = 0;
+    audio.prevMainBeat = -1;
+    audio.loopBeats = 0;
+    audio.variationMix = 0;
+    if (audio.monsterStates instanceof Map) audio.monsterStates.clear();
+    audio.nightWindTimer = 0;
+    audio.caveWindTimer = 0;
+    audio.distantMonsterTimer = 0;
+    audio.dayWindTimer = 0;
     audio.chordTimer = 0;
     audio.noteTimer = 0;
     audio.noteIndex = 0;
   }
 
-  function setAmbientChord(index, glideSeconds = 2.0) {
+  function setAmbientChord(index, glideSeconds = 1.4) {
     if (!audio.ctx || !audio.oscA || !audio.oscB || !audio.oscC) return;
-    const chord = AMBIENT_CHORDS[(index % AMBIENT_CHORDS.length + AMBIENT_CHORDS.length) % AMBIENT_CHORDS.length];
+    const chord = DRIFTWOOD_CHORDS[
+      (index % DRIFTWOOD_CHORDS.length + DRIFTWOOD_CHORDS.length) % DRIFTWOOD_CHORDS.length
+    ];
     const now = audio.ctx.currentTime;
     const glide = Math.max(0.01, glideSeconds);
     audio.oscA.frequency.setTargetAtTime(chord[0], now, glide);
-    audio.oscB.frequency.setTargetAtTime(chord[1], now, glide);
-    audio.oscC.frequency.setTargetAtTime(chord[2] * 0.5, now, glide);
+    audio.oscB.frequency.setTargetAtTime(chord[1], now, glide * 0.92);
+    audio.oscC.frequency.setTargetAtTime(chord[2], now, glide * 0.86);
+    if (audio.bassOsc) {
+      audio.bassOsc.frequency.setTargetAtTime(chord[0] * 0.5, now, glide * 0.75);
+    }
     if (audio.filter) {
-      const target = clamp(1650 + chord[1] * 0.8, 1650, 3600);
-      audio.filter.frequency.setTargetAtTime(target, now, glide * 0.7);
+      const nightShift = state.isNight ? -220 : 90;
+      const variationLift = 320 * (audio.variationMix || 0);
+      const target = clamp(1500 + nightShift + variationLift, 900, 2800);
+      audio.filter.frequency.setTargetAtTime(target, now, glide * 0.6);
     }
   }
 
@@ -1478,85 +1710,339 @@
     const ctx = audio.ctx;
     const now = ctx.currentTime;
     const musicGain = ctx.createGain();
-    const filter = ctx.createBiquadFilter();
-    filter.type = "lowpass";
-    filter.frequency.value = 2500;
-    filter.Q.value = 0.55;
     musicGain.gain.setValueAtTime(0.0001, now);
-    musicGain.gain.exponentialRampToValueAtTime(0.028, now + 1.8);
-    filter.connect(musicGain);
+    musicGain.gain.exponentialRampToValueAtTime(0.034, now + 2.6);
     musicGain.connect(audio.musicBus);
+
+    const padFilter = ctx.createBiquadFilter();
+    padFilter.type = "lowpass";
+    padFilter.frequency.value = 1600;
+    padFilter.Q.value = 0.48;
+
+    const padGain = ctx.createGain();
+    padGain.gain.value = 0.22;
+    padFilter.connect(padGain);
+    padGain.connect(musicGain);
 
     const oscA = ctx.createOscillator();
     const oscB = ctx.createOscillator();
     const oscC = ctx.createOscillator();
     oscA.type = "triangle";
-    oscB.type = "sine";
-    oscC.type = "triangle";
-    oscA.detune.value = 3;
-    oscB.detune.value = -2;
-    oscC.detune.value = -5;
+    oscB.type = "sawtooth";
+    oscC.type = "sine";
+    oscA.detune.value = -5;
+    oscB.detune.value = 6;
+    oscC.detune.value = 2;
 
     const voiceA = ctx.createGain();
     const voiceB = ctx.createGain();
     const voiceC = ctx.createGain();
-    voiceA.gain.value = 0.2;
-    voiceB.gain.value = 0.16;
-    voiceC.gain.value = 0.14;
+    voiceA.gain.value = 0.11;
+    voiceB.gain.value = 0.075;
+    voiceC.gain.value = 0.058;
 
     oscA.connect(voiceA);
     oscB.connect(voiceB);
     oscC.connect(voiceC);
-    voiceA.connect(filter);
-    voiceB.connect(filter);
-    voiceC.connect(filter);
+    voiceA.connect(padFilter);
+    voiceB.connect(padFilter);
+    voiceC.connect(padFilter);
+
+    const bassOsc = ctx.createOscillator();
+    bassOsc.type = "triangle";
+    bassOsc.detune.value = -2;
+    const bassFilter = ctx.createBiquadFilter();
+    bassFilter.type = "lowpass";
+    bassFilter.frequency.value = 330;
+    bassFilter.Q.value = 0.65;
+    const bassGain = ctx.createGain();
+    bassGain.gain.value = 0.0058;
+    bassOsc.connect(bassFilter);
+    bassFilter.connect(bassGain);
+    bassGain.connect(musicGain);
+
+    const variationGain = ctx.createGain();
+    variationGain.gain.value = 0.0001;
+    variationGain.connect(musicGain);
+
+    let textureSource = null;
+    let textureFilter = null;
+    let textureGain = null;
+    const noiseBuffer = getNoiseBuffer();
+    if (noiseBuffer) {
+      textureSource = ctx.createBufferSource();
+      textureSource.buffer = noiseBuffer;
+      textureSource.loop = true;
+      textureFilter = ctx.createBiquadFilter();
+      textureFilter.type = "bandpass";
+      textureFilter.frequency.value = 640;
+      textureFilter.Q.value = 0.4;
+      textureGain = ctx.createGain();
+      textureGain.gain.value = 0.0015;
+      textureSource.connect(textureFilter);
+      textureFilter.connect(textureGain);
+      textureGain.connect(musicGain);
+    }
 
     const lfo = ctx.createOscillator();
     const lfoGain = ctx.createGain();
     lfo.type = "sine";
-    lfo.frequency.value = 0.2;
-    lfoGain.gain.value = 0.0038;
+    lfo.frequency.value = 0.08;
+    lfoGain.gain.value = 0.012;
     lfo.connect(lfoGain);
-    lfoGain.connect(musicGain.gain);
+    lfoGain.connect(padGain.gain);
 
     audio.musicGain = musicGain;
-    audio.filter = filter;
+    audio.padGain = padGain;
+    audio.filter = padFilter;
     audio.oscA = oscA;
     audio.oscB = oscB;
     audio.oscC = oscC;
+    audio.bassOsc = bassOsc;
+    audio.bassFilter = bassFilter;
+    audio.bassGain = bassGain;
+    audio.textureSource = textureSource;
+    audio.textureFilter = textureFilter;
+    audio.textureGain = textureGain;
+    audio.variationGain = variationGain;
     audio.lfo = lfo;
     audio.lfoGain = lfoGain;
-    audio.chordIndex = Math.floor(Math.random() * AMBIENT_CHORDS.length);
-    audio.chordTimer = 5 + Math.random() * 3;
-    audio.noteTimer = 0.2;
+    audio.loopBeats = getDriftwoodLoopBeats();
+    audio.themeTime = 0;
+    audio.introPluckTimer = 0.9;
+    audio.mainTime = 0;
+    audio.prevMainBeat = -1;
+    audio.variationMix = 0;
+    audio.chordIndex = 0;
+    audio.chordTimer = 0;
+    audio.noteTimer = 0;
     audio.noteIndex = 0;
     setAmbientChord(audio.chordIndex, 0.03);
 
     oscA.start(now);
     oscB.start(now);
     oscC.start(now);
+    bassOsc.start(now);
+    if (textureSource) textureSource.start(now);
     lfo.start(now);
   }
 
-  function triggerAmbientNote() {
-    if (!audio.ctx || !audio.musicBus) return;
-    const chord = AMBIENT_CHORDS[audio.chordIndex % AMBIENT_CHORDS.length];
-    const notePick = AMBIENT_NOTE_PATTERN[audio.noteIndex % AMBIENT_NOTE_PATTERN.length];
-    const freq = chord[notePick] * 2;
-    const now = audio.ctx.currentTime;
-    const osc = audio.ctx.createOscillator();
-    const gain = audio.ctx.createGain();
+  function triggerAmbientNote(freq, when, intensity = 0.5, useVariationBus = false) {
+    if (!audio.ctx || !audio.musicGain) return;
+    const ctx = audio.ctx;
+    const start = Math.max(ctx.currentTime, Number.isFinite(when) ? when : ctx.currentTime);
+    const targetBus = (useVariationBus && audio.variationGain) ? audio.variationGain : audio.musicGain;
+    const clampedIntensity = clamp(Number(intensity) || 0.5, 0.08, 1.2);
+    const noteFreq = clamp(Number(freq) || 220, 80, 2500);
+    const body = ctx.createOscillator();
+    const ping = ctx.createOscillator();
+    const filter = ctx.createBiquadFilter();
+    const gain = ctx.createGain();
+    body.type = "triangle";
+    ping.type = "sine";
+    body.frequency.setValueAtTime(noteFreq, start);
+    body.frequency.exponentialRampToValueAtTime(noteFreq * 0.985, start + 0.28);
+    ping.frequency.setValueAtTime(noteFreq * 2.02, start);
+    ping.frequency.exponentialRampToValueAtTime(noteFreq * 1.5, start + 0.18);
+    filter.type = "bandpass";
+    filter.frequency.setValueAtTime(clamp(noteFreq * 2.4, 230, 4200), start);
+    filter.Q.setValueAtTime(0.7, start);
+    gain.gain.setValueAtTime(0.0001, start);
+    gain.gain.exponentialRampToValueAtTime(0.0125 * clampedIntensity, start + 0.015);
+    gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.56);
+    body.connect(filter);
+    ping.connect(filter);
+    filter.connect(gain);
+    gain.connect(targetBus);
+    body.start(start);
+    ping.start(start);
+    body.stop(start + 0.62);
+    ping.stop(start + 0.35);
+  }
+
+  function triggerDriftwoodHarmonic(freq, when, intensity = 0.2, useVariationBus = false) {
+    if (!audio.ctx || !audio.musicGain) return;
+    const ctx = audio.ctx;
+    const start = Math.max(ctx.currentTime, Number.isFinite(when) ? when : ctx.currentTime);
+    const targetBus = (useVariationBus && audio.variationGain) ? audio.variationGain : audio.musicGain;
+    const noteFreq = clamp(Number(freq) || 660, 150, 4200);
+    const clampedIntensity = clamp(Number(intensity) || 0.2, 0.05, 1.1);
+    const osc = ctx.createOscillator();
+    const filter = ctx.createBiquadFilter();
+    const gain = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(noteFreq, start);
+    osc.frequency.exponentialRampToValueAtTime(noteFreq * 0.996, start + 1.15);
+    filter.type = "highpass";
+    filter.frequency.setValueAtTime(clamp(noteFreq * 0.9, 240, 2400), start);
+    gain.gain.setValueAtTime(0.0001, start);
+    gain.gain.exponentialRampToValueAtTime(0.0062 * clampedIntensity, start + 0.05);
+    gain.gain.exponentialRampToValueAtTime(0.0001, start + 1.18);
+    osc.connect(filter);
+    filter.connect(gain);
+    gain.connect(targetBus);
+    osc.start(start);
+    osc.stop(start + 1.24);
+  }
+
+  function triggerDriftwoodClick(when, intensity = 0.2) {
+    if (!audio.ctx || !audio.musicGain) return;
+    const noise = getNoiseBuffer();
+    if (!noise) return;
+    const ctx = audio.ctx;
+    const start = Math.max(ctx.currentTime, Number.isFinite(when) ? when : ctx.currentTime);
+    const src = ctx.createBufferSource();
+    const filter = ctx.createBiquadFilter();
+    const gain = ctx.createGain();
+    src.buffer = noise;
+    filter.type = "highpass";
+    filter.frequency.setValueAtTime(2200, start);
+    filter.Q.setValueAtTime(0.8, start);
+    gain.gain.setValueAtTime(0.0001, start);
+    gain.gain.exponentialRampToValueAtTime(0.0036 * clamp(intensity, 0.05, 1.2), start + 0.006);
+    gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.03);
+    src.connect(filter);
+    filter.connect(gain);
+    gain.connect(audio.musicGain);
+    src.start(start);
+    src.stop(start + 0.04);
+  }
+
+  function triggerDriftwoodBrush(when, intensity = 0.14) {
+    if (!audio.ctx || !audio.musicGain) return;
+    const noise = getNoiseBuffer();
+    if (!noise) return;
+    const ctx = audio.ctx;
+    const start = Math.max(ctx.currentTime, Number.isFinite(when) ? when : ctx.currentTime);
+    const src = ctx.createBufferSource();
+    const filter = ctx.createBiquadFilter();
+    const gain = ctx.createGain();
+    src.buffer = noise;
+    filter.type = "bandpass";
+    filter.frequency.setValueAtTime(1300, start);
+    filter.Q.setValueAtTime(0.6, start);
+    gain.gain.setValueAtTime(0.0001, start);
+    gain.gain.exponentialRampToValueAtTime(0.0019 * clamp(intensity, 0.05, 1.2), start + 0.018);
+    gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.16);
+    src.connect(filter);
+    filter.connect(gain);
+    gain.connect(audio.musicGain);
+    src.start(start);
+    src.stop(start + 0.2);
+  }
+
+  function triggerDriftwoodBassPulse(freq, when, intensity = 0.62) {
+    if (!audio.ctx || !audio.musicGain) return;
+    const ctx = audio.ctx;
+    const start = Math.max(ctx.currentTime, Number.isFinite(when) ? when : ctx.currentTime);
+    const baseFreq = clamp(Number(freq) || 110, 45, 260);
+    const clampedIntensity = clamp(Number(intensity) || 0.62, 0.1, 1.3);
+    const osc = ctx.createOscillator();
+    const filter = ctx.createBiquadFilter();
+    const gain = ctx.createGain();
     osc.type = "triangle";
-    osc.frequency.setValueAtTime(freq, now);
-    osc.frequency.exponentialRampToValueAtTime(freq * 0.985, now + 0.2);
-    gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.018);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.28);
-    osc.connect(gain);
-    gain.connect(audio.musicBus);
-    osc.start(now);
-    osc.stop(now + 0.32);
-    audio.noteIndex += 1;
+    osc.frequency.setValueAtTime(baseFreq * 1.12, start);
+    osc.frequency.exponentialRampToValueAtTime(baseFreq, start + 0.11);
+    osc.frequency.exponentialRampToValueAtTime(baseFreq * 0.92, start + 0.3);
+    filter.type = "lowpass";
+    filter.frequency.setValueAtTime(340, start);
+    filter.Q.setValueAtTime(0.75, start);
+    gain.gain.setValueAtTime(0.0001, start);
+    gain.gain.exponentialRampToValueAtTime(0.0078 * clampedIntensity, start + 0.016);
+    gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.34);
+    osc.connect(filter);
+    filter.connect(gain);
+    gain.connect(audio.musicGain);
+    osc.start(start);
+    osc.stop(start + 0.38);
+  }
+
+  function scheduleDriftwoodBeat(beatIndex, when) {
+    const loopBeats = Math.max(1, audio.loopBeats || getDriftwoodLoopBeats());
+    const wrappedBeat = ((beatIndex % loopBeats) + loopBeats) % loopBeats;
+    const beatInBar = wrappedBeat % DRIFTWOOD_THEME.beatsPerBar;
+    const barIndex = Math.floor(wrappedBeat / DRIFTWOOD_THEME.beatsPerBar);
+    const chordIndex = getDriftwoodChordIndexAtBeat(wrappedBeat);
+
+    if (chordIndex !== audio.chordIndex) {
+      audio.chordIndex = chordIndex;
+      setAmbientChord(chordIndex, 1.2);
+    }
+
+    const chord = DRIFTWOOD_CHORDS[chordIndex];
+    if (!chord) return;
+
+    if (beatInBar === 0 || beatInBar === 2) {
+      triggerDriftwoodBassPulse(chord[0] * 0.5, when, beatInBar === 0 ? 0.8 : 0.52);
+    }
+
+    const clickPattern = [0.25, 0.14, 0.19, 0.14];
+    triggerDriftwoodClick(when + 0.005, clickPattern[beatInBar]);
+    if (beatInBar === 1 || beatInBar === 3) {
+      triggerDriftwoodBrush(when + 0.02, beatInBar === 3 ? 0.16 : 0.12);
+    }
+
+    if (wrappedBeat % 2 === 0) {
+      const melodyStep = DRIFTWOOD_MELODY_PATTERN[Math.floor(wrappedBeat / 2) % DRIFTWOOD_MELODY_PATTERN.length];
+      const melodyFreq = getDriftwoodTone(chord, melodyStep);
+      const pluckLevel = beatInBar === 0 ? 0.68 : 0.5;
+      triggerAmbientNote(melodyFreq, when + 0.014, pluckLevel, false);
+      audio.noteIndex += 1;
+    }
+
+    if (wrappedBeat % 8 === 4) {
+      triggerDriftwoodHarmonic(chord[1] * 2, when + 0.085, 0.22, false);
+    }
+
+    if (audio.variationMix > 0.05 && beatInBar === 3) {
+      const counterStep = DRIFTWOOD_COUNTER_PATTERN[barIndex % DRIFTWOOD_COUNTER_PATTERN.length];
+      const counterFreq = getDriftwoodTone(chord, counterStep);
+      const mixGain = 0.1 + audio.variationMix * 0.38;
+      triggerAmbientNote(counterFreq, when + 0.058, mixGain, true);
+      triggerDriftwoodHarmonic(counterFreq * 0.5, when + 0.13, mixGain * 0.68, true);
+    }
+  }
+
+  function updateDriftwoodIntro(dt) {
+    audio.introPluckTimer -= dt;
+    if (audio.introPluckTimer > 0) return;
+    const progress = clamp(audio.themeTime / DRIFTWOOD_THEME.introDuration, 0, 0.999);
+    const introChordIndex = Math.floor(progress * 4);
+    if (introChordIndex !== audio.chordIndex) {
+      audio.chordIndex = introChordIndex;
+      setAmbientChord(audio.chordIndex, 2.4);
+    }
+    const chord = DRIFTWOOD_CHORDS[audio.chordIndex % DRIFTWOOD_CHORDS.length];
+    if (chord) {
+      const seed = Math.floor(audio.themeTime * 10);
+      const toneStep = Math.floor(driftwoodNoise(seed + 13) * 5);
+      const freq = getDriftwoodTone(chord, toneStep);
+      const now = audio.ctx?.currentTime || 0;
+      triggerAmbientNote(freq, now + 0.03, 0.36 + progress * 0.22, false);
+      if (progress > 0.42) {
+        triggerDriftwoodHarmonic(chord[1] * 2, now + 0.11, 0.14 + progress * 0.18, false);
+      }
+      audio.noteIndex += 1;
+    }
+    const gap = 3.1 + driftwoodNoise(Math.floor(audio.themeTime) + 27) * 2.2;
+    audio.introPluckTimer += gap;
+  }
+
+  function updateDriftwoodMain(dt) {
+    if (!audio.ctx) return;
+    const beatDuration = getDriftwoodBeatDuration();
+    const prevTime = audio.mainTime;
+    audio.mainTime += dt;
+    const prevBeat = Math.floor(prevTime / beatDuration);
+    const nextBeat = Math.floor(audio.mainTime / beatDuration);
+    const now = audio.ctx.currentTime;
+
+    for (let beat = prevBeat + 1; beat <= nextBeat; beat += 1) {
+      const beatTime = beat * beatDuration;
+      const when = now + Math.max(0, beatTime - audio.mainTime);
+      scheduleDriftwoodBeat(beat, when);
+      audio.prevMainBeat = beat;
+    }
   }
 
   function updateAnimalAmbience(dt) {
@@ -1586,6 +2072,214 @@
     state.animalVocalTimer = 3.6 + Math.random() * 4.8;
   }
 
+  function getMonsterAudioProfile(type) {
+    return MONSTER_AUDIO_PROFILES[type] || MONSTER_AUDIO_PROFILES.crawler;
+  }
+
+  function getLocalWorldAudioTag(world) {
+    if (!world) return "none";
+    const surface = state.surfaceWorld || state.world;
+    if (world === surface) {
+      return `surface:${surface?.seed || "seed"}`;
+    }
+    if (state.activeCave?.world === world) {
+      return `cave:${state.activeCave?.id ?? "active"}`;
+    }
+    const cave = surface?.caves?.find((entry) => entry?.world === world);
+    if (cave) return `cave:${cave.id}`;
+    return `world:${world.size || 0}`;
+  }
+
+  function getSfxDistanceIntensity(distance, maxRange) {
+    if (!Number.isFinite(distance)) return 1;
+    const range = Math.max(1, Number(maxRange) || (CONFIG.tileSize * 12));
+    const ratio = clamp(1 - (distance / range), 0, 1);
+    return ratio * ratio;
+  }
+
+  function updateEnvironmentalSoundscape(dt) {
+    if (!audio.ctx || !audio.enabled || !state.player || !state.world) return;
+    const world = state.world;
+    const monsters = Array.isArray(world.monsters)
+      ? world.monsters.filter((monster) => monster && monster.hp > 0)
+      : [];
+
+    if (state.inCave) {
+      audio.caveWindTimer -= dt;
+      if (audio.caveWindTimer <= 0) {
+        playSfx("caveWind", { intensity: 0.7 + Math.random() * 0.45 });
+        audio.caveWindTimer = 5.2 + Math.random() * 3.6;
+      }
+      audio.distantMonsterTimer -= dt;
+      if (audio.distantMonsterTimer <= 0 && monsters.length > 0) {
+        const pick = monsters[Math.floor(Math.random() * monsters.length)];
+        const dist = Math.hypot((pick.x ?? 0) - state.player.x, (pick.y ?? 0) - state.player.y);
+        const intensity = getSfxDistanceIntensity(Math.max(dist, CONFIG.tileSize * 6), CONFIG.tileSize * 24);
+        if (intensity > 0.06) {
+          playSfx("monsterIdle", {
+            monsterType: pick.type,
+            inCave: true,
+            intensity: 0.2 + intensity * 0.55,
+            distance: dist,
+          });
+        }
+        audio.distantMonsterTimer = 3.7 + Math.random() * 3.4;
+      }
+      return;
+    }
+
+    if (state.isNight) {
+      audio.nightWindTimer -= dt;
+      if (audio.nightWindTimer <= 0) {
+        playSfx("nightWind", { intensity: 0.5 + Math.random() * 0.5 });
+        audio.nightWindTimer = 6.4 + Math.random() * 4.2;
+      }
+      audio.distantMonsterTimer -= dt;
+      if (audio.distantMonsterTimer <= 0 && monsters.length > 0) {
+        const pick = monsters[Math.floor(Math.random() * monsters.length)];
+        const dist = Math.hypot((pick.x ?? 0) - state.player.x, (pick.y ?? 0) - state.player.y);
+        const intensity = getSfxDistanceIntensity(Math.max(dist, CONFIG.tileSize * 5), CONFIG.tileSize * 26);
+        if (intensity > 0.08) {
+          playSfx("monsterIdle", {
+            monsterType: pick.type,
+            inCave: false,
+            intensity: 0.16 + intensity * 0.6,
+            distance: dist,
+          });
+        }
+        audio.distantMonsterTimer = 4.1 + Math.random() * 4.8;
+      }
+      return;
+    }
+
+    audio.dayWindTimer -= dt;
+    if (audio.dayWindTimer <= 0) {
+      playSfx("dayWind", { intensity: 0.25 + Math.random() * 0.25 });
+      audio.dayWindTimer = 11 + Math.random() * 8;
+    }
+  }
+
+  function updateMonsterSoundscape(dt) {
+    if (!audio.ctx || !audio.enabled || !state.player || !state.world) return;
+    const world = state.world;
+    if (!Array.isArray(world.monsters)) return;
+    if (!(audio.monsterStates instanceof Map)) {
+      audio.monsterStates = new Map();
+    }
+
+    const worldTag = getLocalWorldAudioTag(world);
+    const nowMs = performance.now();
+    const seen = new Set();
+    const playerHidden = !state.inCave && !!state.player.inHut;
+
+    for (const monster of world.monsters) {
+      if (!monster || monster.hp <= 0) continue;
+      const key = `${worldTag}:${monster.id}`;
+      seen.add(key);
+      const profile = getMonsterAudioProfile(monster.type);
+      const dist = Math.hypot((monster.x ?? 0) - state.player.x, (monster.y ?? 0) - state.player.y);
+      const aggroRange = Number(monster.aggroRange) || MONSTER.aggroRange;
+      const aggroNow = !playerHidden && dist <= aggroRange * 1.02;
+      const meleeRange = Number(monster.attackRange) || MONSTER.attackRange;
+
+      const stateEntry = audio.monsterStates.get(key) || {
+        x: monster.x,
+        y: monster.y,
+        idleTimer: profile.idleIntervalMin + Math.random() * (profile.idleIntervalMax - profile.idleIntervalMin),
+        stepTimer: profile.stepIntervalMin + Math.random() * (profile.stepIntervalMax - profile.stepIntervalMin),
+        windupTimer: 0.25 + Math.random() * 0.45,
+        aggro: false,
+        prevAttackTimer: Number(monster.attackTimer) || 0,
+        lastSeen: nowMs,
+      };
+      stateEntry.lastSeen = nowMs;
+
+      if (aggroNow && !stateEntry.aggro && dist <= CONFIG.tileSize * 14) {
+        playSfx("monsterAggro", {
+          monsterType: monster.type,
+          inCave: state.inCave,
+          distance: dist,
+          intensity: 0.45 + getSfxDistanceIntensity(dist, CONFIG.tileSize * 14) * 0.7,
+        });
+      }
+      stateEntry.aggro = aggroNow;
+
+      stateEntry.idleTimer -= dt;
+      if (dist <= profile.idleRange && stateEntry.idleTimer <= 0) {
+        const idleChance = aggroNow ? 0.34 : 1;
+        if (Math.random() <= idleChance) {
+          playSfx("monsterIdle", {
+            monsterType: monster.type,
+            inCave: state.inCave,
+            distance: dist,
+            intensity: 0.24 + getSfxDistanceIntensity(dist, profile.idleRange) * (aggroNow ? 0.5 : 0.75),
+          });
+        }
+        stateEntry.idleTimer = profile.idleIntervalMin
+          + Math.random() * (profile.idleIntervalMax - profile.idleIntervalMin)
+          + (aggroNow ? 0.4 : 0);
+      }
+
+      const moved = Math.hypot((monster.x ?? 0) - (stateEntry.x ?? monster.x), (monster.y ?? 0) - (stateEntry.y ?? monster.y));
+      const speed = dt > 0 ? (moved / dt) : 0;
+      stateEntry.stepTimer -= dt * clamp(speed / 34, 0.35, 2.7);
+      if (
+        dist <= CONFIG.tileSize * 10.5
+        && speed >= profile.moveThreshold
+        && stateEntry.stepTimer <= 0
+      ) {
+        playSfx("monsterMove", {
+          monsterType: monster.type,
+          inCave: state.inCave,
+          distance: dist,
+          intensity: 0.2 + getSfxDistanceIntensity(dist, CONFIG.tileSize * 11) * 0.75,
+        });
+        stateEntry.stepTimer = profile.stepIntervalMin
+          + Math.random() * (profile.stepIntervalMax - profile.stepIntervalMin);
+      }
+
+      stateEntry.windupTimer = Math.max(0, stateEntry.windupTimer - dt);
+      if (
+        aggroNow
+        && dist <= Math.max(meleeRange * 1.45, CONFIG.tileSize * 1.8)
+        && stateEntry.windupTimer <= 0
+      ) {
+        playSfx("monsterWindup", {
+          monsterType: monster.type,
+          inCave: state.inCave,
+          distance: dist,
+          intensity: 0.18 + getSfxDistanceIntensity(dist, CONFIG.tileSize * 8) * 0.55,
+        });
+        stateEntry.windupTimer = Math.max(0.32, (Number(monster.attackCooldown) || 1.0) * 0.72);
+      }
+
+      const attackTimer = Number(monster.attackTimer) || 0;
+      if (
+        attackTimer > stateEntry.prevAttackTimer + 0.28
+        && dist <= CONFIG.tileSize * 12
+      ) {
+        playSfx("monsterAttackMiss", {
+          monsterType: monster.type,
+          inCave: state.inCave,
+          distance: dist,
+          intensity: 0.12 + getSfxDistanceIntensity(dist, CONFIG.tileSize * 12) * 0.42,
+        });
+      }
+      stateEntry.prevAttackTimer = attackTimer;
+
+      stateEntry.x = monster.x;
+      stateEntry.y = monster.y;
+      audio.monsterStates.set(key, stateEntry);
+    }
+
+    for (const [key, stateEntry] of audio.monsterStates.entries()) {
+      const stale = !stateEntry || (nowMs - (stateEntry.lastSeen || 0)) > 12000;
+      if (stale || key.startsWith(`${worldTag}:`) && !seen.has(key)) {
+        audio.monsterStates.delete(key);
+      }
+    }
+  }
+
   function updateAudio(dt) {
     if (!audio.ctx || !audio.enabled) return;
     if (!state.player || state.gameWon) {
@@ -1600,122 +2294,588 @@
       startAmbientAudio();
       if (!audio.oscA || !audio.oscB || !audio.oscC) return;
     }
-    audio.chordTimer -= dt;
-    if (audio.chordTimer <= 0) {
-      const step = 1 + Math.floor(Math.random() * (AMBIENT_CHORDS.length - 1));
-      audio.chordIndex = (audio.chordIndex + step) % AMBIENT_CHORDS.length;
-      setAmbientChord(audio.chordIndex, 1.8);
-      audio.chordTimer = 5 + Math.random() * 4;
+
+    audio.themeTime += dt;
+    const now = audio.ctx.currentTime;
+    const variationTarget = audio.themeTime >= DRIFTWOOD_THEME.variationFadeStart
+      ? clamp(
+          (audio.themeTime - DRIFTWOOD_THEME.variationFadeStart) / DRIFTWOOD_THEME.variationFadeDuration,
+          0,
+          1
+        )
+      : 0;
+    audio.variationMix = smoothValue(audio.variationMix, variationTarget, dt, 0.9);
+
+    if (audio.variationGain) {
+      const gainTarget = 0.0001 + audio.variationMix * 0.95;
+      audio.variationGain.gain.setTargetAtTime(gainTarget, now, 0.7);
     }
-    audio.noteTimer -= dt;
-    if (audio.noteTimer <= 0) {
-      triggerAmbientNote();
-      audio.noteTimer = 0.52 + Math.random() * 0.2;
+    if (audio.textureGain) {
+      const textureTarget = 0.0013 + audio.variationMix * 0.0014 + (state.isNight ? 0.0005 : 0);
+      audio.textureGain.gain.setTargetAtTime(textureTarget, now, 0.8);
     }
+    if (audio.bassGain) {
+      const bassBedTarget = state.isNight ? 0.0062 : 0.0054;
+      audio.bassGain.gain.setTargetAtTime(bassBedTarget, now, 0.7);
+    }
+    if (audio.filter) {
+      const nightShift = state.isNight ? -220 : 100;
+      const filterTarget = clamp(1460 + nightShift + audio.variationMix * 320, 900, 2800);
+      audio.filter.frequency.setTargetAtTime(filterTarget, now, 0.65);
+    }
+
+    if (audio.themeTime < DRIFTWOOD_THEME.introDuration) {
+      updateDriftwoodIntro(dt);
+    } else {
+      if (audio.prevMainBeat < 0) {
+        audio.chordIndex = getDriftwoodChordIndexAtBeat(0);
+        setAmbientChord(audio.chordIndex, 1.25);
+        scheduleDriftwoodBeat(0, now + 0.02);
+        audio.prevMainBeat = 0;
+      }
+      updateDriftwoodMain(dt);
+    }
+
     updateAnimalAmbience(dt);
+    updateEnvironmentalSoundscape(dt);
+    updateMonsterSoundscape(dt);
   }
 
-  function playSfx(kind) {
+  function playSfxTone(options = null) {
     if (!audio.ctx || !audio.enabled || !audio.sfxBus) return;
+    const opts = options && typeof options === "object" ? options : {};
     const ctx = audio.ctx;
     const now = ctx.currentTime;
+    const when = Math.max(now, Number(opts.when) || now);
+    const duration = clamp(Number(opts.duration) || 0.12, 0.02, 2.6);
+    const attack = clamp(Number(opts.attack) || 0.01, 0.001, duration * 0.8);
+    const peak = clamp(Number(opts.peak) || 0.01, 0.0002, 0.6);
+    const freqStart = clamp(Number(opts.freqStart) || 220, 20, 9000);
+    const freqEnd = clamp(Number(opts.freqEnd ?? freqStart), 20, 9000);
+    const wave = opts.wave || "sine";
+
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
-    osc.connect(gain);
-    gain.connect(audio.sfxBus);
+    osc.type = wave;
+    osc.frequency.setValueAtTime(freqStart, when);
+    if (Math.abs(freqEnd - freqStart) > 0.1) {
+      osc.frequency.exponentialRampToValueAtTime(Math.max(20, freqEnd), when + duration * 0.88);
+    }
+    if (Number.isFinite(opts.detune)) {
+      osc.detune.setValueAtTime(Number(opts.detune), when);
+    }
+
+    gain.gain.setValueAtTime(0.0001, when);
+    gain.gain.exponentialRampToValueAtTime(peak, when + attack);
+    gain.gain.exponentialRampToValueAtTime(0.0001, when + duration);
+
+    let outlet = gain;
+    if (opts.filterType) {
+      const filter = ctx.createBiquadFilter();
+      filter.type = opts.filterType;
+      filter.frequency.setValueAtTime(clamp(Number(opts.filterFreq) || 1200, 60, 12000), when);
+      filter.Q.setValueAtTime(clamp(Number(opts.filterQ) || 0.6, 0.01, 30), when);
+      osc.connect(filter);
+      filter.connect(gain);
+      outlet = gain;
+    } else {
+      osc.connect(gain);
+    }
+
+    const bus = opts.bus && typeof opts.bus.connect === "function"
+      ? opts.bus
+      : audio.sfxBus;
+    outlet.connect(bus);
+    osc.start(when);
+    osc.stop(when + duration + 0.02);
+  }
+
+  function playSfxNoise(options = null) {
+    if (!audio.ctx || !audio.enabled || !audio.sfxBus) return;
+    const noise = getNoiseBuffer();
+    if (!noise) return;
+    const opts = options && typeof options === "object" ? options : {};
+    const ctx = audio.ctx;
+    const now = ctx.currentTime;
+    const when = Math.max(now, Number(opts.when) || now);
+    const duration = clamp(Number(opts.duration) || 0.1, 0.015, 2.2);
+    const attack = clamp(Number(opts.attack) || 0.005, 0.001, duration * 0.75);
+    const peak = clamp(Number(opts.peak) || 0.006, 0.0002, 0.5);
+
+    const src = ctx.createBufferSource();
+    src.buffer = noise;
+    const filter = ctx.createBiquadFilter();
+    filter.type = opts.filterType || "bandpass";
+    filter.frequency.setValueAtTime(clamp(Number(opts.filterFreq) || 1800, 60, 12000), when);
+    filter.Q.setValueAtTime(clamp(Number(opts.filterQ) || 0.6, 0.01, 30), when);
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, when);
+    gain.gain.exponentialRampToValueAtTime(peak, when + attack);
+    gain.gain.exponentialRampToValueAtTime(0.0001, when + duration);
+
+    src.connect(filter);
+    filter.connect(gain);
+    const bus = opts.bus && typeof opts.bus.connect === "function"
+      ? opts.bus
+      : audio.sfxBus;
+    gain.connect(bus);
+    src.start(when);
+    src.stop(when + duration + 0.03);
+  }
+
+  function getMonsterAudioTimbre(monsterType) {
+    if (monsterType === "brute") {
+      return { base: 86, upper: 144, step: 78, noise: 420 };
+    }
+    if (monsterType === "skeleton") {
+      return { base: 174, upper: 258, step: 126, noise: 1880 };
+    }
+    if (monsterType === "marsh_stalker") {
+      return { base: 134, upper: 214, step: 94, noise: 910 };
+    }
+    return { base: 112, upper: 194, step: 96, noise: 1280 };
+  }
+
+  function playSfx(kind, options = null) {
+    if (!audio.ctx || !audio.enabled || !audio.sfxBus) return;
+    const opts = options && typeof options === "object" ? options : {};
+    const intensity = clamp(Number(opts.intensity) || 1, 0.06, 1.6);
+    const distScale = Number.isFinite(opts.distance)
+      ? Math.max(0.08, getSfxDistanceIntensity(opts.distance, Number(opts.distanceRange) || (CONFIG.tileSize * 12)))
+      : 1;
+    const amp = intensity * distScale;
 
     if (kind === "chop") {
-      osc.type = "triangle";
-      osc.frequency.setValueAtTime(210, now);
-      osc.frequency.exponentialRampToValueAtTime(120, now + 0.08);
-      gain.gain.setValueAtTime(0.0001, now);
-      gain.gain.exponentialRampToValueAtTime(0.022, now + 0.01);
-      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.1);
-      osc.start(now);
-      osc.stop(now + 0.11);
+      playSfx("treeHit", opts);
+      return;
+    }
+    if (kind === "mine") {
+      playSfx("stoneHit", opts);
       return;
     }
 
-    if (kind === "mine") {
-      osc.type = "square";
-      osc.frequency.setValueAtTime(150, now);
-      osc.frequency.exponentialRampToValueAtTime(90, now + 0.12);
-      gain.gain.setValueAtTime(0.0001, now);
-      gain.gain.exponentialRampToValueAtTime(0.024, now + 0.01);
-      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.13);
-      osc.start(now);
-      osc.stop(now + 0.14);
+    if (kind === "treeHit") {
+      playSfxTone({
+        wave: "triangle",
+        freqStart: 236 + Math.random() * 28,
+        freqEnd: 132 + Math.random() * 18,
+        duration: 0.12,
+        attack: 0.008,
+        peak: 0.018 * amp,
+      });
+      playSfxNoise({
+        duration: 0.05,
+        peak: 0.004 * amp,
+        filterType: "bandpass",
+        filterFreq: 980 + Math.random() * 260,
+        filterQ: 0.78,
+      });
+      return;
+    }
+
+    if (kind === "treeHitLow") {
+      playSfxTone({
+        wave: "triangle",
+        freqStart: 176 + Math.random() * 18,
+        freqEnd: 96 + Math.random() * 16,
+        duration: 0.16,
+        attack: 0.01,
+        peak: 0.024 * amp,
+      });
+      playSfxNoise({
+        duration: 0.07,
+        peak: 0.005 * amp,
+        filterType: "lowpass",
+        filterFreq: 1200,
+        filterQ: 0.65,
+      });
+      return;
+    }
+
+    if (kind === "treeBreak") {
+      playSfxTone({
+        wave: "triangle",
+        freqStart: 148 + Math.random() * 12,
+        freqEnd: 78 + Math.random() * 8,
+        duration: 0.3,
+        attack: 0.012,
+        peak: 0.034 * amp,
+      });
+      playSfxNoise({
+        duration: 0.18,
+        peak: 0.008 * amp,
+        filterType: "bandpass",
+        filterFreq: 820 + Math.random() * 220,
+        filterQ: 0.5,
+      });
+      return;
+    }
+
+    if (kind === "stoneHit") {
+      playSfxTone({
+        wave: "square",
+        freqStart: 196 + Math.random() * 34,
+        freqEnd: 96 + Math.random() * 22,
+        duration: 0.12,
+        attack: 0.007,
+        peak: 0.018 * amp,
+      });
+      playSfxNoise({
+        duration: 0.05,
+        peak: 0.0045 * amp,
+        filterType: "highpass",
+        filterFreq: 1600 + Math.random() * 500,
+        filterQ: 0.72,
+      });
+      return;
+    }
+
+    if (kind === "stoneBreak") {
+      playSfxTone({
+        wave: "square",
+        freqStart: 150 + Math.random() * 24,
+        freqEnd: 72 + Math.random() * 12,
+        duration: 0.24,
+        attack: 0.009,
+        peak: 0.03 * amp,
+      });
+      playSfxNoise({
+        duration: 0.16,
+        peak: 0.008 * amp,
+        filterType: "bandpass",
+        filterFreq: 1200 + Math.random() * 400,
+        filterQ: 0.62,
+      });
+      return;
+    }
+
+    if (kind === "oreHit") {
+      playSfx("stoneHit", { ...opts, intensity: intensity * 0.82 });
+      playSfxTone({
+        wave: "sine",
+        freqStart: 650 + Math.random() * 180,
+        freqEnd: 430 + Math.random() * 120,
+        duration: 0.13,
+        attack: 0.006,
+        peak: 0.0085 * amp,
+      });
+      return;
+    }
+
+    if (kind === "oreBreak") {
+      playSfx("stoneBreak", { ...opts, intensity: intensity * 0.9 });
+      playSfxTone({
+        wave: "triangle",
+        freqStart: 540 + Math.random() * 160,
+        freqEnd: 320 + Math.random() * 100,
+        duration: 0.2,
+        attack: 0.01,
+        peak: 0.011 * amp,
+      });
+      return;
+    }
+
+    if (kind === "grassRustle") {
+      playSfxNoise({
+        duration: 0.09,
+        peak: 0.0043 * amp,
+        filterType: "bandpass",
+        filterFreq: 2100 + Math.random() * 650,
+        filterQ: 0.42,
+      });
+      return;
+    }
+
+    if (kind === "grassCut") {
+      playSfxNoise({
+        duration: 0.12,
+        peak: 0.0058 * amp,
+        filterType: "highpass",
+        filterFreq: 1800 + Math.random() * 480,
+        filterQ: 0.66,
+      });
+      playSfxTone({
+        wave: "triangle",
+        freqStart: 280 + Math.random() * 55,
+        freqEnd: 180 + Math.random() * 30,
+        duration: 0.09,
+        attack: 0.006,
+        peak: 0.0065 * amp,
+      });
+      return;
+    }
+
+    if (kind === "monsterIdle") {
+      const timbre = getMonsterAudioTimbre(opts.monsterType);
+      const caveMult = opts.inCave ? 0.85 : 1;
+      playSfxTone({
+        wave: opts.monsterType === "skeleton" ? "sine" : "triangle",
+        freqStart: (timbre.base + Math.random() * 18) * caveMult,
+        freqEnd: (timbre.base * 0.78 + Math.random() * 10) * caveMult,
+        duration: opts.inCave ? 0.28 : 0.2,
+        attack: 0.016,
+        peak: (opts.inCave ? 0.011 : 0.009) * amp,
+        filterType: "lowpass",
+        filterFreq: opts.inCave ? 760 : 1200,
+        filterQ: 0.6,
+      });
+      playSfxNoise({
+        duration: opts.inCave ? 0.18 : 0.12,
+        peak: (opts.inCave ? 0.0035 : 0.0025) * amp,
+        filterType: "bandpass",
+        filterFreq: timbre.noise + (Math.random() - 0.5) * 240,
+        filterQ: 0.5,
+      });
+      if (opts.inCave) {
+        const when = (audio.ctx?.currentTime || 0) + 0.09;
+        playSfxTone({
+          wave: "sine",
+          freqStart: timbre.upper * 0.9,
+          freqEnd: timbre.upper * 0.76,
+          duration: 0.24,
+          attack: 0.02,
+          peak: 0.0028 * amp,
+          when,
+        });
+      }
+      return;
+    }
+
+    if (kind === "monsterAggro") {
+      const timbre = getMonsterAudioTimbre(opts.monsterType);
+      const caveMult = opts.inCave ? 0.92 : 1;
+      playSfxTone({
+        wave: opts.monsterType === "brute" ? "sawtooth" : "triangle",
+        freqStart: (timbre.upper * 1.08 + Math.random() * 24) * caveMult,
+        freqEnd: (timbre.base * 0.86 + Math.random() * 16) * caveMult,
+        duration: 0.34,
+        attack: 0.015,
+        peak: 0.028 * amp,
+      });
+      playSfxNoise({
+        duration: 0.15,
+        peak: 0.0075 * amp,
+        filterType: "bandpass",
+        filterFreq: opts.inCave ? 930 : 1320,
+        filterQ: 0.72,
+      });
+      return;
+    }
+
+    if (kind === "monsterMove") {
+      const timbre = getMonsterAudioTimbre(opts.monsterType);
+      playSfxTone({
+        wave: opts.monsterType === "skeleton" ? "square" : "triangle",
+        freqStart: timbre.step + Math.random() * 20,
+        freqEnd: timbre.step * 0.72 + Math.random() * 10,
+        duration: opts.monsterType === "brute" ? 0.2 : 0.14,
+        attack: 0.006,
+        peak: 0.013 * amp,
+      });
+      playSfxNoise({
+        duration: 0.07,
+        peak: 0.0036 * amp,
+        filterType: opts.inCave ? "bandpass" : "highpass",
+        filterFreq: opts.inCave ? 740 : 1320,
+        filterQ: 0.5,
+      });
+      return;
+    }
+
+    if (kind === "monsterWindup") {
+      const timbre = getMonsterAudioTimbre(opts.monsterType);
+      playSfxTone({
+        wave: "sine",
+        freqStart: timbre.upper * 0.74,
+        freqEnd: timbre.upper * 1.03,
+        duration: 0.18,
+        attack: 0.03,
+        peak: 0.01 * amp,
+      });
+      return;
+    }
+
+    if (kind === "monsterAttackHit") {
+      const timbre = getMonsterAudioTimbre(opts.monsterType);
+      playSfxTone({
+        wave: "square",
+        freqStart: timbre.upper * 0.96,
+        freqEnd: timbre.base * 0.66,
+        duration: 0.15,
+        attack: 0.005,
+        peak: 0.019 * amp,
+      });
+      playSfxNoise({
+        duration: 0.08,
+        peak: 0.0058 * amp,
+        filterType: "bandpass",
+        filterFreq: opts.inCave ? 900 : 1500,
+        filterQ: 0.8,
+      });
+      return;
+    }
+
+    if (kind === "monsterAttackMiss") {
+      const timbre = getMonsterAudioTimbre(opts.monsterType);
+      playSfxTone({
+        wave: "triangle",
+        freqStart: timbre.upper * 0.86,
+        freqEnd: timbre.upper * 0.6,
+        duration: 0.1,
+        attack: 0.004,
+        peak: 0.007 * amp,
+      });
+      playSfxNoise({
+        duration: 0.05,
+        peak: 0.0026 * amp,
+        filterType: "highpass",
+        filterFreq: 1900,
+        filterQ: 0.7,
+      });
+      return;
+    }
+
+    if (kind === "dayWind") {
+      playSfxNoise({
+        duration: 1.35,
+        attack: 0.18,
+        peak: 0.0023 * amp,
+        filterType: "bandpass",
+        filterFreq: 520,
+        filterQ: 0.38,
+      });
+      return;
+    }
+
+    if (kind === "nightWind") {
+      playSfxNoise({
+        duration: 2.2,
+        attack: 0.26,
+        peak: 0.0032 * amp,
+        filterType: "bandpass",
+        filterFreq: 410,
+        filterQ: 0.34,
+      });
+      playSfxTone({
+        wave: "sine",
+        freqStart: 112 + Math.random() * 26,
+        freqEnd: 76 + Math.random() * 16,
+        duration: 1.5,
+        attack: 0.22,
+        peak: 0.0015 * amp,
+      });
+      return;
+    }
+
+    if (kind === "caveWind") {
+      playSfxNoise({
+        duration: 2.7,
+        attack: 0.34,
+        peak: 0.0038 * amp,
+        filterType: "bandpass",
+        filterFreq: 300,
+        filterQ: 0.3,
+      });
+      playSfxTone({
+        wave: "triangle",
+        freqStart: 98 + Math.random() * 20,
+        freqEnd: 58 + Math.random() * 12,
+        duration: 1.9,
+        attack: 0.18,
+        peak: 0.0017 * amp,
+      });
       return;
     }
 
     if (kind === "swing") {
-      osc.type = "sawtooth";
-      osc.frequency.setValueAtTime(280, now);
-      osc.frequency.exponentialRampToValueAtTime(130, now + 0.06);
-      gain.gain.setValueAtTime(0.0001, now);
-      gain.gain.exponentialRampToValueAtTime(0.016, now + 0.01);
-      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.07);
-      osc.start(now);
-      osc.stop(now + 0.08);
+      playSfxTone({
+        wave: "sawtooth",
+        freqStart: 280,
+        freqEnd: 130,
+        duration: 0.08,
+        attack: 0.008,
+        peak: 0.016 * amp,
+      });
       return;
     }
 
     if (kind === "hit") {
-      osc.type = "square";
-      osc.frequency.setValueAtTime(190, now);
-      osc.frequency.exponentialRampToValueAtTime(70, now + 0.1);
-      gain.gain.setValueAtTime(0.0001, now);
-      gain.gain.exponentialRampToValueAtTime(0.025, now + 0.01);
-      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.11);
-      osc.start(now);
-      osc.stop(now + 0.12);
+      playSfxTone({
+        wave: "square",
+        freqStart: 190,
+        freqEnd: 70,
+        duration: 0.12,
+        attack: 0.01,
+        peak: 0.023 * amp,
+      });
       return;
     }
 
     if (kind === "damage" || kind === "hurt") {
-      osc.type = "triangle";
-      osc.frequency.setValueAtTime(172, now);
-      osc.frequency.exponentialRampToValueAtTime(82, now + 0.16);
-      gain.gain.setValueAtTime(0.0001, now);
-      gain.gain.exponentialRampToValueAtTime(0.03, now + 0.013);
-      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.17);
-      osc.start(now);
-      osc.stop(now + 0.18);
+      const pitchJitter = 0.92 + Math.random() * 0.19;
+      playSfxTone({
+        wave: "triangle",
+        freqStart: 188 * pitchJitter,
+        freqEnd: 92 * pitchJitter,
+        duration: 0.18,
+        attack: 0.012,
+        peak: 0.028 * amp,
+      });
+      playSfxTone({
+        wave: "sine",
+        freqStart: 402 * pitchJitter,
+        freqEnd: 230 * pitchJitter,
+        duration: 0.12,
+        attack: 0.008,
+        peak: 0.007 * amp,
+      });
       return;
     }
 
     if (kind === "animalBaa") {
-      osc.type = "triangle";
-      osc.frequency.setValueAtTime(330 + Math.random() * 70, now);
-      osc.frequency.exponentialRampToValueAtTime(230 + Math.random() * 45, now + 0.16);
-      gain.gain.setValueAtTime(0.0001, now);
-      gain.gain.exponentialRampToValueAtTime(0.012, now + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.24);
-      osc.start(now);
-      osc.stop(now + 0.25);
+      playSfxTone({
+        wave: "triangle",
+        freqStart: 330 + Math.random() * 70,
+        freqEnd: 230 + Math.random() * 45,
+        duration: 0.25,
+        attack: 0.02,
+        peak: 0.012 * amp,
+      });
       return;
     }
 
     if (kind === "animalMoo") {
-      osc.type = "sine";
-      osc.frequency.setValueAtTime(170 + Math.random() * 35, now);
-      osc.frequency.exponentialRampToValueAtTime(118 + Math.random() * 20, now + 0.2);
-      gain.gain.setValueAtTime(0.0001, now);
-      gain.gain.exponentialRampToValueAtTime(0.013, now + 0.03);
-      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.29);
-      osc.start(now);
-      osc.stop(now + 0.3);
+      playSfxTone({
+        wave: "sine",
+        freqStart: 170 + Math.random() * 35,
+        freqEnd: 118 + Math.random() * 20,
+        duration: 0.3,
+        attack: 0.03,
+        peak: 0.013 * amp,
+      });
       return;
     }
 
-    osc.type = "sine";
-    osc.frequency.setValueAtTime(360, now);
-    osc.frequency.exponentialRampToValueAtTime(260, now + 0.08);
-    gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.01);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.09);
-    osc.start(now);
-    osc.stop(now + 0.1);
+    if (kind === "ui") {
+      playSfxTone({
+        wave: "sine",
+        freqStart: 360,
+        freqEnd: 260,
+        duration: 0.1,
+        attack: 0.01,
+        peak: 0.01 * amp,
+      });
+      return;
+    }
+
+    playSfxTone({
+      wave: "sine",
+      freqStart: 340,
+      freqEnd: 240,
+      duration: 0.09,
+      attack: 0.008,
+      peak: 0.008 * amp,
+    });
   }
 
   function netIsHost() {
@@ -2225,13 +3385,17 @@
         y: monster.y,
         hp: monster.hp,
         maxHp: monster.maxHp,
+        attackTimer: Math.max(0, Number(monster.attackTimer) || 0),
         dayBurning: !!monster.dayBurning,
         burnTimer: Math.max(0, Number(monster.burnTimer) || 0),
         burnDuration: Math.max(0, Number(monster.burnDuration) || 0),
+        poisonDuration: Math.max(0, Number(monster.poisonDuration) || 0),
+        poisonDps: Math.max(0, Number(monster.poisonDps) || 0),
       })),
       projectiles: (world.projectiles ?? []).map((projectile) => ({
         id: projectile.id,
         type: projectile.type || "arrow",
+        monsterType: projectile.monsterType || "skeleton",
         x: projectile.x,
         y: projectile.y,
         vx: projectile.vx,
@@ -2240,6 +3404,8 @@
         maxLife: projectile.maxLife,
         damage: projectile.damage,
         radius: projectile.radius,
+        poisonDuration: Math.max(0, Number(projectile.poisonDuration) || 0),
+        poisonDps: Math.max(0, Number(projectile.poisonDps) || 0),
       })),
       animals: (world.animals ?? []).map((animal) => ({
         id: animal.id,
@@ -2366,12 +3532,31 @@
         attackCooldown: variant.attackCooldown,
         aggroRange: variant.aggroRange,
         rangedRange: variant.rangedRange,
-        attackTimer: 0,
+        attackTimer: Math.max(
+          0,
+          Number(monster.attackTimer ?? prev?.attackTimer) || 0
+        ),
         hitTimer: 0,
         wanderTimer: 0,
         dayBurning: !!monster.dayBurning || burnTimer > 0,
         burnTimer,
         burnDuration,
+        poisonDuration: Math.max(
+          0,
+          Number(
+            monster.poisonDuration
+            ?? prev?.poisonDuration
+            ?? variant.poisonDuration
+          ) || 0
+        ),
+        poisonDps: Math.max(
+          0,
+          Number(
+            monster.poisonDps
+            ?? prev?.poisonDps
+            ?? variant.poisonDps
+          ) || 0
+        ),
         dir: { x: 0, y: 0 },
         renderX: prev?.renderX ?? monster.x,
         renderY: prev?.renderY ?? monster.y,
@@ -2400,6 +3585,7 @@
       return {
         id: projectile.id,
         type: projectile.type || "arrow",
+        monsterType: projectile.monsterType || prev?.monsterType || "skeleton",
         x: projectile.x,
         y: projectile.y,
         vx: projectile.vx,
@@ -2408,6 +3594,8 @@
         maxLife: projectile.maxLife,
         damage: projectile.damage,
         radius: projectile.radius,
+        poisonDuration: Math.max(0, Number(projectile.poisonDuration) || 0),
+        poisonDps: Math.max(0, Number(projectile.poisonDps) || 0),
         renderX: prev?.renderX ?? projectile.x,
         renderY: prev?.renderY ?? projectile.y,
       };
@@ -2444,13 +3632,17 @@
         y: monster.y,
         hp: monster.hp,
         maxHp: monster.maxHp,
+        attackTimer: Math.max(0, Number(monster.attackTimer) || 0),
         dayBurning: !!monster.dayBurning,
         burnTimer: Math.max(0, Number(monster.burnTimer) || 0),
         burnDuration: Math.max(0, Number(monster.burnDuration) || 0),
+        poisonDuration: Math.max(0, Number(monster.poisonDuration) || 0),
+        poisonDps: Math.max(0, Number(monster.poisonDps) || 0),
       })),
       projectiles: (world.projectiles ?? []).map((projectile) => ({
         id: projectile.id,
         type: projectile.type || "arrow",
+        monsterType: projectile.monsterType || "skeleton",
         x: projectile.x,
         y: projectile.y,
         vx: projectile.vx,
@@ -2459,6 +3651,8 @@
         maxLife: projectile.maxLife,
         damage: projectile.damage,
         radius: projectile.radius,
+        poisonDuration: Math.max(0, Number(projectile.poisonDuration) || 0),
+        poisonDps: Math.max(0, Number(projectile.poisonDps) || 0),
       })),
       animals: (world.animals ?? []).map((animal) => ({
         id: animal.id,
@@ -2756,6 +3950,8 @@
           facing: { x: 1, y: 0 },
           maxHp: 100,
           hp: 100,
+          poisonTimer: 0,
+          poisonDps: 0,
           inHut: false,
           invincible: 0,
           attackTimer: 0,
@@ -2901,6 +4097,8 @@
       updateHealthUI();
       updateToolDisplay();
     }
+    clearPoisonStatus(state.player);
+    updateHealthUI();
     state.inventory = createEmptyInventory(INVENTORY_SIZE);
     updateAllSlotUI();
   }
@@ -3368,13 +4566,39 @@
   }
 
   function handleDamageMessage(message) {
-    if (typeof message.hp === "number") {
-      state.player.hp = message.hp;
-      playSfx("damage");
-      updateHealthUI();
-      if (state.player.hp <= 0) {
-        handlePlayerDeath();
-      }
+    if (typeof message.hp !== "number" || !state.player) return;
+    const prevHp = Number(state.player.hp);
+    state.player.hp = message.hp;
+    if (typeof message.maxHp === "number") {
+      state.player.maxHp = Math.max(1, Number(message.maxHp) || state.player.maxHp || 1);
+    }
+    if (Number(message.poisonDuration) > 0) {
+      applyPoisonStatus(message.poisonDuration, Number(message.poisonDps) || POISON_STATUS.defaultDps);
+    }
+    const damageAmount = Math.max(
+      0,
+      Number(message.damageAmount)
+      || (Number.isFinite(prevHp) ? (prevHp - state.player.hp) : 0)
+      || 0
+    );
+    const monsterType = typeof message.monsterType === "string" ? message.monsterType : null;
+    const attackKind = message.attackKind === "projectile"
+      ? "projectile"
+      : (message.attackKind === "melee" ? "melee" : null);
+    if (monsterType) {
+      const attackScalar = attackKind === "projectile" ? 0.9 : 1;
+      playSfx("monsterAttackHit", {
+        monsterType,
+        inCave: !!state.inCave,
+        intensity: (0.45 + Math.min(1, damageAmount / 14) * 0.55) * attackScalar,
+      });
+    }
+    playSfx("damage", {
+      intensity: 0.7 + Math.min(1, damageAmount / 16) * 0.6,
+    });
+    updateHealthUI();
+    if (state.player.hp <= 0) {
+      handlePlayerDeath();
     }
   }
 
@@ -3393,6 +4617,7 @@
     state.activeCave = null;
     state.world = state.surfaceWorld || state.world;
     state.player.attackTimer = 0;
+    clearPoisonStatus(state.player);
     interactPressed = false;
     attackPressed = false;
     keyState.clear();
@@ -3712,6 +4937,34 @@
     }
   }
 
+  function ensurePlayerStatusEffects(player) {
+    if (!player || typeof player !== "object") return;
+    if (!Number.isFinite(player.poisonTimer)) player.poisonTimer = 0;
+    if (!Number.isFinite(player.poisonDps)) player.poisonDps = 0;
+  }
+
+  function clearPoisonStatus(player = state.player) {
+    if (!player || typeof player !== "object") return;
+    player.poisonTimer = 0;
+    player.poisonDps = 0;
+  }
+
+  function applyPoisonStatus(duration, dps = POISON_STATUS.defaultDps) {
+    if (!state.player) return false;
+    ensurePlayerStatusEffects(state.player);
+    const clampedDuration = clamp(Number(duration) || 0, 0, POISON_STATUS.maxDuration);
+    if (clampedDuration <= 0) return false;
+    const clampedDps = clamp(
+      Number(dps) || POISON_STATUS.defaultDps,
+      POISON_STATUS.minDps,
+      POISON_STATUS.maxDps
+    );
+    state.player.poisonTimer = Math.max(state.player.poisonTimer, clampedDuration);
+    state.player.poisonDps = Math.max(state.player.poisonDps, clampedDps);
+    updateHealthUI();
+    return true;
+  }
+
   function getPickaxeTier(player = state.player) {
     ensurePlayerProgress(player);
     if (player?.unlocks?.apexPickaxe) return 6;
@@ -3793,11 +5046,55 @@
   }
 
   function pickBiome(rng) {
-    const roll = rng();
-    if (roll < 0.45) return 0;
-    if (roll < 0.7) return 1;
-    if (roll < 0.85) return 2;
-    return 3;
+    const roll = clamp(rng(), 0, 0.999999);
+    let acc = 0;
+    for (let i = 0; i < BIOME_PICK_WEIGHTS.length; i += 1) {
+      acc += BIOME_PICK_WEIGHTS[i];
+      if (roll < acc) return i;
+    }
+    return BIOME_PICK_WEIGHTS.length - 1;
+  }
+
+  function getSurfaceBiomeIdAtTile(world, tx, ty) {
+    if (!world || !Array.isArray(world.biomeGrid)) return 0;
+    if (!inBounds(tx, ty, world.size)) return 0;
+    const biomeId = world.biomeGrid[tileIndex(tx, ty, world.size)];
+    if (!Number.isInteger(biomeId) || biomeId < 0 || biomeId >= BIOMES.length) return 0;
+    return biomeId;
+  }
+
+  function getSurfaceBiomeAtTile(world, tx, ty) {
+    return BIOMES[getSurfaceBiomeIdAtTile(world, tx, ty)] || BIOMES[0];
+  }
+
+  function getSurfaceBiomeAtWorldPosition(world, x, y) {
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return BIOMES[0];
+    const tx = Math.floor(x / CONFIG.tileSize);
+    const ty = Math.floor(y / CONFIG.tileSize);
+    return getSurfaceBiomeAtTile(world, tx, ty);
+  }
+
+  function getSurfaceMoveSpeedScale(world, x, y) {
+    const biome = getSurfaceBiomeAtWorldPosition(world, x, y);
+    let scale = Number.isFinite(biome.moveSpeedScale) ? biome.moveSpeedScale : 1;
+    if (biome.key === "mangrove" && world && Array.isArray(world.beachGrid)) {
+      const tx = Math.floor(x / CONFIG.tileSize);
+      const ty = Math.floor(y / CONFIG.tileSize);
+      if (inBounds(tx, ty, world.size) && world.beachGrid[tileIndex(tx, ty, world.size)]) {
+        const coastScale = Number(biome.coastMoveSpeedScale);
+        if (Number.isFinite(coastScale)) {
+          scale = Math.min(scale, coastScale);
+        }
+      }
+    }
+    return clamp(scale, 0.4, 1.4);
+  }
+
+  function getSurfaceAnimalSpawnScale(world, tx, ty) {
+    const biome = getSurfaceBiomeAtTile(world, tx, ty);
+    const scale = Number(biome.animalSpawnScale);
+    if (!Number.isFinite(scale)) return 1;
+    return clamp(scale, 0, 1);
   }
 
   function getMonsterVariant(type) {
@@ -4319,9 +5616,16 @@
         const biome = BIOMES[biomeId] || BIOMES[0];
         const r = rand2d(x, y, seed + 42);
         if (r < biome.treeRate && isClear(x, y, 2)) {
-          addResource("tree", x, y, 4);
+          const treeHp = biome.key === "redwood" ? 6 : 4;
+          const treeDrops = biome.key === "redwood" ? 2 : 1;
+          addResource("tree", x, y, treeHp, treeDrops > 1 ? { dropQty: treeDrops } : null);
         } else if (r < biome.treeRate + biome.rockRate && isClear(x, y, 2)) {
-          addResource("rock", x, y, 4);
+          const coalRoll = rand2d(x, y, seed + 813);
+          if (biome.key === "ashlands" && coalRoll < (biome.coalRockChance || 0)) {
+            addResource("rock", x, y, 4, { dropOverride: "coal" });
+          } else {
+            addResource("rock", x, y, 4);
+          }
         } else if (r < biome.treeRate + biome.rockRate + (biome.grassRate || 0) && isClear(x, y, 1)) {
           addResource("grass", x, y, 1);
         }
@@ -4355,7 +5659,8 @@
       return false;
     }
 
-    for (let biomeId = 0; biomeId < BIOMES.length; biomeId += 1) {
+    const biomeStoneBiomeCount = Math.min(BIOMES.length, BIOME_STONES.length);
+    for (let biomeId = 0; biomeId < biomeStoneBiomeCount; biomeId += 1) {
       const targetCount = 1;
       while (biomeStoneCount(biomeId) < targetCount) {
         if (!placeBiomeStone(biomeId)) break;
@@ -5663,8 +6968,16 @@
 
   function updateHealthUI() {
     if (!state.player) return;
+    ensurePlayerStatusEffects(state.player);
     const pct = clamp(state.player.hp / state.player.maxHp, 0, 1);
     healthFill.style.width = `${Math.round(pct * 100)}%`;
+    const poisoned = state.player.poisonTimer > 0.01;
+    healthFill.style.background = poisoned
+      ? "linear-gradient(90deg, #42a84f, #98e46d)"
+      : "linear-gradient(90deg, #e04b4b, #f3b16b)";
+    healthFill.style.boxShadow = poisoned
+      ? "inset 0 0 7px rgba(205, 255, 190, 0.35)"
+      : "inset 0 0 6px rgba(255, 255, 255, 0.2)";
   }
 
   function updateTimeUI() {
@@ -6527,6 +7840,8 @@
       facing: { x: 1, y: 0 },
       maxHp: 100,
       hp: 100,
+      poisonTimer: 0,
+      poisonDps: 0,
       inHut: false,
       invincible: 0,
       attackTimer: 0,
@@ -6651,6 +7966,8 @@
         facing: { x: 1, y: 0 },
         maxHp: saved.player?.maxHp ?? 100,
         hp: saved.player?.hp ?? 100,
+        poisonTimer: 0,
+        poisonDps: 0,
         inHut: false,
         invincible: 0,
         attackTimer: 0,
@@ -6813,6 +8130,9 @@
 
   function getResourceDropId(resource) {
     if (!resource) return null;
+    if (typeof resource.dropOverride === "string" && ITEMS[resource.dropOverride]) {
+      return resource.dropOverride;
+    }
     if (resource.type === "tree") return "wood";
     if (resource.type === "rock") return "stone";
     if (resource.type === "grass") return "grass";
@@ -6824,6 +8144,12 @@
       return BIOME_STONES[resource.biomeId]?.id ?? "stone";
     }
     return null;
+  }
+
+  function getResourceDropQty(resource) {
+    if (!resource) return 1;
+    const qty = Math.floor(Number(resource.dropQty) || 1);
+    return clamp(qty, 1, 6);
   }
 
   function getResourceRequirement(resource) {
@@ -6929,7 +8255,10 @@
   function getResourceActionName(resource) {
     if (!resource) return "";
     if (resource.type === "tree") return "Chop tree";
-    if (resource.type === "rock") return "Mine rock";
+    if (resource.type === "rock") {
+      if (resource.dropOverride === "coal") return "Mine coal rock";
+      return "Mine rock";
+    }
     if (resource.type === "grass") return "Cut grass";
     if (resource.type === "ore") {
       const oreKind = resource.oreKind || "ore";
@@ -7571,11 +8900,10 @@
     if (!resource || resource.removed) return;
     const dropId = getResourceDropId(resource);
     if (!dropId) return;
+    const dropQty = getResourceDropQty(resource);
     stabilizeResourceHp(resource);
 
-    if (emitSfx) {
-      playSfx(resource.type === "tree" || resource.type === "grass" ? "chop" : "mine");
-    }
+    const prevHp = Number.isFinite(resource.hp) ? resource.hp : resource.maxHp;
     let nextDamage = Math.max(1, Math.floor(Number(damage) || 1));
     // Keep full nodes from being one-tapped due bad legacy HP data or malformed messages.
     if (resource.type !== "grass" && resource.hp === resource.maxHp) {
@@ -7583,11 +8911,27 @@
     }
     resource.hp -= nextDamage;
     resource.hitTimer = 0.18;
+    const didBreak = resource.hp <= 0;
     if (emitSfx) {
-      playSfx("hit");
+      const hpRatio = resource.maxHp > 0 ? clamp(resource.hp / resource.maxHp, 0, 1) : 1;
+      if (resource.type === "tree") {
+        if (didBreak) playSfx("treeBreak");
+        else if (hpRatio < 0.36 || prevHp <= 2) playSfx("treeHitLow");
+        else playSfx("treeHit");
+      } else if (resource.type === "grass") {
+        playSfx(didBreak ? "grassCut" : "grassRustle");
+      } else if (resource.type === "ore" || resource.dropOverride === "coal") {
+        playSfx(didBreak ? "oreBreak" : "oreHit");
+      } else if (resource.type === "rock" || resource.type === "biomeStone") {
+        playSfx(didBreak ? "stoneBreak" : "stoneHit", {
+          intensity: resource.type === "biomeStone" ? 1.15 : 1,
+        });
+      } else {
+        playSfx("hit");
+      }
     }
 
-    if (resource.hp <= 0) {
+    if (didBreak) {
       if (resource.type === "tree") {
         resource.hp = 0;
         resource.stage = "stump";
@@ -7615,9 +8959,9 @@
         }
       }
       if (awardItems) {
-        addItem(state.inventory, dropId, 1);
+        addItem(state.inventory, dropId, dropQty);
         updateAllSlotUI();
-        setPrompt(`Collected ${ITEMS[dropId].name}`, 1);
+        setPrompt(`Collected ${ITEMS[dropId].name} x${dropQty}`, 1);
       }
       markDirty();
       return;
@@ -7631,6 +8975,7 @@
 
     const dropId = getResourceDropId(resource);
     if (!dropId) return;
+    const dropQty = getResourceDropQty(resource);
 
     const gate = canHarvestResource(resource);
     if (!gate.ok) {
@@ -7638,7 +8983,7 @@
       return;
     }
 
-    if (!canAddItem(state.inventory, dropId, 1)) {
+    if (!canAddItem(state.inventory, dropId, dropQty)) {
       setPrompt("Inventory full", 1.2);
       return;
     }
@@ -9418,7 +10763,11 @@
 
     const uiLock = inventoryOpen || !!state.activeStation || !!state.activeChest || state.gameWon;
     const move = uiLock ? { x: 0, y: 0 } : getMoveVector();
-    const step = CONFIG.moveSpeed * dt * speedMult;
+    const surface = state.surfaceWorld || state.world;
+    const biomeSpeedScale = (!state.inCave && !state.player.inHut && surface)
+      ? getSurfaceMoveSpeedScale(surface, state.player.x, state.player.y)
+      : 1;
+    const step = CONFIG.moveSpeed * dt * speedMult * biomeSpeedScale;
 
     if (move.x !== 0 || move.y !== 0) {
       state.player.facing.x = move.x;
@@ -9478,7 +10827,39 @@
   }
 
   function updatePlayerEffects(dt) {
-    void dt;
+    if (!state.player) return;
+    ensurePlayerStatusEffects(state.player);
+    if (state.player.poisonTimer <= 0) {
+      if (state.player.poisonDps !== 0) {
+        state.player.poisonDps = 0;
+        updateHealthUI();
+      }
+      return;
+    }
+
+    const prevTimer = state.player.poisonTimer;
+    const dps = clamp(
+      Number(state.player.poisonDps) || POISON_STATUS.defaultDps,
+      POISON_STATUS.minDps,
+      POISON_STATUS.maxDps
+    );
+    state.player.poisonTimer = Math.max(0, state.player.poisonTimer - dt);
+    if (state.player.hp > POISON_STATUS.minHp) {
+      const tickDamage = dps * dt;
+      if (tickDamage > 0) {
+        state.player.hp = Math.max(POISON_STATUS.minHp, state.player.hp - tickDamage);
+      }
+    }
+    if (state.player.poisonTimer <= 0) {
+      state.player.poisonDps = 0;
+    }
+    if (
+      state.player.poisonTimer !== prevTimer
+      || state.player.poisonTimer <= 0
+      || state.player.hp <= POISON_STATUS.minHp
+    ) {
+      updateHealthUI();
+    }
   }
 
   function updatePlayerCombatTimers(dt) {
@@ -9584,12 +10965,21 @@
     }
   }
 
-  function damagePlayer(amount) {
+  function damagePlayer(amount, source = null) {
     if (!state.player) return;
     if (state.player.invincible > 0) return;
     state.player.hp = Math.max(0, state.player.hp - amount);
     state.player.invincible = 0.6;
-    playSfx("damage");
+    if (source?.monsterType) {
+      playSfx("monsterAttackHit", {
+        monsterType: source.monsterType,
+        inCave: !!state.inCave,
+        intensity: 0.45 + Math.min(1, Number(amount) / 14) * 0.55,
+      });
+    }
+    playSfx("damage", {
+      intensity: 0.7 + Math.min(1, Number(amount) / 16) * 0.6,
+    });
     updateHealthUI();
     if (state.player.hp <= 0) {
       handlePlayerDeath();
@@ -9656,6 +11046,7 @@
       state.world = surface;
       state.player.hp = state.player.maxHp;
       state.player.invincible = 1;
+      clearPoisonStatus(state.player);
       state.player.inHut = false;
       state.player.attackTimer = 0;
       state.activeHouse = null;
@@ -9674,6 +11065,7 @@
       state.player.hp = state.player.maxHp;
       state.player.inHut = false;
       state.player.invincible = 1;
+      clearPoisonStatus(state.player);
       state.activeHouse = null;
       state.housePlayer = null;
       state.inCave = false;
@@ -9748,6 +11140,8 @@
       dayBurning: !!options.dayBurning,
       burnTimer: Math.max(0, Number(options.burnTimer) || 0),
       burnDuration: Math.max(0, Number(options.burnDuration) || 0),
+      poisonDuration: Math.max(0, Number(options.poisonDuration ?? variant.poisonDuration) || 0),
+      poisonDps: Math.max(0, Number(options.poisonDps ?? variant.poisonDps) || 0),
       dir: { x: 0, y: 0 },
     };
     world.monsters.push(monster);
@@ -9828,6 +11222,8 @@
       const tx = Math.floor(Math.random() * world.size);
       const ty = Math.floor(Math.random() * world.size);
       if (!canSpawnAnimalAt(world, tx, ty)) continue;
+      const spawnScale = getSurfaceAnimalSpawnScale(world, tx, ty);
+      if (spawnScale <= 0 || Math.random() > spawnScale) continue;
       const tooClose = world.animals.some((animal) => {
         const ax = Math.floor(animal.x / CONFIG.tileSize);
         const ay = Math.floor(animal.y / CONFIG.tileSize);
@@ -9836,6 +11232,30 @@
       if (tooClose) continue;
       spawnAnimal(world, tx, ty, Math.random() < 0.4 ? "goat" : "boar");
     }
+  }
+
+  function buildSurfaceMonsterSpawnOptions(world, tx, ty, island = null) {
+    const biomeId = Number.isInteger(island?.biomeId)
+      ? island.biomeId
+      : getSurfaceBiomeIdAtTile(world, tx, ty);
+    const biome = BIOMES[biomeId] || BIOMES[0];
+    let type = pickMonsterType();
+
+    if (biome.key === "marsh" && state.isNight && Math.random() < (biome.poisonMonsterChance || 0.6)) {
+      type = "marsh_stalker";
+    }
+
+    const variant = getMonsterVariant(type);
+    const options = { type };
+    if (biome.key === "redwood" && state.isNight) {
+      const strength = Number(biome.nightMonsterStrength) || 1.25;
+      options.hp = Math.max(2, Math.round(variant.hp * strength));
+      options.damage = Math.max(1, Math.round(variant.damage * Math.min(1.45, strength * 0.95)));
+      options.speed = variant.speed * 1.08;
+      options.aggroRange = Math.round(variant.aggroRange * 1.12);
+      options.attackCooldown = Math.max(0.72, variant.attackCooldown * 0.9);
+    }
+    return options;
   }
 
   function canSpawnMonsterAt(world, tx, ty, isCave) {
@@ -9861,7 +11281,7 @@
       const tx = Math.floor((baseX + Math.cos(angle) * dist) / CONFIG.tileSize);
       const ty = Math.floor((baseY + Math.sin(angle) * dist) / CONFIG.tileSize);
       if (!canSpawnMonsterAt(world, tx, ty, false)) continue;
-      spawnMonster(world, tx, ty, { type: pickMonsterType() });
+      spawnMonster(world, tx, ty, buildSurfaceMonsterSpawnOptions(world, tx, ty, null));
       break;
     }
   }
@@ -9899,7 +11319,7 @@
         (player) => Math.hypot(player.x - wx, player.y - wy) < (MONSTER.spawnMinTiles * CONFIG.tileSize * 0.55)
       );
       if (tooClose) continue;
-      spawnMonster(world, tx, ty, { type: pickMonsterType() });
+      spawnMonster(world, tx, ty, buildSurfaceMonsterSpawnOptions(world, tx, ty, island));
       return true;
     }
     return false;
@@ -10124,29 +11544,49 @@
     }
   }
 
-  function damageRemotePlayer(player, amount) {
+  function damageRemotePlayer(player, amount, poison = null, meta = null) {
     if (!player) return;
     player.hp = Math.max(0, player.hp - amount);
     const conn = net.connections.get(player.id);
+    const poisonDuration = Math.max(0, Number(poison?.duration) || 0);
+    const poisonDps = Math.max(0, Number(poison?.dps) || 0);
+    const monsterType = typeof meta?.monsterType === "string" ? meta.monsterType : null;
+    const attackKind = meta?.attackKind === "projectile" ? "projectile" : (meta?.attackKind === "melee" ? "melee" : null);
     if (player.hp <= 0) {
       if (conn?.open) {
-        conn.send({
+        const message = {
           type: "damage",
           hp: 0,
           maxHp: player.maxHp,
-        });
+          damageAmount: Math.max(0, Number(amount) || 0),
+        };
+        if (poisonDuration > 0) {
+          message.poisonDuration = poisonDuration;
+          message.poisonDps = poisonDps;
+        }
+        if (monsterType) message.monsterType = monsterType;
+        if (attackKind) message.attackKind = attackKind;
+        conn.send(message);
       }
       respawnRemotePlayer(player);
     } else if (conn?.open) {
-      conn.send({
+      const message = {
         type: "damage",
         hp: player.hp,
         maxHp: player.maxHp,
-      });
+        damageAmount: Math.max(0, Number(amount) || 0),
+      };
+      if (poisonDuration > 0) {
+        message.poisonDuration = poisonDuration;
+        message.poisonDps = poisonDps;
+      }
+      if (monsterType) message.monsterType = monsterType;
+      if (attackKind) message.attackKind = attackKind;
+      conn.send(message);
     }
   }
 
-  function spawnMonsterArrow(world, monster, target, baseDamage) {
+  function spawnMonsterArrow(world, monster, target, baseDamage, poison = null) {
     if (!world || !monster || !target) return;
     world.projectiles = world.projectiles || [];
     world.nextProjectileId = world.nextProjectileId || 1;
@@ -10166,6 +11606,7 @@
     world.projectiles.push({
       id: world.nextProjectileId++,
       type: "arrow",
+      monsterType: monster.type || "crawler",
       x: monster.x + Math.cos(theta) * 14,
       y: monster.y + Math.sin(theta) * 14,
       vx,
@@ -10174,6 +11615,8 @@
       radius: SKELETON_ARROW.radius,
       life: 0,
       maxLife: travelTime + 0.3,
+      poisonDuration: Math.max(0, Number(poison?.duration) || 0),
+      poisonDps: Math.max(0, Number(poison?.dps) || 0),
     });
   }
 
@@ -10280,6 +11723,22 @@
     return { target, targetDist };
   }
 
+  function getMonsterPoisonPayload(monster) {
+    if (!monster) return null;
+    const variant = getMonsterVariant(monster.type);
+    const duration = Math.max(
+      0,
+      Number(monster.poisonDuration ?? variant.poisonDuration) || 0
+    );
+    if (duration <= 0) return null;
+    const dps = clamp(
+      Number(monster.poisonDps ?? variant.poisonDps ?? POISON_STATUS.defaultDps) || POISON_STATUS.defaultDps,
+      POISON_STATUS.minDps,
+      POISON_STATUS.maxDps
+    );
+    return { duration, dps };
+  }
+
   function updateMonsterProjectiles(world, dt, players, isSurface) {
     if (!world) return;
     if (!Array.isArray(world.projectiles) || world.projectiles.length === 0) return;
@@ -10292,8 +11751,17 @@
       }
       const prevX = projectile.x;
       const prevY = projectile.y;
+      const canHearProjectile = shouldPlayWorldSfx(world, prevX, prevY, CONFIG.tileSize * 12);
       projectile.life = (projectile.life || 0) + dt;
       if (projectile.life > (projectile.maxLife || SKELETON_ARROW.maxLife)) {
+        if (canHearProjectile) {
+          playSfx("monsterAttackMiss", {
+            monsterType: projectile.monsterType || "skeleton",
+            inCave: !isSurface,
+            intensity: 0.28,
+            distance: Math.hypot(prevX - state.player.x, prevY - state.player.y),
+          });
+        }
         world.projectiles.splice(i, 1);
         continue;
       }
@@ -10301,6 +11769,14 @@
       const nextX = prevX + (projectile.vx || 0) * dt;
       const nextY = prevY + (projectile.vy || 0) * dt;
       if (!isWalkableAtWorld(world, nextX, nextY)) {
+        if (canHearProjectile) {
+          playSfx("monsterAttackMiss", {
+            monsterType: projectile.monsterType || "skeleton",
+            inCave: !isSurface,
+            intensity: 0.34,
+            distance: Math.hypot(nextX - state.player.x, nextY - state.player.y),
+          });
+        }
         world.projectiles.splice(i, 1);
         continue;
       }
@@ -10313,10 +11789,25 @@
         const d = pointSegmentDistance(target.x, target.y, prevX, prevY, nextX, nextY);
         if (d > playerRadius + (projectile.radius || SKELETON_ARROW.radius)) continue;
         const amount = Math.max(1, Math.floor(projectile.damage || MONSTER.damage));
+        const poisonPayload = Number(projectile.poisonDuration) > 0
+          ? {
+              duration: Math.max(0, Number(projectile.poisonDuration) || 0),
+              dps: Math.max(0, Number(projectile.poisonDps) || 0),
+            }
+          : null;
         if (target.id === (net.playerId || "local")) {
-          damagePlayer(amount);
+          if (poisonPayload) {
+            applyPoisonStatus(poisonPayload.duration, poisonPayload.dps);
+          }
+          damagePlayer(amount, {
+            monsterType: projectile.monsterType || "skeleton",
+            attackKind: "projectile",
+          });
         } else if (net.isHost) {
-          damageRemotePlayer(target, amount);
+          damageRemotePlayer(target, amount, poisonPayload, {
+            monsterType: projectile.monsterType || "skeleton",
+            attackKind: "projectile",
+          });
         }
         world.projectiles.splice(i, 1);
         hit = true;
@@ -10466,6 +11957,7 @@
       }
 
       const { target, targetDist } = getNearestMonsterTarget(monster, players, isSurface);
+      const poisonPayload = getMonsterPoisonPayload(monster);
 
       if (isSurface && !state.isNight) {
         igniteMonsterForDay(monster);
@@ -10492,7 +11984,7 @@
 
           if (isRanged && dist > meleeRange * 1.05 && dist < rangedRange) {
             if (monster.attackTimer <= 0) {
-              spawnMonsterArrow(world, monster, target, hitDamage);
+              spawnMonsterArrow(world, monster, target, hitDamage, poisonPayload);
               monster.attackTimer = hitCooldown;
             }
 
@@ -10510,9 +12002,18 @@
 
             if (dist < meleeRange && monster.attackTimer <= 0) {
               if (target.id === (net.playerId || "local")) {
-                damagePlayer(hitDamage);
+                if (poisonPayload) {
+                  applyPoisonStatus(poisonPayload.duration, poisonPayload.dps);
+                }
+                damagePlayer(hitDamage, {
+                  monsterType: monster.type,
+                  attackKind: "melee",
+                });
               } else if (net.isHost) {
-                damageRemotePlayer(target, hitDamage);
+                damageRemotePlayer(target, hitDamage, poisonPayload, {
+                  monsterType: monster.type,
+                  attackKind: "melee",
+                });
               }
               monster.attackTimer = hitCooldown;
             }
@@ -10566,7 +12067,7 @@
 
         if (isRanged && dist > meleeRange * 1.05 && dist < rangedRange) {
           if (monster.attackTimer <= 0) {
-            spawnMonsterArrow(world, monster, target, hitDamage);
+            spawnMonsterArrow(world, monster, target, hitDamage, poisonPayload);
             monster.attackTimer = hitCooldown;
           }
 
@@ -10584,9 +12085,18 @@
 
           if (dist < meleeRange && monster.attackTimer <= 0) {
             if (target.id === (net.playerId || "local")) {
-              damagePlayer(hitDamage);
+              if (poisonPayload) {
+                applyPoisonStatus(poisonPayload.duration, poisonPayload.dps);
+              }
+              damagePlayer(hitDamage, {
+                monsterType: monster.type,
+                attackKind: "melee",
+              });
             } else if (net.isHost) {
-              damageRemotePlayer(target, hitDamage);
+              damageRemotePlayer(target, hitDamage, poisonPayload, {
+                monsterType: monster.type,
+                attackKind: "melee",
+              });
             }
             monster.attackTimer = hitCooldown;
           }
@@ -10650,6 +12160,8 @@
           const tx = Math.floor(Math.random() * world.size);
           const ty = Math.floor(Math.random() * world.size);
           if (!canSpawnAnimalAt(world, tx, ty)) continue;
+          const spawnScale = getSurfaceAnimalSpawnScale(world, tx, ty);
+          if (spawnScale <= 0 || Math.random() > spawnScale) continue;
           spawnAnimal(world, tx, ty, Math.random() < 0.4 ? "goat" : "boar");
           break;
         }
@@ -11459,11 +12971,12 @@
       clearRobotNavigation(robot);
       return;
     }
+    const dropQty = getResourceDropQty(target);
 
     stabilizeResourceHp(target);
     const nextDamage = Math.max(1, Math.floor(ROBOT_CONFIG.mineDamage));
     const willBreak = target.hp <= nextDamage;
-    if (willBreak && !canAddItem(structure.storage, dropId, 1)) {
+    if (willBreak && !canAddItem(structure.storage, dropId, dropQty)) {
       clearRobotTarget(false);
       robot.state = "returning";
       clearRobotNavigation(robot);
@@ -11473,7 +12986,7 @@
     const canHear = shouldPlayWorldSfx(world, robot.x, robot.y);
     applyHarvestToResource(world, target, nextDamage, false, canHear);
     if (willBreak) {
-      addItem(structure.storage, dropId, 1);
+      addItem(structure.storage, dropId, dropQty);
       clearRobotTarget(true);
       clearRobotNavigation(robot);
     }
@@ -12239,6 +13752,59 @@
         ctx.fillStyle = "rgba(186, 111, 73, 0.18)";
         ctx.fillRect(x + 10, y + 6, 3, 3);
       }
+    } else if (biome.key === "mangrove") {
+      if (detail < 0.34) {
+        ctx.strokeStyle = "rgba(46, 75, 58, 0.34)";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(x + 4, y + 19);
+        ctx.lineTo(x + 8, y + 12);
+        ctx.lineTo(x + 12, y + 20);
+        ctx.stroke();
+      }
+      if (detail > 0.74) {
+        ctx.fillStyle = "rgba(136, 171, 130, 0.14)";
+        ctx.fillRect(x + 3, y + 5, 11, 3);
+      }
+    } else if (biome.key === "redwood") {
+      if (detail < 0.28) {
+        ctx.fillStyle = "rgba(20, 58, 32, 0.24)";
+        ctx.fillRect(x + 6, y + 4, 3, 14);
+      }
+      if (detail > 0.72) {
+        ctx.strokeStyle = "rgba(112, 156, 97, 0.2)";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(x + 4, y + 10);
+        ctx.lineTo(x + 14, y + 9);
+        ctx.stroke();
+      }
+    } else if (biome.key === "ashlands") {
+      if (detail < 0.3) {
+        ctx.strokeStyle = "rgba(36, 36, 43, 0.36)";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(x + 5, y + 6);
+        ctx.lineTo(x + 10, y + 15);
+        ctx.lineTo(x + 14, y + 12);
+        ctx.stroke();
+      }
+      if (detail > 0.84) {
+        ctx.fillStyle = "rgba(212, 146, 103, 0.15)";
+        ctx.fillRect(x + 11, y + 6, 2, 2);
+      }
+    } else if (biome.key === "marsh") {
+      if (detail < 0.26) {
+        ctx.fillStyle = "rgba(28, 78, 63, 0.26)";
+        ctx.beginPath();
+        ctx.ellipse(x + 9, y + 13, 6, 3, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      if (detail > 0.73) {
+        ctx.fillStyle = "rgba(127, 182, 154, 0.16)";
+        ctx.fillRect(x + 5, y + 6, 2, 9);
+        ctx.fillRect(x + 9, y + 5, 2, 10);
+      }
     } else if (detail < 0.2) {
       ctx.fillStyle = "rgba(182, 215, 146, 0.15)";
       ctx.fillRect(x + 6, y + 8, 2, 8);
@@ -12423,7 +13989,24 @@
 
     const type = monster.type || "crawler";
     const baseColor = monster.color || "#2b2d3a";
-    if (type === "brute") {
+    if (type === "marsh_stalker") {
+      ctx.fillStyle = baseColor;
+      ctx.beginPath();
+      ctx.ellipse(screen.x, screen.y + 1, 11, 9, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = tintColor(baseColor, -0.4);
+      ctx.lineWidth = 1.4;
+      ctx.stroke();
+      ctx.fillStyle = tintColor(baseColor, 0.18);
+      ctx.beginPath();
+      ctx.arc(screen.x, screen.y - 6, 7, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#b8ff8e";
+      ctx.beginPath();
+      ctx.arc(screen.x - 3, screen.y - 2, 1.7, 0, Math.PI * 2);
+      ctx.arc(screen.x + 3, screen.y - 2, 1.7, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (type === "brute") {
       ctx.fillStyle = baseColor;
       ctx.beginPath();
       ctx.arc(screen.x, screen.y, 12, 0, Math.PI * 2);
@@ -13745,6 +15328,117 @@
             ctx.strokeStyle = tintColor(leafBase, -0.45);
             ctx.lineWidth = 1.2;
             ctx.stroke();
+          } else if (biome.key === "redwood") {
+            ctx.fillStyle = tintColor(TREE_TRUNK, -0.2);
+            ctx.fillRect(screen.x - 6, screen.y + 3, 12, 18);
+            ctx.fillStyle = tintColor(TREE_TRUNK, 0.12);
+            ctx.fillRect(screen.x - 5, screen.y + 3, 3, 18);
+            ctx.fillStyle = tintColor(leafBase, -0.25);
+            ctx.beginPath();
+            ctx.ellipse(screen.x, screen.y - 11, 9, 6, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = tintColor(leafBase, 0.2);
+            ctx.beginPath();
+            ctx.ellipse(screen.x, screen.y - 6, 13, 7.5, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = tintColor(leafBase, -0.45);
+            ctx.lineWidth = 1.4;
+            ctx.stroke();
+          } else if (biome.key === "mangrove") {
+            ctx.fillStyle = tintColor(TREE_TRUNK, -0.12);
+            ctx.fillRect(screen.x - 4, screen.y + 7, 8, 14);
+            ctx.strokeStyle = tintColor(TREE_TRUNK, -0.3);
+            ctx.lineWidth = 1.2;
+            ctx.beginPath();
+            ctx.moveTo(screen.x - 4, screen.y + 17);
+            ctx.lineTo(screen.x - 8, screen.y + 20);
+            ctx.moveTo(screen.x + 4, screen.y + 17);
+            ctx.lineTo(screen.x + 8, screen.y + 20);
+            ctx.stroke();
+            ctx.fillStyle = tintColor(leafBase, -0.2);
+            ctx.beginPath();
+            ctx.arc(screen.x - 6, screen.y - 3, 8, 0, Math.PI * 2);
+            ctx.arc(screen.x + 6, screen.y - 3, 8, 0, Math.PI * 2);
+            ctx.arc(screen.x, screen.y - 9, 8, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = tintColor(leafBase, 0.22);
+            ctx.beginPath();
+            ctx.arc(screen.x, screen.y - 2, 11, 0, Math.PI * 2);
+            ctx.fill();
+          } else if (biome.key === "temperate") {
+            ctx.fillStyle = leafDark;
+            ctx.beginPath();
+            ctx.arc(screen.x - 8, screen.y - 2, 10, 0, Math.PI * 2);
+            ctx.arc(screen.x + 9, screen.y - 1, 9, 0, Math.PI * 2);
+            ctx.arc(screen.x, screen.y - 10, 9, 0, Math.PI * 2);
+            ctx.fill();
+
+            const temperateGradient = ctx.createRadialGradient(
+              screen.x - 4,
+              screen.y - 6,
+              4,
+              screen.x,
+              screen.y - 2,
+              17
+            );
+            temperateGradient.addColorStop(0, leafLight);
+            temperateGradient.addColorStop(1, leafMid);
+            ctx.beginPath();
+            ctx.fillStyle = temperateGradient;
+            ctx.arc(screen.x, screen.y - 2, 15, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = tintColor(leafBase, -0.45);
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+
+            ctx.fillStyle = "rgba(255,255,255,0.15)";
+            ctx.beginPath();
+            ctx.arc(screen.x - 4, screen.y - 7, 5, 0, Math.PI * 2);
+            ctx.fill();
+          } else if (biome.key === "ashlands") {
+            ctx.fillStyle = tintColor(TREE_TRUNK, -0.34);
+            ctx.fillRect(screen.x - 4, screen.y + 6, 8, 15);
+            ctx.strokeStyle = tintColor(TREE_TRUNK, -0.5);
+            ctx.lineWidth = 1.1;
+            ctx.beginPath();
+            ctx.moveTo(screen.x - 3, screen.y + 10);
+            ctx.lineTo(screen.x - 8, screen.y + 5);
+            ctx.moveTo(screen.x + 2, screen.y + 9);
+            ctx.lineTo(screen.x + 7, screen.y + 3);
+            ctx.stroke();
+            ctx.fillStyle = tintColor(leafBase, -0.35);
+            ctx.beginPath();
+            ctx.arc(screen.x - 5, screen.y - 3, 6, 0, Math.PI * 2);
+            ctx.arc(screen.x + 5, screen.y - 4, 5, 0, Math.PI * 2);
+            ctx.arc(screen.x, screen.y - 8, 5, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = "rgba(222, 154, 110, 0.2)";
+            ctx.beginPath();
+            ctx.arc(screen.x + 2, screen.y - 6, 3, 0, Math.PI * 2);
+            ctx.fill();
+          } else if (biome.key === "marsh") {
+            ctx.fillStyle = tintColor(TREE_TRUNK, -0.06);
+            ctx.fillRect(screen.x - 5, screen.y + 7, 10, 14);
+            ctx.fillStyle = tintColor(TREE_TRUNK, -0.28);
+            ctx.fillRect(screen.x - 7, screen.y + 17, 14, 3);
+            ctx.strokeStyle = "rgba(54, 95, 72, 0.75)";
+            ctx.lineWidth = 1.1;
+            ctx.beginPath();
+            ctx.moveTo(screen.x - 8, screen.y - 6);
+            ctx.quadraticCurveTo(screen.x - 12, screen.y + 1, screen.x - 9, screen.y + 7);
+            ctx.moveTo(screen.x + 7, screen.y - 5);
+            ctx.quadraticCurveTo(screen.x + 12, screen.y + 2, screen.x + 9, screen.y + 8);
+            ctx.stroke();
+            ctx.fillStyle = tintColor(leafBase, -0.2);
+            ctx.beginPath();
+            ctx.ellipse(screen.x - 7, screen.y - 4, 8, 6, 0, 0, Math.PI * 2);
+            ctx.ellipse(screen.x + 7, screen.y - 4, 8, 6, 0, 0, Math.PI * 2);
+            ctx.ellipse(screen.x, screen.y - 10, 9, 7, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = tintColor(leafBase, 0.18);
+            ctx.beginPath();
+            ctx.ellipse(screen.x, screen.y - 2, 12, 8, 0, 0, Math.PI * 2);
+            ctx.fill();
           } else {
             ctx.fillStyle = leafDark;
             ctx.beginPath();
@@ -13778,20 +15472,142 @@
           }
         }
       } else if (res.type === "grass") {
-        ctx.strokeStyle = tintColor(biome.tree, 0.3);
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(screen.x - 6, screen.y + 10);
-        ctx.lineTo(screen.x - 2, screen.y - 2);
-        ctx.moveTo(screen.x, screen.y + 11);
-        ctx.lineTo(screen.x + 1, screen.y - 6);
-        ctx.moveTo(screen.x + 6, screen.y + 10);
-        ctx.lineTo(screen.x + 3, screen.y - 3);
-        ctx.stroke();
-        ctx.fillStyle = "rgba(220,255,232,0.2)";
-        ctx.beginPath();
-        ctx.arc(screen.x + 1, screen.y + 2, 4, 0, Math.PI * 2);
-        ctx.fill();
+        const grassColor = biome.grassColor || tintColor(biome.tree, 0.25);
+        if (biome.key === "temperate") {
+          ctx.strokeStyle = tintColor(grassColor, -0.12);
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.moveTo(screen.x - 6, screen.y + 10);
+          ctx.lineTo(screen.x - 2, screen.y - 2);
+          ctx.moveTo(screen.x, screen.y + 11);
+          ctx.lineTo(screen.x + 1, screen.y - 6);
+          ctx.moveTo(screen.x + 6, screen.y + 10);
+          ctx.lineTo(screen.x + 3, screen.y - 3);
+          ctx.stroke();
+          ctx.fillStyle = "rgba(220,255,232,0.2)";
+          ctx.beginPath();
+          ctx.arc(screen.x + 1, screen.y + 2, 4, 0, Math.PI * 2);
+          ctx.fill();
+        } else if (biome.key === "jungle") {
+          ctx.strokeStyle = tintColor(grassColor, -0.2);
+          ctx.lineWidth = 2.4;
+          ctx.beginPath();
+          ctx.moveTo(screen.x - 7, screen.y + 10);
+          ctx.quadraticCurveTo(screen.x - 5, screen.y + 2, screen.x - 1, screen.y - 6);
+          ctx.moveTo(screen.x + 7, screen.y + 10);
+          ctx.quadraticCurveTo(screen.x + 5, screen.y + 2, screen.x + 1, screen.y - 7);
+          ctx.moveTo(screen.x - 1, screen.y + 11);
+          ctx.lineTo(screen.x + 1, screen.y - 8);
+          ctx.stroke();
+          ctx.fillStyle = tintColor(grassColor, 0.28);
+          ctx.beginPath();
+          ctx.ellipse(screen.x - 4, screen.y + 2, 4, 7, -0.3, 0, Math.PI * 2);
+          ctx.ellipse(screen.x + 4, screen.y + 2, 4, 7, 0.3, 0, Math.PI * 2);
+          ctx.fill();
+        } else if (biome.key === "snow") {
+          ctx.strokeStyle = tintColor(grassColor, -0.05);
+          ctx.lineWidth = 1.8;
+          ctx.beginPath();
+          ctx.moveTo(screen.x - 5, screen.y + 10);
+          ctx.lineTo(screen.x - 3, screen.y + 1);
+          ctx.moveTo(screen.x, screen.y + 10);
+          ctx.lineTo(screen.x, screen.y - 1);
+          ctx.moveTo(screen.x + 5, screen.y + 10);
+          ctx.lineTo(screen.x + 3, screen.y + 1);
+          ctx.stroke();
+          ctx.fillStyle = "rgba(240, 250, 255, 0.5)";
+          ctx.beginPath();
+          ctx.arc(screen.x - 1, screen.y + 2, 3, 0, Math.PI * 2);
+          ctx.fill();
+        } else if (biome.key === "volcanic") {
+          ctx.strokeStyle = tintColor(grassColor, -0.28);
+          ctx.lineWidth = 1.9;
+          ctx.beginPath();
+          ctx.moveTo(screen.x - 5, screen.y + 10);
+          ctx.lineTo(screen.x - 3, screen.y + 2);
+          ctx.moveTo(screen.x + 1, screen.y + 10);
+          ctx.lineTo(screen.x + 1, screen.y + 1);
+          ctx.moveTo(screen.x + 6, screen.y + 10);
+          ctx.lineTo(screen.x + 4, screen.y + 3);
+          ctx.stroke();
+          ctx.fillStyle = "rgba(220, 120, 86, 0.16)";
+          ctx.fillRect(screen.x - 2, screen.y + 5, 2, 2);
+          ctx.fillRect(screen.x + 3, screen.y + 4, 2, 2);
+        } else if (biome.key === "mangrove") {
+          ctx.strokeStyle = tintColor(grassColor, -0.18);
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.moveTo(screen.x - 7, screen.y + 10);
+          ctx.quadraticCurveTo(screen.x - 8, screen.y + 2, screen.x - 4, screen.y - 3);
+          ctx.moveTo(screen.x - 1, screen.y + 11);
+          ctx.quadraticCurveTo(screen.x - 1, screen.y + 2, screen.x + 1, screen.y - 4);
+          ctx.moveTo(screen.x + 6, screen.y + 10);
+          ctx.quadraticCurveTo(screen.x + 8, screen.y + 1, screen.x + 4, screen.y - 3);
+          ctx.stroke();
+          ctx.fillStyle = "rgba(176, 146, 102, 0.24)";
+          ctx.beginPath();
+          ctx.ellipse(screen.x, screen.y + 9, 7, 2.2, 0, 0, Math.PI * 2);
+          ctx.fill();
+        } else if (biome.key === "redwood") {
+          ctx.strokeStyle = tintColor(grassColor, -0.2);
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.moveTo(screen.x - 6, screen.y + 10);
+          ctx.lineTo(screen.x - 4, screen.y + 2);
+          ctx.moveTo(screen.x - 2, screen.y + 10);
+          ctx.lineTo(screen.x - 1, screen.y - 1);
+          ctx.moveTo(screen.x + 2, screen.y + 10);
+          ctx.lineTo(screen.x + 3, screen.y - 2);
+          ctx.moveTo(screen.x + 6, screen.y + 10);
+          ctx.lineTo(screen.x + 5, screen.y + 2);
+          ctx.stroke();
+          ctx.fillStyle = tintColor(grassColor, 0.22);
+          ctx.beginPath();
+          ctx.moveTo(screen.x - 6, screen.y + 8);
+          ctx.lineTo(screen.x, screen.y + 3);
+          ctx.lineTo(screen.x + 6, screen.y + 8);
+          ctx.closePath();
+          ctx.fill();
+        } else if (biome.key === "ashlands") {
+          ctx.strokeStyle = tintColor(grassColor, -0.35);
+          ctx.lineWidth = 1.6;
+          ctx.beginPath();
+          ctx.moveTo(screen.x - 4, screen.y + 10);
+          ctx.lineTo(screen.x - 3, screen.y + 3);
+          ctx.moveTo(screen.x, screen.y + 10);
+          ctx.lineTo(screen.x + 1, screen.y + 1);
+          ctx.moveTo(screen.x + 4, screen.y + 10);
+          ctx.lineTo(screen.x + 3, screen.y + 4);
+          ctx.stroke();
+          ctx.fillStyle = "rgba(208, 206, 202, 0.2)";
+          ctx.fillRect(screen.x - 5, screen.y + 8, 10, 2);
+        } else if (biome.key === "marsh") {
+          ctx.strokeStyle = tintColor(grassColor, -0.2);
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.moveTo(screen.x - 6, screen.y + 10);
+          ctx.quadraticCurveTo(screen.x - 5, screen.y + 2, screen.x - 2, screen.y - 6);
+          ctx.moveTo(screen.x - 1, screen.y + 11);
+          ctx.quadraticCurveTo(screen.x, screen.y + 2, screen.x + 1, screen.y - 7);
+          ctx.moveTo(screen.x + 5, screen.y + 10);
+          ctx.quadraticCurveTo(screen.x + 5, screen.y + 2, screen.x + 3, screen.y - 5);
+          ctx.stroke();
+          ctx.fillStyle = "rgba(143, 211, 174, 0.2)";
+          ctx.beginPath();
+          ctx.ellipse(screen.x + 1, screen.y + 5, 5, 2.5, 0, 0, Math.PI * 2);
+          ctx.fill();
+        } else {
+          ctx.strokeStyle = tintColor(grassColor, -0.15);
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.moveTo(screen.x - 6, screen.y + 10);
+          ctx.lineTo(screen.x - 2, screen.y - 2);
+          ctx.moveTo(screen.x, screen.y + 11);
+          ctx.lineTo(screen.x + 1, screen.y - 6);
+          ctx.moveTo(screen.x + 6, screen.y + 10);
+          ctx.lineTo(screen.x + 3, screen.y - 3);
+          ctx.stroke();
+        }
       } else if (res.type === "biomeStone") {
         const color = biome.stoneColor ?? "#c9c3b0";
         ctx.fillStyle = tintColor(color, 0.05);
@@ -13823,7 +15639,7 @@
             : "#6f6f78"
           : res.type === "ore"
             ? oreColor
-            : biome.rock;
+            : (res.dropOverride === "coal" ? "#3b4049" : biome.rock);
         ctx.fillStyle = color;
         ctx.arc(screen.x, screen.y, 12, 0, Math.PI * 2);
         ctx.fill();
