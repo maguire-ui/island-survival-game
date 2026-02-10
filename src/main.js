@@ -1177,6 +1177,7 @@
     maxSize: 238,
     screenScale: 0.23,
   });
+  const DEBUG_WILD_ROBOT_TOGGLE_HEIGHT = 24;
   const ROBOT_STORAGE_SIZE = CHEST_SIZE;
   const ROBOT_MODE = Object.freeze({
     trees: "trees",
@@ -1282,6 +1283,7 @@
     debugMoses: false,
     debugInfiniteResources: SETTINGS_DEFAULTS.debugInfiniteResources,
     debugWorldMapVisible: false,
+    debugShowAbandonedRobot: false,
     debugSpeedMultiplier: SETTINGS_DEFAULTS.debugSpeedMultiplier,
     debugWorldSpeedMultiplier: SETTINGS_DEFAULTS.debugWorldSpeedMultiplier,
   };
@@ -1597,6 +1599,7 @@
       state.debugMoses = false;
       state.debugInfiniteResources = false;
       state.debugWorldMapVisible = false;
+      state.debugShowAbandonedRobot = false;
       state.debugSpeedMultiplier = 1;
       state.debugWorldSpeedMultiplier = 1;
       if (buildMenu && !buildMenu.classList.contains("hidden")) {
@@ -8107,6 +8110,7 @@
         homeTy: ty,
         x: (tx + 0.5) * CONFIG.tileSize,
         y: (ty + 0.5) * CONFIG.tileSize,
+        discovered: true,
         mode: null,
         manualStop: false,
         state: "idle",
@@ -8136,6 +8140,11 @@
     if (!Number.isFinite(robot.y)) robot.y = (robot.homeTy + 0.5) * CONFIG.tileSize;
     if (!Number.isFinite(robot.renderX)) robot.renderX = robot.x;
     if (!Number.isFinite(robot.renderY)) robot.renderY = robot.y;
+    if (typeof robot.discovered !== "boolean") {
+      robot.discovered = !structure.meta?.wildSpawn;
+    } else {
+      robot.discovered = !!robot.discovered;
+    }
     robot.mode = normalizeRobotMode(robot.mode);
     robot.manualStop = !!robot.manualStop;
     if (typeof robot.state !== "string") robot.state = "idle";
@@ -8148,6 +8157,15 @@
     if (!Number.isInteger(robot.targetResourceId)) robot.targetResourceId = null;
     structure.storage = sanitizeInventorySlots(structure.storage, ROBOT_STORAGE_SIZE);
     return robot;
+  }
+
+  function setRobotDiscovered(structure, discovered = true) {
+    const robot = ensureRobotMeta(structure);
+    if (!robot) return false;
+    const nextValue = !!discovered;
+    if (robot.discovered === nextValue) return false;
+    robot.discovered = nextValue;
+    return true;
   }
 
   function getRobotPosition(structure) {
@@ -11983,6 +12001,25 @@
       state.debugWorldMapVisible
         ? "World mini-map enabled"
         : "World mini-map disabled",
+      1.2
+    );
+  }
+
+  function toggleDebugAbandonedRobotMarker() {
+    if (!state.debugUnlocked) {
+      setPrompt("Debug is locked. Open Settings to unlock.", 1.2);
+      return;
+    }
+    if (!hasWildSpawnRobot()) {
+      state.debugShowAbandonedRobot = false;
+      setPrompt("No abandoned robot in this world.", 1.4);
+      return;
+    }
+    state.debugShowAbandonedRobot = !state.debugShowAbandonedRobot;
+    setPrompt(
+      state.debugShowAbandonedRobot
+        ? "Abandoned robot marker enabled"
+        : "Abandoned robot marker disabled",
       1.2
     );
   }
@@ -16518,26 +16555,80 @@
     ctx.restore();
   }
 
-  function drawDebugWorldMiniMapOverlay() {
-    if (!state.debugUnlocked || !state.debugWorldMapVisible) return;
+  function getDebugWorldMiniMapLayout() {
     const world = state.surfaceWorld || state.world;
-    if (!world || !Array.isArray(world.tiles)) return;
+    if (!world || !Array.isArray(world.tiles)) return null;
     const worldPixelSize = world.size * CONFIG.tileSize;
-    if (!Number.isFinite(worldPixelSize) || worldPixelSize <= 0) return;
+    if (!Number.isFinite(worldPixelSize) || worldPixelSize <= 0) return null;
 
     const panelW = clamp(
       Math.floor(Math.min(viewWidth, viewHeight) * 0.38),
       186,
       320
     );
-    const panelH = panelW + 36;
+    const panelH = panelW + 36 + DEBUG_WILD_ROBOT_TOGGLE_HEIGHT;
     const panelX = viewWidth - panelW - 16;
     const panelY = 70;
     const mapX = panelX + 10;
     const mapY = panelY + 24;
     const mapW = panelW - 20;
-    const mapH = panelH - 34;
+    const mapH = panelH - 34 - DEBUG_WILD_ROBOT_TOGGLE_HEIGHT;
+    const toggleX = panelX + 10;
+    const toggleY = panelY + panelH - DEBUG_WILD_ROBOT_TOGGLE_HEIGHT - 6;
+    const toggleW = panelW - 20;
+    const toggleH = DEBUG_WILD_ROBOT_TOGGLE_HEIGHT;
+
+    return {
+      world,
+      worldPixelSize,
+      panelX,
+      panelY,
+      panelW,
+      panelH,
+      mapX,
+      mapY,
+      mapW,
+      mapH,
+      toggleX,
+      toggleY,
+      toggleW,
+      toggleH,
+    };
+  }
+
+  function drawDebugWorldMiniMapOverlay() {
+    if (!state.debugUnlocked || !state.debugWorldMapVisible) return;
+    const layout = getDebugWorldMiniMapLayout();
+    if (!layout) return;
+    const {
+      world,
+      worldPixelSize,
+      panelX,
+      panelY,
+      panelW,
+      panelH,
+      mapX,
+      mapY,
+      mapW,
+      mapH,
+      toggleX,
+      toggleY,
+      toggleW,
+      toggleH,
+    } = layout;
     const players = getDebugSurfacePlayerMarkers();
+
+    let wildRobotStructure = null;
+    if (Array.isArray(state.structures)) {
+      for (const structure of state.structures) {
+        if (!structure || structure.removed || structure.type !== "robot") continue;
+        if (structure.meta?.wildSpawn) {
+          wildRobotStructure = structure;
+          break;
+        }
+      }
+    }
+    const hasWildRobot = !!wildRobotStructure;
 
     ctx.save();
 
@@ -16618,6 +16709,39 @@
       }
     }
 
+    if (state.debugShowAbandonedRobot && wildRobotStructure) {
+      const robotCenter = getStructureCenterWorld(wildRobotStructure);
+      const rx = mapX + (robotCenter.x / worldPixelSize) * mapW;
+      const ry = mapY + (robotCenter.y / worldPixelSize) * mapH;
+      if (
+        Number.isFinite(rx)
+        && Number.isFinite(ry)
+        && rx >= mapX
+        && rx <= mapX + mapW
+        && ry >= mapY
+        && ry <= mapY + mapH
+      ) {
+        ctx.fillStyle = "rgba(0, 0, 0, 0.35)";
+        ctx.beginPath();
+        ctx.arc(rx, ry + 1.4, 5.0, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = "#f2e37a";
+        ctx.beginPath();
+        ctx.arc(rx, ry, 3.8, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = "rgba(255, 248, 210, 0.96)";
+        ctx.lineWidth = 1.6;
+        ctx.stroke();
+
+        ctx.strokeStyle = "rgba(120, 90, 40, 0.85)";
+        ctx.lineWidth = 1.1;
+        ctx.beginPath();
+        ctx.arc(rx, ry, 6.2, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    }
+
     ctx.font = "bold 12px Trebuchet MS";
     ctx.textAlign = "left";
     ctx.textBaseline = "middle";
@@ -16627,7 +16751,58 @@
     ctx.fillStyle = "rgba(189, 216, 235, 0.88)";
     ctx.fillText(`Players: ${players.length}`, panelX + panelW - 82, panelY + 13);
     if (world.seed) {
-      ctx.fillText(`Seed: ${world.seed}`, panelX + 10, panelY + panelH - 10);
+      const bottomTextY = panelY + panelH - toggleH - 10;
+      ctx.fillText(`Seed: ${world.seed}`, panelX + 10, bottomTextY);
+    }
+
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+
+    drawRoundedRect(ctx, toggleX, toggleY, toggleW, toggleH, 6);
+    const toggleGradient = ctx.createLinearGradient(toggleX, toggleY, toggleX, toggleY + toggleH);
+    toggleGradient.addColorStop(0, "rgba(12, 24, 36, 0.95)");
+    toggleGradient.addColorStop(1, "rgba(8, 16, 26, 0.96)");
+    ctx.fillStyle = toggleGradient;
+    ctx.fill();
+    ctx.strokeStyle = "rgba(140, 190, 230, 0.7)";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    const boxSize = 14;
+    const boxX = toggleX + 9;
+    const boxY = toggleY + (toggleH - boxSize) / 2;
+    const enabled = state.debugShowAbandonedRobot && hasWildRobot;
+
+    drawRoundedRect(ctx, boxX, boxY, boxSize, boxSize, 3);
+    ctx.fillStyle = enabled ? "rgba(118, 189, 250, 0.55)" : "rgba(10, 18, 28, 0.9)";
+    ctx.fill();
+    ctx.strokeStyle = enabled ? "rgba(188, 232, 255, 0.95)" : "rgba(120, 170, 210, 0.9)";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    if (enabled) {
+      ctx.strokeStyle = "rgba(12, 28, 44, 0.9)";
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.moveTo(boxX + 3, boxY + boxSize * 0.55);
+      ctx.lineTo(boxX + boxSize * 0.45, boxY + boxSize - 3.2);
+      ctx.lineTo(boxX + boxSize - 3, boxY + 3.4);
+      ctx.stroke();
+    }
+
+    const labelX = boxX + boxSize + 6;
+    const labelY = toggleY + toggleH * 0.5;
+    ctx.font = "10px Trebuchet MS";
+    ctx.fillStyle = hasWildRobot
+      ? "rgba(214, 236, 255, 0.96)"
+      : "rgba(150, 170, 190, 0.72)";
+    ctx.fillText("Show abandoned robot", labelX, labelY);
+
+    if (!hasWildRobot) {
+      ctx.font = "9px Trebuchet MS";
+      ctx.textAlign = "right";
+      ctx.fillStyle = "rgba(200, 160, 130, 0.86)";
+      ctx.fillText("No wild robot this seed", toggleX + toggleW - 6, labelY);
     }
 
     ctx.restore();
@@ -17648,11 +17823,29 @@
     return true;
   }
 
+  function handleDebugWorldMiniMapClick(event) {
+    if (!state.debugUnlocked || !state.debugWorldMapVisible) return false;
+    const layout = getDebugWorldMiniMapLayout();
+    if (!layout) return false;
+    const { toggleX, toggleY, toggleW, toggleH } = layout;
+    const x = event.clientX;
+    const y = event.clientY;
+    if (x < toggleX || x > toggleX + toggleW || y < toggleY || y > toggleY + toggleH) {
+      return false;
+    }
+    toggleDebugAbandonedRobotMarker();
+    return true;
+  }
+
   function handleCanvasDown(event) {
     ensureAudioContext();
     pointer.x = event.clientX;
     pointer.y = event.clientY;
     pointer.active = true;
+    if (handleDebugWorldMiniMapClick(event)) {
+      event.preventDefault();
+      return;
+    }
     const placement = getPlacementItem();
     if (placement) {
       attemptPlace();
