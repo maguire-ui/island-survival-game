@@ -7,7 +7,7 @@
     content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no, viewport-fit=cover"
   />
   <title>Island Survival Game</title>
-  <link rel="stylesheet" href="styles.css?v=20260210-13" />
+  <link rel="stylesheet" href="styles.css?v=20260210-18" />
 </head>
 <body>
   <canvas id="game"></canvas>
@@ -105,14 +105,14 @@
 
     <div id="stationMenu" class="panel hidden">
       <div id="stationTitle" class="panel-title">Station</div>
-      <div id="stationOptions" class="recipe-list"></div>
+      <div id="stationOptions" class="recipe-list panel-content"></div>
     </div>
 
     <div id="chestPanel" class="panel hidden">
       <div id="chestPanelTitle" class="panel-title">Chest</div>
       <div id="chestSlots" class="slot-grid"></div>
       <div id="chestPanelHint" class="panel-hint">Click items to quick-transfer between chest and inventory.</div>
-      <button id="destroyChest" class="action-btn">Destroy Chest</button>
+      <button id="destroyChest" class="action-btn danger-btn">Destroy Chest</button>
     </div>
 
     <div id="hotbar" class="slot-row"></div>
@@ -125,10 +125,12 @@
 
     <div id="debugPanel" class="panel hidden">
       <div class="panel-title">Debug Tools</div>
+      <div class="panel-section-title">Spawn & World</div>
       <button id="giveBeaconBtn" class="action-btn">Give Rescue Beacon</button>
       <button id="giveRobotBtn" class="action-btn">Give Robot</button>
       <button id="spawnCaveBtn" class="action-btn">Spawn Cave Here</button>
       <button id="spawnVillageBtn" class="action-btn">Spawn Village Here</button>
+      <div class="panel-section-title">Time & Simulation</div>
       <button id="forceDayBtn" class="action-btn">Set Day</button>
       <button id="forceNightBtn" class="action-btn">Set Night</button>
       <button id="mosesBtn" class="action-btn">Moses: Off</button>
@@ -168,22 +170,22 @@
         <button id="settingsTabBtn" class="tab-btn active" type="button">Settings</button>
         <button id="objectivesTabBtn" class="tab-btn" type="button">Objectives</button>
       </div>
-      <div id="settingsContent">
+      <div id="settingsContent" class="panel-content">
         <div class="settings-row">
           <span>Music Volume</span>
-          <span id="musicVolumeValue">35%</span>
+          <span id="musicVolumeValue">62%</span>
         </div>
-        <input id="musicVolume" class="settings-slider" type="range" min="0" max="100" step="1" value="35" />
+        <input id="musicVolume" class="settings-slider" type="range" min="0" max="100" step="1" value="62" />
         <div class="settings-row">
           <span>SFX Volume</span>
           <span id="sfxVolumeValue">65%</span>
         </div>
         <input id="sfxVolume" class="settings-slider" type="range" min="0" max="100" step="1" value="65" />
-        <button id="resetWorldBtn" class="action-btn">Reset World</button>
-        <button id="unlockDebugBtn" class="action-btn">Access Debug Tools</button>
+        <button id="resetWorldBtn" class="action-btn danger-btn">Reset World</button>
+        <button id="unlockDebugBtn" class="action-btn secondary-btn">Access Debug Tools</button>
         <div id="debugUnlockStatus" class="panel-hint">Debug tools locked</div>
       </div>
-      <div id="objectivesContent" class="hidden">
+      <div id="objectivesContent" class="panel-content hidden">
         <div id="objectiveGuide" class="objective-guide"></div>
       </div>
     </div>
@@ -211,6 +213,6 @@
   </div>
 
   <script src="https://unpkg.com/peerjs@1.5.5/dist/peerjs.min.js"></script>
-  <script src="src/main.js?v=20260210-33"></script>
+  <script src="src/main.js?v=20260210-46"></script>
 </body>
 </html>

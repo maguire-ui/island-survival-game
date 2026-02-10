@@ -159,6 +159,10 @@
       attackCooldown: 1.0,
       aggroRange: 210,
       rangedRange: 0,
+      drop: {
+        bone: { min: 1, max: 2, chance: 0.82 },
+        monster_flesh: { min: 1, max: 2, chance: 0.66 },
+      },
     },
     brute: {
       name: "Brute",
@@ -170,6 +174,10 @@
       attackCooldown: 1.25,
       aggroRange: 205,
       rangedRange: 0,
+      drop: {
+        bone: { min: 2, max: 4, chance: 0.95 },
+        monster_flesh: { min: 1, max: 2, chance: 0.86 },
+      },
     },
     skeleton: {
       name: "Skeleton",
@@ -181,6 +189,10 @@
       attackCooldown: 1.4,
       aggroRange: 260,
       rangedRange: 230,
+      drop: {
+        bone: { min: 2, max: 3, chance: 1 },
+        monster_flesh: { min: 1, max: 1, chance: 0.3 },
+      },
     },
     marsh_stalker: {
       name: "Marsh Stalker",
@@ -194,6 +206,10 @@
       rangedRange: 0,
       poisonDuration: 8.5,
       poisonDps: 1.35,
+      drop: {
+        bone: { min: 1, max: 2, chance: 0.78 },
+        monster_flesh: { min: 2, max: 3, chance: 0.9 },
+      },
     },
   };
 
@@ -260,6 +276,19 @@
     grass: 45,
   };
 
+  const DROP_DESPAWN = Object.freeze({
+    lifetime: 180,
+    warningStart: 30,
+    criticalStart: 5,
+  });
+
+  const BIOME_STONE_RESPAWN = Object.freeze({
+    min: 600,
+    max: 600,
+    retryDelay: 20,
+    minActivePerBiome: 1,
+  });
+
   const VILLAGER_CONFIG = Object.freeze({
     minPerVillage: 2,
     maxPerVillage: 8,
@@ -285,6 +314,7 @@
   const SAVE_KEY_PREFIX = "island_survival_seed_save_v1:";
   const ACTIVE_SEED_KEY = "island_survival_active_seed_v1";
   const SAVE_VERSION = 5;
+  const WORLD_LAYOUT_VERSION = "2026-02-layout-v2";
   const HOTBAR_SIZE = 4;
   const INVENTORY_SIZE = 8;
   const CHEST_SIZE = 8;
@@ -345,6 +375,8 @@
     raw_meat: { name: "Raw Meat", color: "#c96a64" },
     cooked_meat: { name: "Cooked Meat", color: "#d7a172" },
     hide: { name: "Hide", color: "#9f7d57" },
+    bone: { name: "Bone", color: "#d6d6c9" },
+    monster_flesh: { name: "Monster Flesh", color: "#9b4e59" },
     ...BIOME_STONE_ITEMS,
     bridge: { name: "Bridge", color: "#c7b37a", placeable: true, placeType: "bridge" },
     village_path: { name: "Path Block", color: "#b59b6a", placeable: true, placeType: "village_path" },
@@ -368,6 +400,8 @@
   };
 
   const ITEM_VISUALS = {
+    tree_resource: { symbol: "TREE", bg: "#2f7f4f", border: "#7ed19d", fg: "#ecffef" },
+    stop_icon: { symbol: "STOP", bg: "#7f2f37", border: "#ea8d8d", fg: "#ffecec" },
     wood: { symbol: "LOG", bg: "#8a5c35", border: "#b7845a", fg: "#ffe0bc" },
     stone: { symbol: "ROC", bg: "#656d7f", border: "#9da7be", fg: "#f2f5ff" },
     ore: { symbol: "ORE", bg: "#5c3f72", border: "#9f7bc0", fg: "#f4e8ff" },
@@ -387,6 +421,8 @@
     raw_meat: { symbol: "RAW", bg: "#8f403d", border: "#d47a75", fg: "#ffe1dd" },
     cooked_meat: { symbol: "FOOD", bg: "#9e5d3a", border: "#e0a77f", fg: "#fff0e2" },
     hide: { symbol: "HID", bg: "#7d603f", border: "#bc9a73", fg: "#f9e5c9" },
+    bone: { symbol: "BNE", bg: "#7c7a6f", border: "#d6d5c8", fg: "#f9f8ee" },
+    monster_flesh: { symbol: "FLS", bg: "#6e303a", border: "#c37787", fg: "#ffe5ea" },
     bridge: { symbol: "BRG", bg: "#8a7548", border: "#d2bb82", fg: "#fff3d8" },
     village_path: { symbol: "PTH", bg: "#726243", border: "#c6ab72", fg: "#fff3d7" },
     dock: { symbol: "DCK", bg: "#7c6a43", border: "#c3aa72", fg: "#fff2d2" },
@@ -465,11 +501,11 @@
 
   const SWORD_TIER_DATA = [
     { tier: 0, name: "No Sword", damage: 0 },
-    { tier: 1, name: "Wood Sword", damage: 1 },
-    { tier: 2, name: "Stone Sword", damage: 1 },
-    { tier: 3, name: "Iron Sword", damage: 2 },
-    { tier: 4, name: "Gold Sword", damage: 3 },
-    { tier: 5, name: "Diamond Sword", damage: 5 },
+    { tier: 1, name: "Crude Sword", damage: 1 },
+    { tier: 2, name: "Reinforced Edge", damage: 2 },
+    { tier: 3, name: "Serrated Edge", damage: 3 },
+    { tier: 4, name: "Weighted Blade", damage: 4 },
+    { tier: 5, name: "Blood-Hardened Blade", damage: 5 },
   ];
 
   const PLAYER_UNLOCK_DEFAULTS = Object.freeze({
@@ -529,7 +565,7 @@
       id: "village_path",
       name: "Path Block",
       description: "Build walkable roads to make player-made villages.",
-      cost: { wood: 2, stone: 2 },
+      cost: { wood: 2, stone: 2, stick: 1 },
       outputQty: 6,
     },
     {
@@ -566,7 +602,7 @@
       id: "campfire",
       name: "Campfire",
       description: "Permanent light source for nighttime safety and monster deterrence.",
-      cost: { wood: 6, stone: 4 },
+      cost: { wood: 6, stone: 4, stick: 2 },
     },
     {
       id: "medicine",
@@ -584,7 +620,7 @@
       id: "smelter",
       name: "Smelter",
       description: "Smelt iron/gold with coal and cook healing food.",
-      cost: { stone: 8, wood: 4 },
+      cost: { stone: 8, wood: 4, stick: 3 },
     },
     {
       id: "sawmill",
@@ -602,13 +638,13 @@
       id: "village_map",
       name: "Village Map",
       description: "Shows a tracked village zone and all active players.",
-      cost: { wayfinder_stone: 1, paper: 4, plank: 2 },
+      cost: { wayfinder_stone: 1, paper: 4, plank: 2, stick: 1 },
     },
     {
       id: "cave_map",
       name: "Cave Map",
       description: "Shows a tracked cave zone and all active players.",
-      cost: { wayfinder_stone: 1, paper: 5, plank: 3, stone: 4 },
+      cost: { wayfinder_stone: 1, paper: 5, plank: 3, stone: 4, stick: 2 },
     },
     {
       id: "beacon",
@@ -648,7 +684,7 @@
       id: "unlock_wood_pickaxe",
       name: "Wood Pickaxe",
       description: "First mining upgrade. Lets you mine surface stone.",
-      cost: { wood: 10 },
+      cost: { wood: 8, stick: 3 },
       icon: "wood",
       unlock: "pickaxe",
       track: "pickaxe",
@@ -658,7 +694,7 @@
       id: "unlock_stone_pickaxe",
       name: "Stone Pickaxe",
       description: "Lets you mine coal and iron ore.",
-      cost: { wood: 8, stone: 8 },
+      cost: { wood: 6, stone: 8, stick: 4 },
       icon: "stone",
       unlock: "orePickaxe",
       track: "pickaxe",
@@ -669,7 +705,7 @@
       id: "unlock_iron_pickaxe",
       name: "Iron Pickaxe",
       description: "Lets you mine gold ore and harvest faster.",
-      cost: { wood: 6, iron_ingot: 4, stone: 4 },
+      cost: { wood: 4, iron_ingot: 4, stone: 4, stick: 5 },
       icon: "iron_ingot",
       unlock: "relicPickaxe",
       track: "pickaxe",
@@ -711,9 +747,9 @@
     },
     {
       id: "unlock_wood_sword",
-      name: "Wood Sword",
-      description: "Unlocks basic melee damage versus monsters.",
-      cost: { wood: 8, plank: 2, stick: 2 },
+      name: "Crude Sword",
+      description: "Basic early weapon crafted from simple survival materials.",
+      cost: { wood: 4, stick: 2 },
       icon: "wood",
       unlock: "sword",
       track: "sword",
@@ -721,10 +757,10 @@
     },
     {
       id: "unlock_stone_sword",
-      name: "Stone Sword",
-      description: "Upgrades melee damage.",
-      cost: { stone: 8, plank: 2, stick: 3 },
-      icon: "stone",
+      name: "Reinforced Edge",
+      description: "Bone reinforcement for a stronger cutting edge.",
+      cost: { bone: 4, stick: 2 },
+      icon: "bone",
       unlock: "sword2",
       track: "sword",
       tier: 2,
@@ -732,10 +768,10 @@
     },
     {
       id: "unlock_iron_sword",
-      name: "Iron Sword",
-      description: "Strong all-purpose combat weapon.",
-      cost: { iron_ingot: 4, plank: 4, stick: 4 },
-      icon: "iron_ingot",
+      name: "Serrated Edge",
+      description: "Adds flesh serrations to increase sustained damage.",
+      cost: { monster_flesh: 5, bone: 2, stick: 3 },
+      icon: "monster_flesh",
       unlock: "sword3",
       track: "sword",
       tier: 3,
@@ -743,10 +779,10 @@
     },
     {
       id: "unlock_gold_sword",
-      name: "Gold Sword",
-      description: "High burst damage for tougher nights.",
-      cost: { gold_ingot: 4, iron_ingot: 2, plank: 4, stick: 5 },
-      icon: "gold_ingot",
+      name: "Weighted Blade",
+      description: "Weights and balances the blade for harder hits.",
+      cost: { bone: 8, monster_flesh: 4, stone: 6, stick: 4 },
+      icon: "stone",
       unlock: "sword4",
       track: "sword",
       tier: 4,
@@ -754,10 +790,10 @@
     },
     {
       id: "unlock_diamond_sword",
-      name: "Diamond Sword",
-      description: "Maximum melee damage tier.",
-      cost: { diamond: 4, gold_ingot: 3, plank: 5, stick: 6 },
-      icon: "diamond",
+      name: "Blood-Hardened Blade",
+      description: "Final sword upgrade forged with monster trophies.",
+      cost: { monster_flesh: 10, bone: 6, iron_ingot: 2, stick: 5 },
+      icon: "monster_flesh",
       unlock: "sword5",
       track: "sword",
       tier: 5,
@@ -929,8 +965,12 @@
       treeRate: 0.11,
       rockRate: 0.03,
       grassRate: 0.028,
+      grassDropQty: 2,
       oreRate: 0.01,
       stoneRate: 0.00055,
+      treeMaxHp: 5,
+      treeDropQty: 2,
+      treeVisualScale: 1.12,
     },
     {
       key: "snow",
@@ -974,6 +1014,7 @@
       treeRate: 0.128,
       rockRate: 0.025,
       grassRate: 0.044,
+      grassDropQty: 2,
       oreRate: 0.008,
       stoneRate: 0.00045,
       moveSpeedScale: 0.84,
@@ -994,6 +1035,9 @@
       grassRate: 0.019,
       oreRate: 0.009,
       stoneRate: 0.00045,
+      treeMaxHp: 7,
+      treeDropQty: 3,
+      treeVisualScale: 1.34,
       animalSpawnScale: 0.95,
       nightMonsterStrength: 1.3,
     },
@@ -1026,6 +1070,7 @@
       treeRate: 0.082,
       rockRate: 0.022,
       grassRate: 0.055,
+      grassDropQty: 3,
       oreRate: 0.009,
       stoneRate: 0.00045,
       moveSpeedScale: 0.92,
@@ -1070,12 +1115,12 @@
   };
 
   const DRIFTWOOD_THEME = Object.freeze({
-    bpm: 80,
+    bpm: 90,
     beatsPerBar: 4,
-    introDuration: 20,
+    introDuration: 16,
     mainLoopBars: 32,
-    variationFadeStart: 180,
-    variationFadeDuration: 80,
+    variationFadeStart: 150,
+    variationFadeDuration: 72,
   });
 
   // Am - F - C - G - Am - F - G - Em
@@ -1090,12 +1135,36 @@
     [164.81, 196.0, 246.94],
   ];
 
-  const DRIFTWOOD_MELODY_PATTERN = [2, 1, 0, 1, 2, 4, 2, 1, 2, 1, 0, 1, 2, 3, 4, 2];
-  const DRIFTWOOD_COUNTER_PATTERN = [3, 4, 2, 5, 4, 3, 5, 4];
+  const DRIFTWOOD_MELODY_PATTERN = [2, 3, 4, 2, 1, 2, 4, 5, 2, 3, 4, 2, 1, 2, 3, 1];
+  const DRIFTWOOD_COUNTER_PATTERN = [4, 5, 3, 5, 4, 2, 5, 3];
+  const DRIFTWOOD_BASS_PATTERN = [0.82, 0.58, 0.74, 0.62];
+  const DRIFTWOOD_CLICK_PATTERN = [0.3, 0.17, 0.24, 0.18];
+  const DRIFTWOOD_SWING_PATTERN = [0.012, 0.048, 0.016, 0.044];
+  const MENU_THEME = Object.freeze({
+    bpm: 108,
+    beatsPerBar: 4,
+    chords: [
+      [261.63, 329.63, 392.0], // C
+      [293.66, 369.99, 440.0], // Dm
+      [349.23, 440.0, 523.25], // F
+      [329.63, 415.3, 493.88], // Em
+    ],
+    arpPattern: [0, 1, 2, 1, 0, 2, 1, 3],
+  });
+  const MENU_THEME_GAIN = 1.45;
+  const MUSIC_GAIN_BOOST = 2.35;
+  const MONSTER_AUDIO_LIMIT = Object.freeze({
+    perFrameMax: 4,
+    idleCooldownMs: 90,
+    moveCooldownMs: 70,
+    windupCooldownMs: 110,
+    aggroCooldownMs: 180,
+    distantCooldownMs: 220,
+  });
   const SETTINGS_KEY = "island_survival_settings_v1";
   const DEBUG_PASSCODE = "123";
   const SETTINGS_DEFAULTS = Object.freeze({
-    musicVolume: 0.32,
+    musicVolume: 0.72,
     sfxVolume: 0.62,
     debugUnlocked: false,
     debugInfiniteResources: false,
@@ -1243,6 +1312,7 @@
   const audio = {
     ctx: null,
     master: null,
+    limiter: null,
     sfxBus: null,
     musicBus: null,
     musicGain: null,
@@ -1260,6 +1330,11 @@
     variationGain: null,
     lfo: null,
     lfoGain: null,
+    caveAmbienceSource: null,
+    caveAmbienceGain: null,
+    caveAmbienceFilter: null,
+    caveAmbienceLfo: null,
+    caveAmbienceLfoGain: null,
     noiseBuffer: null,
     chordIndex: 0,
     chordTimer: 0,
@@ -1276,6 +1351,11 @@
     caveWindTimer: 0,
     distantMonsterTimer: 0,
     dayWindTimer: 0,
+    menuActive: false,
+    menuBeatTimer: 0,
+    menuBeatIndex: 0,
+    menuPadTimer: 0,
+    sfxLimiter: new Map(),
     enabled: false,
   };
 
@@ -1469,7 +1549,11 @@
     const music = clampVolume(state.musicVolume, SETTINGS_DEFAULTS.musicVolume);
     const sfx = clampVolume(state.sfxVolume, SETTINGS_DEFAULTS.sfxVolume);
     if (audio.musicBus) {
-      audio.musicBus.gain.setTargetAtTime(music, audio.ctx?.currentTime || 0, 0.04);
+      audio.musicBus.gain.setTargetAtTime(
+        clamp(music * MUSIC_GAIN_BOOST, 0, 2.2),
+        audio.ctx?.currentTime || 0,
+        0.04
+      );
     }
     if (audio.sfxBus) {
       audio.sfxBus.gain.setTargetAtTime(sfx, audio.ctx?.currentTime || 0, 0.04);
@@ -1565,14 +1649,22 @@
     if (!audio.ctx) {
       const ctx = new AudioCtor();
       const master = ctx.createGain();
-      master.gain.value = 0.95;
-      master.connect(ctx.destination);
+      master.gain.value = 0.88;
+      const limiter = ctx.createDynamicsCompressor();
+      limiter.threshold.setValueAtTime(-18, ctx.currentTime);
+      limiter.knee.setValueAtTime(18, ctx.currentTime);
+      limiter.ratio.setValueAtTime(8, ctx.currentTime);
+      limiter.attack.setValueAtTime(0.003, ctx.currentTime);
+      limiter.release.setValueAtTime(0.18, ctx.currentTime);
+      master.connect(limiter);
+      limiter.connect(ctx.destination);
       const musicBus = ctx.createGain();
       const sfxBus = ctx.createGain();
       musicBus.connect(master);
       sfxBus.connect(master);
       audio.ctx = ctx;
       audio.master = master;
+      audio.limiter = limiter;
       audio.musicBus = musicBus;
       audio.sfxBus = sfxBus;
       audio.enabled = true;
@@ -1631,7 +1723,91 @@
     return tones[index];
   }
 
+  function stopMenuAudio() {
+    audio.menuActive = false;
+    audio.menuBeatTimer = 0;
+    audio.menuBeatIndex = 0;
+    audio.menuPadTimer = 0;
+  }
+
+  function stopCaveAmbience() {
+    for (const key of ["caveAmbienceLfo", "caveAmbienceSource"]) {
+      const node = audio[key];
+      if (!node) continue;
+      try {
+        node.stop();
+      } catch (err) {
+        // ignore stop errors for already-ended nodes
+      }
+      try {
+        node.disconnect();
+      } catch (err) {
+        // ignore disconnect errors
+      }
+      audio[key] = null;
+    }
+    for (const key of ["caveAmbienceLfoGain", "caveAmbienceFilter", "caveAmbienceGain"]) {
+      const node = audio[key];
+      if (!node) continue;
+      try {
+        node.disconnect();
+      } catch (err) {
+        // ignore disconnect errors
+      }
+      audio[key] = null;
+    }
+  }
+
+  function ensureCaveAmbience() {
+    if (!audio.ctx || !audio.enabled || !audio.sfxBus) return;
+    if (audio.caveAmbienceSource && audio.caveAmbienceGain && audio.caveAmbienceFilter) {
+      const now = audio.ctx.currentTime;
+      audio.caveAmbienceGain.gain.setTargetAtTime(0.0046, now, 1.2);
+      audio.caveAmbienceFilter.frequency.setTargetAtTime(330, now, 1.6);
+      return;
+    }
+
+    const noise = getNoiseBuffer();
+    if (!noise) return;
+    const ctx = audio.ctx;
+    const now = ctx.currentTime;
+    const source = ctx.createBufferSource();
+    source.buffer = noise;
+    source.loop = true;
+
+    const filter = ctx.createBiquadFilter();
+    filter.type = "bandpass";
+    filter.frequency.setValueAtTime(330, now);
+    filter.Q.setValueAtTime(0.28, now);
+
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(0.0046, now + 1.4);
+
+    const lfo = ctx.createOscillator();
+    lfo.type = "sine";
+    lfo.frequency.setValueAtTime(0.048, now);
+    const lfoGain = ctx.createGain();
+    lfoGain.gain.setValueAtTime(84, now);
+    lfo.connect(lfoGain);
+    lfoGain.connect(filter.frequency);
+
+    source.connect(filter);
+    filter.connect(gain);
+    gain.connect(audio.sfxBus);
+
+    source.start(now);
+    lfo.start(now);
+
+    audio.caveAmbienceSource = source;
+    audio.caveAmbienceFilter = filter;
+    audio.caveAmbienceGain = gain;
+    audio.caveAmbienceLfo = lfo;
+    audio.caveAmbienceLfoGain = lfoGain;
+  }
+
   function stopAmbientAudio() {
+    stopCaveAmbience();
     for (const key of ["oscA", "oscB", "oscC", "lfo", "bassOsc", "textureSource"]) {
       const node = audio[key];
       if (!node) continue;
@@ -1697,9 +1873,9 @@
       audio.bassOsc.frequency.setTargetAtTime(chord[0] * 0.5, now, glide * 0.75);
     }
     if (audio.filter) {
-      const nightShift = state.isNight ? -220 : 90;
-      const variationLift = 320 * (audio.variationMix || 0);
-      const target = clamp(1500 + nightShift + variationLift, 900, 2800);
+      const nightShift = state.isNight ? -180 : 180;
+      const variationLift = 420 * (audio.variationMix || 0);
+      const target = clamp(1700 + nightShift + variationLift, 1050, 3300);
       audio.filter.frequency.setTargetAtTime(target, now, glide * 0.6);
     }
   }
@@ -1711,16 +1887,16 @@
     const now = ctx.currentTime;
     const musicGain = ctx.createGain();
     musicGain.gain.setValueAtTime(0.0001, now);
-    musicGain.gain.exponentialRampToValueAtTime(0.034, now + 2.6);
+    musicGain.gain.exponentialRampToValueAtTime(0.086, now + 1.9);
     musicGain.connect(audio.musicBus);
 
     const padFilter = ctx.createBiquadFilter();
     padFilter.type = "lowpass";
-    padFilter.frequency.value = 1600;
-    padFilter.Q.value = 0.48;
+    padFilter.frequency.value = 1900;
+    padFilter.Q.value = 0.42;
 
     const padGain = ctx.createGain();
-    padGain.gain.value = 0.22;
+    padGain.gain.value = 0.26;
     padFilter.connect(padGain);
     padGain.connect(musicGain);
 
@@ -1737,9 +1913,9 @@
     const voiceA = ctx.createGain();
     const voiceB = ctx.createGain();
     const voiceC = ctx.createGain();
-    voiceA.gain.value = 0.11;
-    voiceB.gain.value = 0.075;
-    voiceC.gain.value = 0.058;
+    voiceA.gain.value = 0.104;
+    voiceB.gain.value = 0.063;
+    voiceC.gain.value = 0.067;
 
     oscA.connect(voiceA);
     oscB.connect(voiceB);
@@ -1756,7 +1932,7 @@
     bassFilter.frequency.value = 330;
     bassFilter.Q.value = 0.65;
     const bassGain = ctx.createGain();
-    bassGain.gain.value = 0.0058;
+    bassGain.gain.value = 0.0068;
     bassOsc.connect(bassFilter);
     bassFilter.connect(bassGain);
     bassGain.connect(musicGain);
@@ -1778,7 +1954,7 @@
       textureFilter.frequency.value = 640;
       textureFilter.Q.value = 0.4;
       textureGain = ctx.createGain();
-      textureGain.gain.value = 0.0015;
+      textureGain.gain.value = 0.0012;
       textureSource.connect(textureFilter);
       textureFilter.connect(textureGain);
       textureGain.connect(musicGain);
@@ -1787,8 +1963,8 @@
     const lfo = ctx.createOscillator();
     const lfoGain = ctx.createGain();
     lfo.type = "sine";
-    lfo.frequency.value = 0.08;
-    lfoGain.gain.value = 0.012;
+    lfo.frequency.value = 0.11;
+    lfoGain.gain.value = 0.009;
     lfo.connect(lfoGain);
     lfoGain.connect(padGain.gain);
 
@@ -1809,7 +1985,7 @@
     audio.lfoGain = lfoGain;
     audio.loopBeats = getDriftwoodLoopBeats();
     audio.themeTime = 0;
-    audio.introPluckTimer = 0.9;
+    audio.introPluckTimer = 0.55;
     audio.mainTime = 0;
     audio.prevMainBeat = -1;
     audio.variationMix = 0;
@@ -1841,23 +2017,23 @@
     body.type = "triangle";
     ping.type = "sine";
     body.frequency.setValueAtTime(noteFreq, start);
-    body.frequency.exponentialRampToValueAtTime(noteFreq * 0.985, start + 0.28);
+    body.frequency.exponentialRampToValueAtTime(noteFreq * 0.982, start + 0.24);
     ping.frequency.setValueAtTime(noteFreq * 2.02, start);
-    ping.frequency.exponentialRampToValueAtTime(noteFreq * 1.5, start + 0.18);
+    ping.frequency.exponentialRampToValueAtTime(noteFreq * 1.52, start + 0.14);
     filter.type = "bandpass";
     filter.frequency.setValueAtTime(clamp(noteFreq * 2.4, 230, 4200), start);
     filter.Q.setValueAtTime(0.7, start);
     gain.gain.setValueAtTime(0.0001, start);
-    gain.gain.exponentialRampToValueAtTime(0.0125 * clampedIntensity, start + 0.015);
-    gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.56);
+    gain.gain.exponentialRampToValueAtTime(0.0138 * clampedIntensity, start + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.44);
     body.connect(filter);
     ping.connect(filter);
     filter.connect(gain);
     gain.connect(targetBus);
     body.start(start);
     ping.start(start);
-    body.stop(start + 0.62);
-    ping.stop(start + 0.35);
+    body.stop(start + 0.5);
+    ping.stop(start + 0.28);
   }
 
   function triggerDriftwoodHarmonic(freq, when, intensity = 0.2, useVariationBus = false) {
@@ -1899,13 +2075,13 @@
     filter.frequency.setValueAtTime(2200, start);
     filter.Q.setValueAtTime(0.8, start);
     gain.gain.setValueAtTime(0.0001, start);
-    gain.gain.exponentialRampToValueAtTime(0.0036 * clamp(intensity, 0.05, 1.2), start + 0.006);
-    gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.03);
+    gain.gain.exponentialRampToValueAtTime(0.0039 * clamp(intensity, 0.05, 1.2), start + 0.004);
+    gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.025);
     src.connect(filter);
     filter.connect(gain);
     gain.connect(audio.musicGain);
     src.start(start);
-    src.stop(start + 0.04);
+    src.stop(start + 0.032);
   }
 
   function triggerDriftwoodBrush(when, intensity = 0.14) {
@@ -1922,13 +2098,13 @@
     filter.frequency.setValueAtTime(1300, start);
     filter.Q.setValueAtTime(0.6, start);
     gain.gain.setValueAtTime(0.0001, start);
-    gain.gain.exponentialRampToValueAtTime(0.0019 * clamp(intensity, 0.05, 1.2), start + 0.018);
-    gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.16);
+    gain.gain.exponentialRampToValueAtTime(0.0022 * clamp(intensity, 0.05, 1.2), start + 0.014);
+    gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.12);
     src.connect(filter);
     filter.connect(gain);
     gain.connect(audio.musicGain);
     src.start(start);
-    src.stop(start + 0.2);
+    src.stop(start + 0.14);
   }
 
   function triggerDriftwoodBassPulse(freq, when, intensity = 0.62) {
@@ -1942,19 +2118,19 @@
     const gain = ctx.createGain();
     osc.type = "triangle";
     osc.frequency.setValueAtTime(baseFreq * 1.12, start);
-    osc.frequency.exponentialRampToValueAtTime(baseFreq, start + 0.11);
-    osc.frequency.exponentialRampToValueAtTime(baseFreq * 0.92, start + 0.3);
+    osc.frequency.exponentialRampToValueAtTime(baseFreq, start + 0.09);
+    osc.frequency.exponentialRampToValueAtTime(baseFreq * 0.92, start + 0.24);
     filter.type = "lowpass";
     filter.frequency.setValueAtTime(340, start);
     filter.Q.setValueAtTime(0.75, start);
     gain.gain.setValueAtTime(0.0001, start);
-    gain.gain.exponentialRampToValueAtTime(0.0078 * clampedIntensity, start + 0.016);
-    gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.34);
+    gain.gain.exponentialRampToValueAtTime(0.0092 * clampedIntensity, start + 0.012);
+    gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.27);
     osc.connect(filter);
     filter.connect(gain);
     gain.connect(audio.musicGain);
     osc.start(start);
-    osc.stop(start + 0.38);
+    osc.stop(start + 0.31);
   }
 
   function scheduleDriftwoodBeat(beatIndex, when) {
@@ -1971,35 +2147,37 @@
 
     const chord = DRIFTWOOD_CHORDS[chordIndex];
     if (!chord) return;
+    const beatDuration = getDriftwoodBeatDuration();
+    const bassLevel = DRIFTWOOD_BASS_PATTERN[beatInBar] || 0.62;
+    const clickLevel = DRIFTWOOD_CLICK_PATTERN[beatInBar] || 0.18;
+    const swing = DRIFTWOOD_SWING_PATTERN[beatInBar] || 0.012;
 
-    if (beatInBar === 0 || beatInBar === 2) {
-      triggerDriftwoodBassPulse(chord[0] * 0.5, when, beatInBar === 0 ? 0.8 : 0.52);
-    }
+    triggerDriftwoodBassPulse(chord[0] * 0.5, when, bassLevel + (beatInBar === 0 ? 0.08 : 0));
 
-    const clickPattern = [0.25, 0.14, 0.19, 0.14];
-    triggerDriftwoodClick(when + 0.005, clickPattern[beatInBar]);
+    triggerDriftwoodClick(when + 0.004, clickLevel);
+    triggerDriftwoodBrush(when + beatDuration * 0.5, 0.1 + clickLevel * 0.42);
     if (beatInBar === 1 || beatInBar === 3) {
-      triggerDriftwoodBrush(when + 0.02, beatInBar === 3 ? 0.16 : 0.12);
+      triggerDriftwoodClick(when + beatDuration * 0.52, 0.11 + clickLevel * 0.28);
     }
 
-    if (wrappedBeat % 2 === 0) {
-      const melodyStep = DRIFTWOOD_MELODY_PATTERN[Math.floor(wrappedBeat / 2) % DRIFTWOOD_MELODY_PATTERN.length];
-      const melodyFreq = getDriftwoodTone(chord, melodyStep);
-      const pluckLevel = beatInBar === 0 ? 0.68 : 0.5;
-      triggerAmbientNote(melodyFreq, when + 0.014, pluckLevel, false);
-      audio.noteIndex += 1;
+    const melodyStep = DRIFTWOOD_MELODY_PATTERN[wrappedBeat % DRIFTWOOD_MELODY_PATTERN.length];
+    const melodyFreq = getDriftwoodTone(chord, melodyStep);
+    const pluckLevel = (beatInBar === 0 ? 0.72 : 0.56) + (audio.variationMix > 0.2 ? 0.05 : 0);
+    triggerAmbientNote(melodyFreq, when + swing, pluckLevel, false);
+    audio.noteIndex += 1;
+
+    if (beatInBar === 2 || wrappedBeat % 8 === 6) {
+      triggerDriftwoodHarmonic(chord[1] * 2, when + 0.07, 0.18 + audio.variationMix * 0.18, false);
     }
 
-    if (wrappedBeat % 8 === 4) {
-      triggerDriftwoodHarmonic(chord[1] * 2, when + 0.085, 0.22, false);
-    }
-
-    if (audio.variationMix > 0.05 && beatInBar === 3) {
-      const counterStep = DRIFTWOOD_COUNTER_PATTERN[barIndex % DRIFTWOOD_COUNTER_PATTERN.length];
+    if (audio.variationMix > 0.05 && (beatInBar === 1 || beatInBar === 3)) {
+      const counterStep = DRIFTWOOD_COUNTER_PATTERN[(barIndex + beatInBar) % DRIFTWOOD_COUNTER_PATTERN.length];
       const counterFreq = getDriftwoodTone(chord, counterStep);
-      const mixGain = 0.1 + audio.variationMix * 0.38;
-      triggerAmbientNote(counterFreq, when + 0.058, mixGain, true);
-      triggerDriftwoodHarmonic(counterFreq * 0.5, when + 0.13, mixGain * 0.68, true);
+      const mixGain = 0.16 + audio.variationMix * 0.34;
+      triggerAmbientNote(counterFreq, when + beatDuration * 0.53, mixGain, true);
+      if (beatInBar === 3) {
+        triggerDriftwoodHarmonic(counterFreq * 0.5, when + beatDuration * 0.67, mixGain * 0.56, true);
+      }
     }
   }
 
@@ -2014,17 +2192,17 @@
     }
     const chord = DRIFTWOOD_CHORDS[audio.chordIndex % DRIFTWOOD_CHORDS.length];
     if (chord) {
-      const seed = Math.floor(audio.themeTime * 10);
-      const toneStep = Math.floor(driftwoodNoise(seed + 13) * 5);
+      const seed = Math.floor(audio.themeTime * 12);
+      const toneStep = Math.floor(driftwoodNoise(seed + 13) * 6);
       const freq = getDriftwoodTone(chord, toneStep);
       const now = audio.ctx?.currentTime || 0;
-      triggerAmbientNote(freq, now + 0.03, 0.36 + progress * 0.22, false);
-      if (progress > 0.42) {
-        triggerDriftwoodHarmonic(chord[1] * 2, now + 0.11, 0.14 + progress * 0.18, false);
+      triggerAmbientNote(freq, now + 0.03, 0.34 + progress * 0.3, false);
+      if (progress > 0.28) {
+        triggerDriftwoodHarmonic(chord[1] * 2, now + 0.09, 0.12 + progress * 0.2, false);
       }
       audio.noteIndex += 1;
     }
-    const gap = 3.1 + driftwoodNoise(Math.floor(audio.themeTime) + 27) * 2.2;
+    const gap = 1.6 + driftwoodNoise(Math.floor(audio.themeTime) + 27) * 1.2;
     audio.introPluckTimer += gap;
   }
 
@@ -2097,6 +2275,28 @@
     return ratio * ratio;
   }
 
+  function canPlayLimitedSfx(key, cooldownMs, nowMs = performance.now()) {
+    if (!audio.sfxLimiter) {
+      audio.sfxLimiter = new Map();
+    }
+    const k = String(key || "");
+    const cooldown = Math.max(0, Number(cooldownMs) || 0);
+    const last = audio.sfxLimiter.get(k);
+    if (Number.isFinite(last) && (nowMs - last) < cooldown) {
+      return false;
+    }
+    audio.sfxLimiter.set(k, nowMs);
+    if (audio.sfxLimiter.size > 420) {
+      const staleBefore = nowMs - 8000;
+      for (const [entryKey, value] of audio.sfxLimiter.entries()) {
+        if (!Number.isFinite(value) || value < staleBefore) {
+          audio.sfxLimiter.delete(entryKey);
+        }
+      }
+    }
+    return true;
+  }
+
   function updateEnvironmentalSoundscape(dt) {
     if (!audio.ctx || !audio.enabled || !state.player || !state.world) return;
     const world = state.world;
@@ -2105,17 +2305,24 @@
       : [];
 
     if (state.inCave) {
+      ensureCaveAmbience();
       audio.caveWindTimer -= dt;
       if (audio.caveWindTimer <= 0) {
-        playSfx("caveWind", { intensity: 0.7 + Math.random() * 0.45 });
-        audio.caveWindTimer = 5.2 + Math.random() * 3.6;
+        playSfx("caveWind", { intensity: 0.46 + Math.random() * 0.32 });
+        audio.caveWindTimer = 4 + Math.random() * 2.8;
       }
       audio.distantMonsterTimer -= dt;
       if (audio.distantMonsterTimer <= 0 && monsters.length > 0) {
         const pick = monsters[Math.floor(Math.random() * monsters.length)];
         const dist = Math.hypot((pick.x ?? 0) - state.player.x, (pick.y ?? 0) - state.player.y);
         const intensity = getSfxDistanceIntensity(Math.max(dist, CONFIG.tileSize * 6), CONFIG.tileSize * 24);
-        if (intensity > 0.06) {
+        if (
+          intensity > 0.06
+          && canPlayLimitedSfx(
+            `monster:distant:cave:${state.activeCave?.id ?? "active"}`,
+            MONSTER_AUDIO_LIMIT.distantCooldownMs
+          )
+        ) {
           playSfx("monsterIdle", {
             monsterType: pick.type,
             inCave: true,
@@ -2127,6 +2334,7 @@
       }
       return;
     }
+    stopCaveAmbience();
 
     if (state.isNight) {
       audio.nightWindTimer -= dt;
@@ -2139,7 +2347,13 @@
         const pick = monsters[Math.floor(Math.random() * monsters.length)];
         const dist = Math.hypot((pick.x ?? 0) - state.player.x, (pick.y ?? 0) - state.player.y);
         const intensity = getSfxDistanceIntensity(Math.max(dist, CONFIG.tileSize * 5), CONFIG.tileSize * 26);
-        if (intensity > 0.08) {
+        if (
+          intensity > 0.08
+          && canPlayLimitedSfx(
+            `monster:distant:surface:${state.surfaceWorld?.seed ?? "seed"}`,
+            MONSTER_AUDIO_LIMIT.distantCooldownMs
+          )
+        ) {
           playSfx("monsterIdle", {
             monsterType: pick.type,
             inCave: false,
@@ -2169,6 +2383,7 @@
 
     const worldTag = getLocalWorldAudioTag(world);
     const nowMs = performance.now();
+    let triggeredThisTick = 0;
     const seen = new Set();
     const playerHidden = !state.inCave && !!state.player.inHut;
 
@@ -2194,18 +2409,30 @@
       };
       stateEntry.lastSeen = nowMs;
 
-      if (aggroNow && !stateEntry.aggro && dist <= CONFIG.tileSize * 14) {
+      if (
+        triggeredThisTick < MONSTER_AUDIO_LIMIT.perFrameMax
+        && aggroNow
+        && !stateEntry.aggro
+        && dist <= CONFIG.tileSize * 14
+        && canPlayLimitedSfx(`monster:aggro:${worldTag}`, MONSTER_AUDIO_LIMIT.aggroCooldownMs, nowMs)
+      ) {
         playSfx("monsterAggro", {
           monsterType: monster.type,
           inCave: state.inCave,
           distance: dist,
           intensity: 0.45 + getSfxDistanceIntensity(dist, CONFIG.tileSize * 14) * 0.7,
         });
+        triggeredThisTick += 1;
       }
       stateEntry.aggro = aggroNow;
 
       stateEntry.idleTimer -= dt;
-      if (dist <= profile.idleRange && stateEntry.idleTimer <= 0) {
+      if (
+        triggeredThisTick < MONSTER_AUDIO_LIMIT.perFrameMax
+        && dist <= profile.idleRange
+        && stateEntry.idleTimer <= 0
+        && canPlayLimitedSfx(`monster:idle:${worldTag}`, MONSTER_AUDIO_LIMIT.idleCooldownMs, nowMs)
+      ) {
         const idleChance = aggroNow ? 0.34 : 1;
         if (Math.random() <= idleChance) {
           playSfx("monsterIdle", {
@@ -2214,6 +2441,7 @@
             distance: dist,
             intensity: 0.24 + getSfxDistanceIntensity(dist, profile.idleRange) * (aggroNow ? 0.5 : 0.75),
           });
+          triggeredThisTick += 1;
         }
         stateEntry.idleTimer = profile.idleIntervalMin
           + Math.random() * (profile.idleIntervalMax - profile.idleIntervalMin)
@@ -2224,9 +2452,12 @@
       const speed = dt > 0 ? (moved / dt) : 0;
       stateEntry.stepTimer -= dt * clamp(speed / 34, 0.35, 2.7);
       if (
+        triggeredThisTick < MONSTER_AUDIO_LIMIT.perFrameMax
+        &&
         dist <= CONFIG.tileSize * 10.5
         && speed >= profile.moveThreshold
         && stateEntry.stepTimer <= 0
+        && canPlayLimitedSfx(`monster:move:${worldTag}`, MONSTER_AUDIO_LIMIT.moveCooldownMs, nowMs)
       ) {
         playSfx("monsterMove", {
           monsterType: monster.type,
@@ -2234,15 +2465,19 @@
           distance: dist,
           intensity: 0.2 + getSfxDistanceIntensity(dist, CONFIG.tileSize * 11) * 0.75,
         });
+        triggeredThisTick += 1;
         stateEntry.stepTimer = profile.stepIntervalMin
           + Math.random() * (profile.stepIntervalMax - profile.stepIntervalMin);
       }
 
       stateEntry.windupTimer = Math.max(0, stateEntry.windupTimer - dt);
       if (
+        triggeredThisTick < MONSTER_AUDIO_LIMIT.perFrameMax
+        &&
         aggroNow
         && dist <= Math.max(meleeRange * 1.45, CONFIG.tileSize * 1.8)
         && stateEntry.windupTimer <= 0
+        && canPlayLimitedSfx(`monster:windup:${worldTag}`, MONSTER_AUDIO_LIMIT.windupCooldownMs, nowMs)
       ) {
         playSfx("monsterWindup", {
           monsterType: monster.type,
@@ -2250,22 +2485,11 @@
           distance: dist,
           intensity: 0.18 + getSfxDistanceIntensity(dist, CONFIG.tileSize * 8) * 0.55,
         });
+        triggeredThisTick += 1;
         stateEntry.windupTimer = Math.max(0.32, (Number(monster.attackCooldown) || 1.0) * 0.72);
       }
 
-      const attackTimer = Number(monster.attackTimer) || 0;
-      if (
-        attackTimer > stateEntry.prevAttackTimer + 0.28
-        && dist <= CONFIG.tileSize * 12
-      ) {
-        playSfx("monsterAttackMiss", {
-          monsterType: monster.type,
-          inCave: state.inCave,
-          distance: dist,
-          intensity: 0.12 + getSfxDistanceIntensity(dist, CONFIG.tileSize * 12) * 0.42,
-        });
-      }
-      stateEntry.prevAttackTimer = attackTimer;
+      stateEntry.prevAttackTimer = Number(monster.attackTimer) || 0;
 
       stateEntry.x = monster.x;
       stateEntry.y = monster.y;
@@ -2280,13 +2504,106 @@
     }
   }
 
+  function updateMenuAudio(dt) {
+    if (!audio.ctx || !audio.enabled || !audio.musicBus) return;
+    if (!audio.menuActive) {
+      audio.menuActive = true;
+      audio.menuBeatTimer = 0;
+      audio.menuBeatIndex = 0;
+      audio.menuPadTimer = 0;
+    }
+    const beatDuration = 60 / MENU_THEME.bpm;
+    audio.menuBeatTimer -= dt;
+    audio.menuPadTimer -= dt;
+    const now = audio.ctx.currentTime;
+    while (audio.menuBeatTimer <= 0) {
+      const beat = audio.menuBeatIndex;
+      const chord = MENU_THEME.chords[
+        Math.floor(beat / MENU_THEME.beatsPerBar) % MENU_THEME.chords.length
+      ];
+      const arpIndex = MENU_THEME.arpPattern[beat % MENU_THEME.arpPattern.length] % chord.length;
+      const when = now + Math.max(0, audio.menuBeatTimer + beatDuration);
+      const intensity = 0.52 + ((beat % MENU_THEME.beatsPerBar === 0) ? 0.2 : 0);
+      const bassFreq = chord[0] * (beat % MENU_THEME.beatsPerBar === 0 ? 0.5 : 0.25);
+
+      playSfxTone({
+        bus: audio.musicBus,
+        wave: "triangle",
+        freqStart: bassFreq,
+        freqEnd: bassFreq * 0.88,
+        duration: 0.26,
+        attack: 0.02,
+        peak: 0.021 * intensity * MENU_THEME_GAIN,
+        when,
+        filterType: "lowpass",
+        filterFreq: 680,
+        filterQ: 0.48,
+      });
+      playSfxTone({
+        bus: audio.musicBus,
+        wave: "sine",
+        freqStart: chord[arpIndex],
+        freqEnd: chord[arpIndex] * 0.99,
+        duration: 0.2,
+        attack: 0.01,
+        peak: 0.017 * intensity * MENU_THEME_GAIN,
+        when: when + 0.01,
+        filterType: "lowpass",
+        filterFreq: 2100,
+        filterQ: 0.55,
+      });
+      if (beat % MENU_THEME.beatsPerBar === 2) {
+        playSfxTone({
+          bus: audio.musicBus,
+          wave: "sine",
+          freqStart: chord[2] * 1.01,
+          freqEnd: chord[2] * 0.96,
+          duration: 0.24,
+          attack: 0.02,
+          peak: 0.011 * intensity * MENU_THEME_GAIN,
+          when: when + 0.03,
+          filterType: "bandpass",
+          filterFreq: 1300,
+          filterQ: 0.5,
+        });
+      }
+      audio.menuBeatIndex += 1;
+      audio.menuBeatTimer += beatDuration;
+    }
+
+    if (audio.menuPadTimer <= 0) {
+      const chord = MENU_THEME.chords[
+        Math.floor(audio.menuBeatIndex / MENU_THEME.beatsPerBar) % MENU_THEME.chords.length
+      ];
+      const when = now + 0.02;
+      for (let i = 0; i < chord.length; i += 1) {
+        playSfxTone({
+          bus: audio.musicBus,
+          wave: "triangle",
+          freqStart: chord[i] * 0.5,
+          freqEnd: chord[i] * 0.49,
+          duration: 1.2,
+          attack: 0.16,
+          peak: 0.0045 * MENU_THEME_GAIN,
+          when: when + i * 0.015,
+          filterType: "lowpass",
+          filterFreq: 980,
+          filterQ: 0.45,
+        });
+      }
+      audio.menuPadTimer = beatDuration * MENU_THEME.beatsPerBar;
+    }
+  }
+
   function updateAudio(dt) {
     if (!audio.ctx || !audio.enabled) return;
-    if (!state.player || state.gameWon) {
+    if (startScreen && !startScreen.classList.contains("hidden")) {
       stopAmbientAudio();
+      updateMenuAudio(dt);
       return;
     }
-    if (startScreen && !startScreen.classList.contains("hidden")) {
+    stopMenuAudio();
+    if (!state.player || state.gameWon) {
       stopAmbientAudio();
       return;
     }
@@ -2307,20 +2624,20 @@
     audio.variationMix = smoothValue(audio.variationMix, variationTarget, dt, 0.9);
 
     if (audio.variationGain) {
-      const gainTarget = 0.0001 + audio.variationMix * 0.95;
+      const gainTarget = 0.0001 + audio.variationMix * 1.05;
       audio.variationGain.gain.setTargetAtTime(gainTarget, now, 0.7);
     }
     if (audio.textureGain) {
-      const textureTarget = 0.0013 + audio.variationMix * 0.0014 + (state.isNight ? 0.0005 : 0);
+      const textureTarget = 0.001 + audio.variationMix * 0.0012 + (state.isNight ? 0.00045 : 0);
       audio.textureGain.gain.setTargetAtTime(textureTarget, now, 0.8);
     }
     if (audio.bassGain) {
-      const bassBedTarget = state.isNight ? 0.0062 : 0.0054;
+      const bassBedTarget = state.isNight ? 0.0076 : 0.0068;
       audio.bassGain.gain.setTargetAtTime(bassBedTarget, now, 0.7);
     }
     if (audio.filter) {
-      const nightShift = state.isNight ? -220 : 100;
-      const filterTarget = clamp(1460 + nightShift + audio.variationMix * 320, 900, 2800);
+      const nightShift = state.isNight ? -180 : 180;
+      const filterTarget = clamp(1670 + nightShift + audio.variationMix * 420, 1050, 3300);
       audio.filter.frequency.setTargetAtTime(filterTarget, now, 0.65);
     }
 
@@ -2721,16 +3038,17 @@
         wave: "triangle",
         freqStart: timbre.upper * 0.86,
         freqEnd: timbre.upper * 0.6,
-        duration: 0.1,
-        attack: 0.004,
-        peak: 0.007 * amp,
+        duration: 0.14,
+        attack: 0.012,
+        peak: 0.0048 * amp,
       });
       playSfxNoise({
-        duration: 0.05,
-        peak: 0.0026 * amp,
-        filterType: "highpass",
-        filterFreq: 1900,
-        filterQ: 0.7,
+        duration: 0.08,
+        attack: 0.01,
+        peak: 0.0018 * amp,
+        filterType: "bandpass",
+        filterFreq: 1180,
+        filterQ: 0.55,
       });
       return;
     }
@@ -3287,19 +3605,19 @@
         if (net.isHost) handleBenchRobotControl(conn, message);
         break;
       case "houseChestUpdate":
-        if (net.isHost) handleHouseChestUpdate(message);
+        if (net.isHost) handleHouseChestUpdate(conn, message);
         break;
       case "houseDestroyChest":
-        if (net.isHost) handleHouseDestroyChest(message);
+        if (net.isHost) handleHouseDestroyChest(conn, message);
         break;
       case "destroyChest":
-        if (net.isHost) handleDestroyChest(message);
+        if (net.isHost) handleDestroyChest(conn, message);
         break;
       case "sleep":
         if (net.isHost) handleSleepRequest(conn);
         break;
       case "dropPickup":
-        if (net.isHost) handleDropPickup(message);
+        if (net.isHost) handleDropPickup(conn, message);
         break;
       case "dropItem":
         if (net.isHost) handleDropItemRequest(conn, message);
@@ -3373,10 +3691,12 @@
       resourceStates: world.resources.map((res) => serializeResource(res)),
       respawnTasks: world.respawnTasks ?? [],
       drops: (world.drops ?? []).map((drop) => ({
+        id: drop.id,
         itemId: drop.itemId,
         qty: drop.qty,
         x: drop.x,
         y: drop.y,
+        ttl: Number.isFinite(drop.ttl) ? drop.ttl : DROP_DESPAWN.lifetime,
       })),
       monsters: (world.monsters ?? []).map((monster) => ({
         id: monster.id,
@@ -3502,10 +3822,19 @@
     if (!Array.isArray(snapshotMonsters)) return [];
     const seenIds = new Set();
     const built = snapshotMonsters.map((monster) => {
+      if (!Number.isInteger(monster?.id)) return null;
       seenIds.add(monster.id);
       const prev = prevMap.get(monster.id);
       const type = monster.type ?? "crawler";
       const variant = getMonsterVariant(type);
+      const sourceX = Number.isFinite(monster?.x) ? monster.x : (Number.isFinite(prev?.x) ? prev.x : prev?.renderX);
+      const sourceY = Number.isFinite(monster?.y) ? monster.y : (Number.isFinite(prev?.y) ? prev.y : prev?.renderY);
+      const validPos = world
+        ? clampEntityPositionToWalkable(world, sourceX, sourceY, world === state.surfaceWorld ? 24 : 16)
+        : (Number.isFinite(sourceX) && Number.isFinite(sourceY)
+            ? { x: sourceX, y: sourceY }
+            : null);
+      if (!validPos) return null;
       const burnTimer = Math.max(
         0,
         typeof monster.burnTimer === "number"
@@ -3522,8 +3851,8 @@
         id: monster.id,
         type,
         color: variant.color,
-        x: monster.x,
-        y: monster.y,
+        x: validPos.x,
+        y: validPos.y,
         hp: monster.hp,
         maxHp: monster.maxHp,
         speed: variant.speed,
@@ -3558,10 +3887,10 @@
           ) || 0
         ),
         dir: { x: 0, y: 0 },
-        renderX: prev?.renderX ?? monster.x,
-        renderY: prev?.renderY ?? monster.y,
+        renderX: prev?.renderX ?? validPos.x,
+        renderY: prev?.renderY ?? validPos.y,
       };
-    });
+    }).filter(Boolean);
     if (world) {
       for (const [id, prev] of prevMap.entries()) {
         if (seenIds.has(id)) continue;
@@ -3581,6 +3910,7 @@
     );
     if (!Array.isArray(snapshotProjectiles)) return [];
     return snapshotProjectiles.map((projectile) => {
+      if (!Number.isInteger(projectile?.id)) return null;
       const prev = prevMap.get(projectile.id);
       return {
         id: projectile.id,
@@ -3599,7 +3929,7 @@
         renderX: prev?.renderX ?? projectile.x,
         renderY: prev?.renderY ?? projectile.y,
       };
-    });
+    }).filter(Boolean);
   }
 
   function buildSnapshot() {
@@ -3720,7 +4050,7 @@
   function applyMotionWorld(world, motionWorld) {
     if (!world || !motionWorld || typeof motionWorld !== "object") return;
     if (Array.isArray(motionWorld.monsters)) {
-      world.monsters = buildMonstersFromSnapshot(world.monsters, motionWorld.monsters);
+      world.monsters = buildMonstersFromSnapshot(world.monsters, motionWorld.monsters, world);
     }
     if (Array.isArray(motionWorld.projectiles)) {
       world.projectiles = buildProjectilesFromSnapshot(world.projectiles, motionWorld.projectiles);
@@ -3802,10 +4132,11 @@
         .filter((entry) => entry && (entry.type === "bridge" || entry.type === "dock"))
         .map((entry) => `${entry.tx},${entry.ty}`)
     );
+    const anchoredBridgeSet = getAnchoredBridgeNetwork(world, bridgeSet);
     for (const entry of structures) {
       if (!entry) continue;
       const normalized = { ...entry, type: normalizeLegacyStructureType(entry.type) };
-      if (!isStructureValidOnLoad(world, normalized, bridgeSet)) continue;
+      if (!isStructureValidOnLoad(world, normalized, bridgeSet, anchoredBridgeSet)) continue;
       const storageSize = normalized.type === "robot"
         ? ROBOT_STORAGE_SIZE
         : (normalized.type === "chest" ? CHEST_SIZE : null);
@@ -3926,6 +4257,12 @@
   function applyNetworkSnapshot(snapshot) {
     if (!snapshot || !snapshot.seed) return;
     if (!state.surfaceWorld || state.surfaceWorld.seed !== snapshot.seed) {
+      closeStationMenu();
+      closeChest();
+      closeInventory();
+      if (buildMenu) buildMenu.classList.add("hidden");
+      selectedSlot = null;
+      wasNearBench = false;
       const world = generateWorld(snapshot.seed);
       state.surfaceWorld = world;
       state.world = world;
@@ -4189,9 +4526,36 @@
   }
 
   function handlePlaceRequest(conn, message) {
-    if (!message || !message.itemId) return;
+    const sendFailure = () => {
+      if (conn?.open) {
+        conn.send({
+          type: "placeResult",
+          requestId: message?.requestId,
+          ok: false,
+        });
+      }
+    };
+    if (!conn || !message || !message.itemId) {
+      sendFailure();
+      return;
+    }
+    const player = net.players.get(conn.peer);
+    if (!player || player.inCave || player.inHut) {
+      sendFailure();
+      return;
+    }
     const world = state.surfaceWorld || state.world;
     const { tx, ty } = message;
+    if (!Number.isInteger(tx) || !Number.isInteger(ty)) {
+      sendFailure();
+      return;
+    }
+    const placeX = (tx + 0.5) * CONFIG.tileSize;
+    const placeY = (ty + 0.5) * CONFIG.tileSize;
+    if (!canRemotePlayerReachPoint(player, placeX, placeY, 16)) {
+      sendFailure();
+      return;
+    }
     const result = canPlaceItemAt(world, false, message.itemId, tx, ty);
     if (result.ok) {
       if (result.clearResourceTiles?.length) {
@@ -4214,11 +4578,13 @@
       }
       markDirty();
     }
-    conn.send({
-      type: "placeResult",
-      requestId: message.requestId,
-      ok: result.ok,
-    });
+    if (conn?.open) {
+      conn.send({
+        type: "placeResult",
+        requestId: message.requestId,
+        ok: result.ok,
+      });
+    }
   }
 
   function handlePlaceResult(message) {
@@ -4238,9 +4604,31 @@
   }
 
   function handleHousePlaceRequest(conn, message) {
+    const sendFailure = () => {
+      if (conn?.open) {
+        conn.send({
+          type: "housePlaceResult",
+          requestId: message?.requestId,
+          ok: false,
+        });
+      }
+    };
+    if (!conn || !message) {
+      sendFailure();
+      return;
+    }
+    const player = net.players.get(conn.peer);
+    if (!player) {
+      sendFailure();
+      return;
+    }
     const house = getStructureAt(message.houseTx, message.houseTy);
     let ok = false;
     if (house && isHouseType(house.type)) {
+      if (!canRemotePlayerAccessHouseInterior(player, house, Number(message.tx), Number(message.ty), 2.5)) {
+        sendFailure();
+        return;
+      }
       const result = canPlaceInteriorItem(house, message.itemId, message.tx, message.ty);
       if (result.ok) {
         const itemDef = ITEMS[message.itemId];
@@ -4248,6 +4636,9 @@
         markDirty();
         ok = true;
       }
+    } else {
+      sendFailure();
+      return;
     }
     if (conn?.open) {
       conn.send({
@@ -4270,16 +4661,56 @@
     net.pendingHousePlaces.delete(message.requestId);
   }
 
+  function getRemoteActionWorldForPlayer(player, message) {
+    if (!player || !state.surfaceWorld) return null;
+    if (player.inHut) return null;
+    const wantsCave = message?.world === "cave";
+    if (wantsCave) {
+      if (!player.inCave) return null;
+      const caveId = Number(message?.caveId);
+      if (!Number.isInteger(caveId) || caveId !== player.caveId) return null;
+      return getCaveWorld(caveId);
+    }
+    if (player.inCave) return null;
+    return state.surfaceWorld;
+  }
+
+  function canRemotePlayerReachPoint(player, x, y, rangeMultiplier = 1) {
+    if (!player || !Number.isFinite(x) || !Number.isFinite(y)) return false;
+    const maxRange = CONFIG.interactRange * Math.max(0.5, Number(rangeMultiplier) || 1);
+    return Math.hypot((player.x ?? 0) - x, (player.y ?? 0) - y) <= maxRange;
+  }
+
+  function canRemotePlayerAccessSurfaceStructure(player, structure, rangeMultiplier = 1.9) {
+    if (!player || !structure) return false;
+    if (player.inCave || player.inHut) return false;
+    const center = getStructureCenterWorld(structure);
+    return canRemotePlayerReachPoint(player, center.x, center.y, rangeMultiplier);
+  }
+
+  function canRemotePlayerAccessHouseInterior(player, house, tx, ty, maxDistance = 2.3) {
+    if (!player || !house || !isHouseType(house.type)) return false;
+    if (!player.inHut) return false;
+    if (player.houseKey !== getHouseKey(house)) return false;
+    if (!Number.isFinite(player.houseX) || !Number.isFinite(player.houseY)) return false;
+    return Math.hypot(player.houseX - tx, player.houseY - ty) <= maxDistance;
+  }
+
   function handleHarvestRequest(conn, message) {
-    const world = message.world === "cave"
-      ? getCaveWorld(message.caveId)
-      : state.surfaceWorld;
+    if (!conn || !message) return;
+    const player = net.players.get(conn.peer);
+    if (!player) return;
+    const world = getRemoteActionWorldForPlayer(player, message);
     if (!world) return;
-    const resource = world.resources?.[message.resId];
+    const resId = Number(message.resId);
+    if (!Number.isInteger(resId)) return;
+    const resource = world.resources?.[resId];
     if (!resource || resource.removed) return;
-    const sourcePlayer = conn
-      ? { ...(net.players.get(conn.peer) || {}), unlocks: normalizeUnlocks(message.unlocks ?? net.players.get(conn.peer)?.unlocks) }
-      : state.player;
+    if (!canRemotePlayerReachPoint(player, resource.x, resource.y, 1.35)) return;
+    const sourcePlayer = {
+      ...player,
+      unlocks: normalizeUnlocks(message.unlocks ?? player.unlocks),
+    };
     if (!canHarvestResource(resource, sourcePlayer).ok) return;
     const damage = clamp(getAppliedHarvestDamage(sourcePlayer, resource), 1, 4);
     const playAudio = shouldPlayWorldSfx(world, resource.x, resource.y);
@@ -4287,18 +4718,29 @@
   }
 
   function handleAttackRequest(conn, message) {
-    const world = message.world === "cave"
-      ? getCaveWorld(message.caveId)
-      : (state.surfaceWorld || state.world);
+    if (!conn || !message) return;
+    const player = net.players.get(conn.peer);
+    if (!player) return;
+    const world = getRemoteActionWorldForPlayer(player, message);
     if (!world) return;
-    const sourcePlayer = conn
-      ? { ...(net.players.get(conn.peer) || {}), unlocks: normalizeUnlocks(message.unlocks ?? net.players.get(conn.peer)?.unlocks) }
-      : state.player;
+    const sourcePlayer = {
+      ...player,
+      unlocks: normalizeUnlocks(message.unlocks ?? player.unlocks),
+    };
     const sourceX = Number.isFinite(sourcePlayer?.x) ? sourcePlayer.x : Number(message.x);
     const sourceY = Number.isFinite(sourcePlayer?.y) ? sourcePlayer.y : Number(message.y);
     if (!Number.isFinite(sourceX) || !Number.isFinite(sourceY)) return;
-    const aimX = Number.isFinite(message.aimX) ? message.aimX : (Number.isFinite(message.x) ? message.x : sourceX);
-    const aimY = Number.isFinite(message.aimY) ? message.aimY : (Number.isFinite(message.y) ? message.y : sourceY);
+    const sourceFromMsgX = Number(message.x);
+    const sourceFromMsgY = Number(message.y);
+    if (Number.isFinite(sourceFromMsgX) && Number.isFinite(sourceFromMsgY)) {
+      const spoofDist = Math.hypot(sourceFromMsgX - sourceX, sourceFromMsgY - sourceY);
+      if (spoofDist > CONFIG.tileSize * 2.4) return;
+    }
+    const aimXRaw = Number.isFinite(message.aimX) ? message.aimX : (Number.isFinite(message.x) ? message.x : sourceX);
+    const aimYRaw = Number.isFinite(message.aimY) ? message.aimY : (Number.isFinite(message.y) ? message.y : sourceY);
+    const aimDist = Math.hypot(aimXRaw - sourceX, aimYRaw - sourceY);
+    const aimX = aimDist > CONFIG.tileSize * 6 ? sourceX : aimXRaw;
+    const aimY = aimDist > CONFIG.tileSize * 6 ? sourceY : aimYRaw;
     const maxReach = MONSTER.attackRange + 12;
 
     let target = findNearestMonsterAt(world, { x: aimX, y: aimY }, maxReach);
@@ -4313,7 +4755,10 @@
       if (shouldPlayWorldSfx(world, target.x, target.y)) {
         playSfx("hit");
       }
-      if (target.hp < 0) target.hp = 0;
+      if (target.hp <= 0) {
+        target.hp = 0;
+        target.dropLootOnDeath = true;
+      }
       markDirty();
       return;
     }
@@ -4342,10 +4787,14 @@
   }
 
   function handleChestUpdate(conn, message) {
-    void conn;
+    if (!conn || !message) return;
     if (typeof message.tx !== "number" || typeof message.ty !== "number") return;
     const structure = getStructureAt(message.tx, message.ty);
     if (!structure || (structure.type !== "chest" && structure.type !== "robot")) return;
+    const player = net.players.get(conn.peer);
+    if (!player || !canRemotePlayerAccessSurfaceStructure(player, structure, structure.type === "robot" ? 2.1 : 1.95)) {
+      return;
+    }
     if (structure.type === "robot") {
       ensureRobotMeta(structure);
     }
@@ -4438,28 +4887,39 @@
     }
   }
 
-  function handleHouseChestUpdate(message) {
+  function handleHouseChestUpdate(conn, message) {
+    if (!conn || !message) return;
+    const player = net.players.get(conn.peer);
+    if (!player) return;
     const house = getStructureAt(message.houseTx, message.houseTy);
     if (!house || !isHouseType(house.type)) return;
+    if (!canRemotePlayerAccessHouseInterior(player, house, Number(message.tx), Number(message.ty), 2.25)) return;
     const chest = getInteriorStructureAt(house, message.tx, message.ty);
     if (!chest || chest.type !== "chest") return;
     chest.storage = sanitizeInventorySlots(message.storage, CHEST_SIZE);
     markDirty();
   }
 
-  function handleHouseDestroyChest(message) {
+  function handleHouseDestroyChest(conn, message) {
+    if (!conn || !message) return;
+    const player = net.players.get(conn.peer);
+    if (!player) return;
     const house = getStructureAt(message.houseTx, message.houseTy);
     if (!house || !isHouseType(house.type)) return;
+    if (!canRemotePlayerAccessHouseInterior(player, house, Number(message.tx), Number(message.ty), 2.25)) return;
     const chest = getInteriorStructureAt(house, message.tx, message.ty);
     if (!chest || chest.type !== "chest") return;
     removeInteriorStructure(house, chest);
     markDirty();
   }
 
-  function handleDestroyChest(message) {
+  function handleDestroyChest(conn, message) {
+    if (!conn || !message) return;
     if (typeof message.tx !== "number" || typeof message.ty !== "number") return;
     const structure = getStructureAt(message.tx, message.ty);
     if (!structure || structure.type !== "chest") return;
+    const player = net.players.get(conn.peer);
+    if (!player || !canRemotePlayerAccessSurfaceStructure(player, structure, 1.95)) return;
     destroyChest(structure);
   }
 
@@ -4506,42 +4966,64 @@
     markDirty();
   }
 
-  function handleDropPickup(message) {
-    const world = message.world === "cave"
-      ? getCaveWorld(message.caveId)
-      : state.surfaceWorld;
+  function handleDropPickup(conn, message) {
+    if (!conn || !message) return;
+    const player = net.players.get(conn.peer);
+    if (!player) return;
+    const world = getRemoteActionWorldForPlayer(player, message);
     if (!world || !Array.isArray(world.drops)) return;
+    const reqX = Number.isFinite(message.x) ? message.x : (player.x ?? 0);
+    const reqY = Number.isFinite(message.y) ? message.y : (player.y ?? 0);
+    if (Math.hypot(reqX - (player.x ?? 0), reqY - (player.y ?? 0)) > CONFIG.tileSize * 2.6) return;
     const requestedId = Number.isInteger(message.dropId) ? message.dropId : null;
+    const requestedQtyRaw = Math.floor(Number(message.qty));
+    const requestedQty = Number.isFinite(requestedQtyRaw) && requestedQtyRaw > 0
+      ? clamp(requestedQtyRaw, 1, MAX_STACK)
+      : null;
     if (requestedId != null) {
       const byIdIndex = world.drops.findIndex((drop) => drop.id === requestedId);
       if (byIdIndex >= 0) {
-        world.drops.splice(byIdIndex, 1);
+        const target = world.drops[byIdIndex];
+        if (!canRemotePlayerReachPoint(player, target.x, target.y, 1.35)) return;
+        if (requestedQty == null || requestedQty >= target.qty) {
+          world.drops.splice(byIdIndex, 1);
+        } else {
+          target.qty = Math.max(0, target.qty - requestedQty);
+          if (target.qty <= 0) world.drops.splice(byIdIndex, 1);
+        }
         markDirty();
+        return;
       }
-      return;
     }
     let bestIndex = -1;
     let bestDist = Infinity;
     for (let i = 0; i < world.drops.length; i += 1) {
       const drop = world.drops[i];
       if (drop.itemId !== message.itemId) continue;
-      const dist = Math.hypot(drop.x - message.x, drop.y - message.y);
+      const dist = Math.hypot(drop.x - reqX, drop.y - reqY);
       if (dist < bestDist) {
         bestDist = dist;
         bestIndex = i;
       }
     }
     if (bestIndex >= 0 && bestDist <= CONFIG.tileSize * 2) {
-      world.drops.splice(bestIndex, 1);
+      const target = world.drops[bestIndex];
+      if (!canRemotePlayerReachPoint(player, target.x, target.y, 1.35)) return;
+      if (requestedQty == null || requestedQty >= target.qty) {
+        world.drops.splice(bestIndex, 1);
+      } else {
+        target.qty = Math.max(0, target.qty - requestedQty);
+        if (target.qty <= 0) world.drops.splice(bestIndex, 1);
+      }
       markDirty();
     }
   }
 
   function handleDropItemRequest(conn, message) {
     if (!conn || !message) return;
-    const world = message.world === "cave"
-      ? getCaveWorld(message.caveId)
-      : state.surfaceWorld;
+    const player = net.players.get(conn.peer);
+    if (!player) return;
+    const world = getRemoteActionWorldForPlayer(player, message);
     if (!world) return;
     const itemId = typeof message.itemId === "string" ? message.itemId : null;
     if (!itemId || !ITEMS[itemId]) return;
@@ -4549,11 +5031,8 @@
     const x = Number.isFinite(message.x) ? message.x : null;
     const y = Number.isFinite(message.y) ? message.y : null;
     if (!Number.isFinite(x) || !Number.isFinite(y)) return;
-    const player = net.players.get(conn.peer);
-    if (player) {
-      const distFromPlayer = Math.hypot(x - (player.x ?? 0), y - (player.y ?? 0));
-      if (distFromPlayer > CONFIG.tileSize * 6) return;
-    }
+    const distFromPlayer = Math.hypot(x - (player.x ?? 0), y - (player.y ?? 0));
+    if (distFromPlayer > CONFIG.tileSize * 6) return;
     spawnDrop(itemId, qty, x, y, world);
   }
 
@@ -5074,6 +5553,32 @@
     return getSurfaceBiomeAtTile(world, tx, ty);
   }
 
+  function getBiomeTreeMaxHp(biome) {
+    const maxHp = Number(biome?.treeMaxHp);
+    if (!Number.isFinite(maxHp)) return 4;
+    return clamp(Math.round(maxHp), 4, 12);
+  }
+
+  function getBiomeTreeDropQty(biome) {
+    const dropQty = Number(biome?.treeDropQty);
+    if (!Number.isFinite(dropQty)) return 1;
+    return clamp(Math.round(dropQty), 1, 6);
+  }
+
+  function getBiomeTreeVisualScale(biome) {
+    const scale = Number(biome?.treeVisualScale);
+    if (!Number.isFinite(scale)) return 1;
+    return clamp(scale, 1, 1.65);
+  }
+
+  function getBiomeGrassDropQty(biome) {
+    const explicit = Number(biome?.grassDropQty);
+    if (Number.isFinite(explicit)) return clamp(Math.round(explicit), 1, 6);
+    const grassRate = Number(biome?.grassRate) || 0;
+    if (grassRate >= 0.05) return 2;
+    return 1;
+  }
+
   function getSurfaceMoveSpeedScale(world, x, y) {
     const biome = getSurfaceBiomeAtWorldPosition(world, x, y);
     let scale = Number.isFinite(biome.moveSpeedScale) ? biome.moveSpeedScale : 1;
@@ -5106,6 +5611,15 @@
     if (roll < 0.5) return "crawler";
     if (roll < 0.78) return "brute";
     return "skeleton";
+  }
+
+  function pickMonsterTypeForBiome(biome, rng = Math.random, isNight = state.isNight) {
+    if (!biome || typeof biome !== "object") return pickMonsterType(rng);
+    if (isNight && biome.key === "marsh") {
+      const poisonChance = clamp(Number(biome.poisonMonsterChance) || 0.62, 0.1, 1);
+      if (rng() < poisonChance) return "marsh_stalker";
+    }
+    return pickMonsterType(rng);
   }
 
   function generateCaveWorld(seed, caveId) {
@@ -5437,18 +5951,48 @@
     const requiredBiomes = BIOMES.map((_, index) => index).filter((id) => id !== 0);
     const islandCount = Math.max(baseCount, requiredBiomes.length + 1);
 
-    function placeIsland(radius) {
-      const edgePad = 12;
+    function getIslandSpacingMetrics(x, y, radius, minGapScale = 0.82) {
+      let minGap = Infinity;
+      let nearestDistance = Infinity;
+      for (const island of islands) {
+        const dist = Math.hypot(island.x - x, island.y - y);
+        const desiredGap = (radius + island.radius) * minGapScale;
+        minGap = Math.min(minGap, dist - desiredGap);
+        nearestDistance = Math.min(nearestDistance, dist);
+      }
+      return {
+        minGap,
+        nearestDistance,
+      };
+    }
+
+    function placeIsland(radius, minGapScale = 0.82) {
+      const edgePad = 14;
       const minCoord = radius + edgePad;
       const maxCoord = size - radius - edgePad;
       if (maxCoord <= minCoord) return null;
+      let best = null;
+      let bestScore = -Infinity;
+      const attempts = 96;
+      for (let attempt = 0; attempt < attempts; attempt += 1) {
+        const x = minCoord + rng() * (maxCoord - minCoord);
+        const y = minCoord + rng() * (maxCoord - minCoord);
+        const metrics = getIslandSpacingMetrics(x, y, radius, minGapScale);
+        if (metrics.minGap < -0.8) continue;
+        const score = metrics.minGap + Math.min(metrics.nearestDistance, radius * 7.8) * 0.065 + (rng() - 0.5) * 0.55;
+        if (score > bestScore) {
+          bestScore = score;
+          best = { x, y };
+        }
+      }
+      if (best) return best;
       for (let attempt = 0; attempt < 48; attempt += 1) {
         const x = minCoord + rng() * (maxCoord - minCoord);
         const y = minCoord + rng() * (maxCoord - minCoord);
-        const ok = islands.every(
-          (island) => Math.hypot(island.x - x, island.y - y) > (radius + island.radius) * 0.67
-        );
-        if (ok) return { x, y };
+        const metrics = getIslandSpacingMetrics(x, y, radius, minGapScale * 0.95);
+        if (metrics.minGap >= -0.25) {
+          return { x, y };
+        }
       }
       return null;
     }
@@ -5495,10 +6039,8 @@
         const ring = size * (0.2 + attempt * 0.008);
         const x = clamp(starterPos.x + Math.cos(angle) * ring, radius + edgePad, size - radius - edgePad);
         const y = clamp(starterPos.y + Math.sin(angle) * ring, radius + edgePad, size - radius - edgePad);
-        const ok = islands.every(
-          (island) => Math.hypot(island.x - x, island.y - y) > (radius + island.radius) * 0.67
-        );
-        if (!ok) continue;
+        const metrics = getIslandSpacingMetrics(x, y, radius, 0.75);
+        if (metrics.minGap < -1.2) continue;
         islands.push({
           x,
           y,
@@ -5522,6 +6064,128 @@
         starter: false,
       });
     }
+
+    function getBiomeIslandCounts() {
+      const counts = new Array(BIOMES.length).fill(0);
+      for (const island of islands) {
+        const biomeId = Number.isInteger(island?.biomeId)
+          && island.biomeId >= 0
+          && island.biomeId < BIOMES.length
+          ? island.biomeId
+          : 0;
+        island.biomeId = biomeId;
+        counts[biomeId] += 1;
+      }
+      return counts;
+    }
+
+    function pickIslandForBiomeReassignment(biomeCounts, lockedIslands) {
+      let best = null;
+      let bestScore = -Infinity;
+      for (const island of islands) {
+        if (!island || island.starter || lockedIslands.has(island)) continue;
+        const currentBiomeId = Number.isInteger(island.biomeId) ? island.biomeId : 0;
+        if (biomeCounts[currentBiomeId] <= 1) continue;
+        const score = island.radius + (currentBiomeId === 0 ? 1.25 : 0);
+        if (score > bestScore) {
+          best = island;
+          bestScore = score;
+        }
+      }
+      if (best) return best;
+      for (const island of islands) {
+        if (!island || island.starter || lockedIslands.has(island)) continue;
+        return island;
+      }
+      return null;
+    }
+
+    function ensureBiomeIslandCoverage() {
+      const lockedIslands = new Set(islands.filter((island) => island?.starter));
+      let biomeCounts = getBiomeIslandCounts();
+      for (let biomeId = 1; biomeId < BIOMES.length; biomeId += 1) {
+        if (biomeCounts[biomeId] > 0) continue;
+        const radius = 6.4 + rng() * 3.4;
+        const pos = placeIsland(radius, 0.72);
+        if (pos) {
+          const island = {
+            x: pos.x,
+            y: pos.y,
+            radius,
+            biomeId,
+            starter: false,
+          };
+          islands.push(island);
+          lockedIslands.add(island);
+          biomeCounts = getBiomeIslandCounts();
+          continue;
+        }
+        const donor = pickIslandForBiomeReassignment(biomeCounts, lockedIslands);
+        if (!donor) {
+          const forcedRadius = 5.8 + rng() * 1.2;
+          const edgePad = forcedRadius + 12;
+          const angle = biomeId * 2.3999632297 + rng() * 0.35;
+          const ring = Math.max(size * 0.23, forcedRadius + 18);
+          const forcedIsland = {
+            x: clamp(starterPos.x + Math.cos(angle) * ring, edgePad, size - edgePad),
+            y: clamp(starterPos.y + Math.sin(angle) * ring, edgePad, size - edgePad),
+            radius: forcedRadius,
+            biomeId,
+            starter: false,
+          };
+          islands.push(forcedIsland);
+          lockedIslands.add(forcedIsland);
+          biomeCounts = getBiomeIslandCounts();
+          continue;
+        }
+        const donorBiomeId = Number.isInteger(donor.biomeId) ? donor.biomeId : 0;
+        biomeCounts[donorBiomeId] = Math.max(0, biomeCounts[donorBiomeId] - 1);
+        donor.biomeId = biomeId;
+        biomeCounts[biomeId] += 1;
+        lockedIslands.add(donor);
+      }
+      getBiomeIslandCounts();
+    }
+
+    function relaxIslandLayout(iterations = 6) {
+      if (islands.length <= 2) return;
+      const centerX = size * 0.5;
+      const centerY = size * 0.5;
+      for (let iter = 0; iter < iterations; iter += 1) {
+        for (let i = 1; i < islands.length; i += 1) {
+          const island = islands[i];
+          let pushX = 0;
+          let pushY = 0;
+          for (let j = 0; j < islands.length; j += 1) {
+            if (i === j) continue;
+            const other = islands[j];
+            const dx = island.x - other.x;
+            const dy = island.y - other.y;
+            const dist = Math.hypot(dx, dy) || 0.0001;
+            const desired = (island.radius + other.radius) * 0.9 + 8;
+            if (dist < desired) {
+              const strength = (desired - dist) / desired;
+              pushX += (dx / dist) * strength;
+              pushY += (dy / dist) * strength;
+            }
+          }
+          const edgePad = island.radius + 14;
+          if (island.x < edgePad) pushX += (edgePad - island.x) * 0.06;
+          else if (island.x > size - edgePad) pushX -= (island.x - (size - edgePad)) * 0.06;
+          if (island.y < edgePad) pushY += (edgePad - island.y) * 0.06;
+          else if (island.y > size - edgePad) pushY -= (island.y - (size - edgePad)) * 0.06;
+
+          const centerPull = 0.0013;
+          const nextX = island.x + pushX * 3.25 + (centerX - island.x) * centerPull;
+          const nextY = island.y + pushY * 3.25 + (centerY - island.y) * centerPull;
+          island.x = clamp(nextX, edgePad, size - edgePad);
+          island.y = clamp(nextY, edgePad, size - edgePad);
+        }
+      }
+    }
+
+    ensureBiomeIslandCoverage();
+    relaxIslandLayout(6);
 
     for (let y = 0; y < size; y += 1) {
       for (let x = 0; x < size; x += 1) {
@@ -5553,6 +6217,60 @@
         }
       }
     }
+
+    function countLandTilesByBiome() {
+      const counts = new Array(BIOMES.length).fill(0);
+      for (let y = 0; y < size; y += 1) {
+        for (let x = 0; x < size; x += 1) {
+          const idx = tileIndex(x, y, size);
+          if (!tiles[idx]) continue;
+          const biomeId = biomeGrid[idx];
+          if (!Number.isInteger(biomeId) || biomeId < 0 || biomeId >= BIOMES.length) continue;
+          counts[biomeId] += 1;
+        }
+      }
+      return counts;
+    }
+
+    function stampBiomeLandForIsland(island, biomeId) {
+      if (!island) return 0;
+      const cx = clamp(Math.floor(island.x), 1, size - 2);
+      const cy = clamp(Math.floor(island.y), 1, size - 2);
+      const radius = Math.max(2, Math.min(4, Math.floor(island.radius * 0.34)));
+      let painted = 0;
+      for (let dy = -radius; dy <= radius; dy += 1) {
+        for (let dx = -radius; dx <= radius; dx += 1) {
+          const tx = cx + dx;
+          const ty = cy + dy;
+          if (!inBounds(tx, ty, size)) continue;
+          if (tx <= 0 || ty <= 0 || tx >= size - 1 || ty >= size - 1) continue;
+          if (Math.hypot(dx, dy) > radius + 0.35) continue;
+          const idx = tileIndex(tx, ty, size);
+          tiles[idx] = 1;
+          biomeGrid[idx] = biomeId;
+          shades[idx] = 0.78 + fbm(tx * 0.25, ty * 0.25, seed + 500) * 0.3;
+          painted += 1;
+        }
+      }
+      return painted;
+    }
+
+    function ensureBiomeLandCoverage() {
+      const minTilesPerBiome = 10;
+      const counts = countLandTilesByBiome();
+      for (let biomeId = 0; biomeId < BIOMES.length; biomeId += 1) {
+        if (counts[biomeId] >= minTilesPerBiome) continue;
+        const candidates = islands
+          .filter((island) => island && island.biomeId === biomeId)
+          .sort((a, b) => b.radius - a.radius);
+        for (const island of candidates) {
+          if (counts[biomeId] >= minTilesPerBiome) break;
+          counts[biomeId] += stampBiomeLandForIsland(island, biomeId);
+        }
+      }
+    }
+
+    ensureBiomeLandCoverage();
 
     for (let y = 1; y < size - 1; y += 1) {
       for (let x = 1; x < size - 1; x += 1) {
@@ -5616,8 +6334,8 @@
         const biome = BIOMES[biomeId] || BIOMES[0];
         const r = rand2d(x, y, seed + 42);
         if (r < biome.treeRate && isClear(x, y, 2)) {
-          const treeHp = biome.key === "redwood" ? 6 : 4;
-          const treeDrops = biome.key === "redwood" ? 2 : 1;
+          const treeHp = getBiomeTreeMaxHp(biome);
+          const treeDrops = getBiomeTreeDropQty(biome);
           addResource("tree", x, y, treeHp, treeDrops > 1 ? { dropQty: treeDrops } : null);
         } else if (r < biome.treeRate + biome.rockRate && isClear(x, y, 2)) {
           const coalRoll = rand2d(x, y, seed + 813);
@@ -5627,7 +6345,8 @@
             addResource("rock", x, y, 4);
           }
         } else if (r < biome.treeRate + biome.rockRate + (biome.grassRate || 0) && isClear(x, y, 1)) {
-          addResource("grass", x, y, 1);
+          const grassDrops = getBiomeGrassDropQty(biome);
+          addResource("grass", x, y, 1, grassDrops > 1 ? { dropQty: grassDrops } : null);
         }
       }
     }
@@ -5653,6 +6372,24 @@
         if (biomeGrid[idx] !== biomeId) continue;
         if (resourceGrid[idx] !== -1) continue;
         if (!isClear(x, y, 2)) continue;
+        addResource("biomeStone", x, y, 6, { biomeId });
+        return true;
+      }
+      // Fallback for dense islands: clear one non-stone resource so each biome can still guarantee at least one stone.
+      for (let attempt = 0; attempt < 550; attempt += 1) {
+        const x = Math.floor(rng() * size);
+        const y = Math.floor(rng() * size);
+        const idx = tileIndex(x, y, size);
+        if (!tiles[idx]) continue;
+        if (beachGrid[idx]) continue;
+        if (biomeGrid[idx] !== biomeId) continue;
+        const resId = resourceGrid[idx];
+        if (resId !== -1 && resId !== null && resId !== undefined) {
+          const existing = resources[resId];
+          if (!existing || existing.type === "biomeStone") continue;
+          existing.removed = true;
+          resourceGrid[idx] = -1;
+        }
         addResource("biomeStone", x, y, 6, { biomeId });
         return true;
       }
@@ -5937,11 +6674,20 @@
       if (!drop || !isKnownItemId(normalizedId)) continue;
       const qty = clamp(Math.floor(Number(drop.qty) || 0), 1, MAX_STACK);
       if (qty <= 0) continue;
+      const ttlRaw = Number(drop.ttl);
+      const ttl = Number.isFinite(ttlRaw)
+        ? clamp(ttlRaw, 0, DROP_DESPAWN.lifetime)
+        : DROP_DESPAWN.lifetime;
+      const id = Number.isInteger(drop.id) && drop.id >= 0
+        ? drop.id
+        : null;
       output.push({
+        id,
         itemId: normalizedId,
         qty,
         x: Number.isFinite(drop.x) ? drop.x : 0,
         y: Number.isFinite(drop.y) ? drop.y : 0,
+        ttl,
       });
     }
     return output;
@@ -6333,6 +7079,20 @@
     }
   }
 
+  function saveBelongsToSeed(save, canonicalSeed, keyHint = null) {
+    if (!save || typeof save !== "object") return false;
+    const normalizedTarget = normalizeSeedValue(canonicalSeed);
+    const embedded = String(save.seed ?? "").trim();
+    if (embedded) {
+      return normalizeSeedValue(embedded) === normalizedTarget;
+    }
+    if (typeof keyHint === "string" && keyHint.startsWith(SAVE_KEY_PREFIX)) {
+      const keySeed = keyHint.slice(SAVE_KEY_PREFIX.length);
+      return normalizeSeedValue(keySeed) === normalizedTarget;
+    }
+    return false;
+  }
+
   function readSaveForSeed(seedInput) {
     const canonicalSeed = normalizeSeedValue(seedInput);
     const aliases = getSeedAliasCandidates(seedInput);
@@ -6345,14 +7105,16 @@
       if (checkedKeys.has(key)) continue;
       checkedKeys.add(key);
       const save = readSaveFromKey(key);
-      if (save) return { key, save };
+      if (save && saveBelongsToSeed(save, canonicalSeed, key)) return { key, save };
     }
 
     const canonicalKey = getSeedSaveKey(canonicalSeed);
     if (!checkedKeys.has(canonicalKey)) {
       checkedKeys.add(canonicalKey);
       const save = readSaveFromKey(canonicalKey);
-      if (save) return { key: canonicalKey, save };
+      if (save && saveBelongsToSeed(save, canonicalSeed, canonicalKey)) {
+        return { key: canonicalKey, save };
+      }
     }
 
     try {
@@ -6361,8 +7123,7 @@
         if (!key || !key.startsWith(SAVE_KEY_PREFIX) || checkedKeys.has(key)) continue;
         const save = readSaveFromKey(key);
         if (!save) continue;
-        const saveSeed = normalizeSeedValue(save.seed ?? key.slice(SAVE_KEY_PREFIX.length));
-        if (saveSeed === canonicalSeed) {
+        if (saveBelongsToSeed(save, canonicalSeed, key)) {
           return { key, save };
         }
       }
@@ -6371,6 +7132,43 @@
     }
 
     return null;
+  }
+
+  function isSaveLayoutCompatible(save) {
+    if (!save || typeof save !== "object") return false;
+    const saveSize = Number(save.worldSize);
+    if (!Number.isFinite(saveSize) || saveSize !== CONFIG.worldSize) return false;
+    return String(save.worldLayoutVersion || "") === WORLD_LAYOUT_VERSION;
+  }
+
+  function sanitizeSaveForCurrentLayout(save, seed) {
+    if (!save || typeof save !== "object") return null;
+    const sanitizedPlayer = {
+      ...(save.player || {}),
+      x: null,
+      y: null,
+      checkpoint: null,
+      inCave: false,
+      caveId: null,
+      returnPosition: null,
+      hp: Number(save.player?.maxHp) || Number(save.player?.hp) || 100,
+    };
+    return {
+      ...save,
+      seed: normalizeSeedValue(seed ?? save.seed),
+      worldSize: CONFIG.worldSize,
+      worldLayoutVersion: WORLD_LAYOUT_VERSION,
+      player: sanitizedPlayer,
+      timeOfDay: 0,
+      gameWon: false,
+      resourceStates: [],
+      respawnTasks: [],
+      structures: [],
+      drops: [],
+      animals: [],
+      villagers: [],
+      caves: [],
+    };
   }
 
   function saveGame() {
@@ -6383,6 +7181,8 @@
     const data = {
       version: SAVE_VERSION,
       seed: surface.seed,
+      worldSize: surface.size,
+      worldLayoutVersion: WORLD_LAYOUT_VERSION,
       player: {
         x: state.player.x,
         y: state.player.y,
@@ -6410,10 +7210,12 @@
           meta: serializeStructureMeta(structure),
         })),
       drops: (surface.drops ?? []).map((drop) => ({
+        id: drop.id,
         itemId: drop.itemId,
         qty: drop.qty,
         x: drop.x,
         y: drop.y,
+        ttl: Number.isFinite(drop.ttl) ? drop.ttl : DROP_DESPAWN.lifetime,
       })),
       animals: (surface.animals ?? []).map((animal) => ({
         id: animal.id,
@@ -6443,10 +7245,12 @@
         resourceStates: cave.world.resources.map((res) => serializeResource(res)),
         respawnTasks: cave.world.respawnTasks ?? [],
         drops: (cave.world.drops ?? []).map((drop) => ({
+          id: drop.id,
           itemId: drop.itemId,
           qty: drop.qty,
           x: drop.x,
           y: drop.y,
+          ttl: Number.isFinite(drop.ttl) ? drop.ttl : DROP_DESPAWN.lifetime,
         })),
       })) ?? [],
     };
@@ -6471,8 +7275,10 @@
     if (match?.save) {
       let seededSave = match.save;
       const canonicalKey = getSeedSaveKey(requestedSeed);
-      const saveSeed = normalizeSeedValue(seededSave.seed ?? requestedSeed);
-      if (match.key !== canonicalKey || saveSeed !== requestedSeed) {
+      if (!saveBelongsToSeed(seededSave, requestedSeed, match.key)) {
+        return null;
+      }
+      if (match.key !== canonicalKey) {
         const migrated = { ...seededSave, seed: requestedSeed };
         try {
           localStorage.setItem(canonicalKey, JSON.stringify(migrated));
@@ -6680,13 +7486,31 @@
   }
 
   function applyDrops(world, drops) {
-    world.drops = sanitizeDropEntries(drops).map((drop) => ({
-      id: state.nextDropId++,
-      itemId: drop.itemId,
-      qty: drop.qty,
-      x: drop.x,
-      y: drop.y,
-    }));
+    world.drops = sanitizeDropEntries(drops).map((drop) => {
+      const id = Number.isInteger(drop.id) ? drop.id : state.nextDropId++;
+      if (id >= state.nextDropId) state.nextDropId = id + 1;
+      return {
+        id,
+        itemId: drop.itemId,
+        qty: drop.qty,
+        x: drop.x,
+        y: drop.y,
+        ttl: Number.isFinite(drop.ttl) ? drop.ttl : DROP_DESPAWN.lifetime,
+      };
+    });
+  }
+
+  function getBiomeStoneRespawnDelay() {
+    const min = Math.max(120, Number(BIOME_STONE_RESPAWN.min) || 600);
+    const configuredMax = Number(BIOME_STONE_RESPAWN.max);
+    const max = Number.isFinite(configuredMax) ? Math.max(min, configuredMax) : min;
+    return min + Math.random() * (max - min);
+  }
+
+  function getRespawnDelayForTaskType(type) {
+    if (type === "grass") return RESPAWN.grass;
+    if (type === "biomeStone") return getBiomeStoneRespawnDelay();
+    return RESPAWN.rock;
   }
 
   function applyRespawnTasks(world, tasks) {
@@ -6694,11 +7518,11 @@
       ? tasks.map((task) => ({
           type: task.type,
           id: typeof task.id === "number" ? task.id : null,
-          tx: task.tx,
-          ty: task.ty,
+          tx: Math.floor(Number(task.tx) || 0),
+          ty: Math.floor(Number(task.ty) || 0),
           timer: typeof task.timer === "number"
             ? task.timer
-            : (task.type === "grass" ? RESPAWN.grass : RESPAWN.rock),
+            : getRespawnDelayForTaskType(task.type),
         }))
       : [];
   }
@@ -6732,12 +7556,36 @@
 
       // Rebalance legacy worlds so upgraded tools do not one-tap trees.
       if (res.type === "tree") {
-        if (!Number.isFinite(res.maxHp) || res.maxHp < 4) {
+        const tileBiome = getSurfaceBiomeAtTile(world, res.tx, res.ty);
+        const targetTreeHp = getBiomeTreeMaxHp(tileBiome);
+        if (!Number.isFinite(res.maxHp) || res.maxHp < targetTreeHp) {
           const prevMax = Number.isFinite(res.maxHp) && res.maxHp > 0 ? res.maxHp : 3;
           const prevHp = Number.isFinite(res.hp) ? res.hp : prevMax;
           const ratio = clamp(prevHp / prevMax, 0, 1);
-          res.maxHp = 4;
-          res.hp = Math.max(1, Math.round(res.maxHp * ratio));
+          res.maxHp = targetTreeHp;
+          res.hp = Math.max(1, Math.round(targetTreeHp * ratio));
+        }
+        const targetDropQty = getBiomeTreeDropQty(tileBiome);
+        const currentDropQty = Math.floor(Number(res.dropQty) || 1);
+        if (targetDropQty > 1) {
+          if (currentDropQty < targetDropQty) {
+            res.dropQty = targetDropQty;
+          }
+        } else if (currentDropQty <= 1 && "dropQty" in res) {
+          delete res.dropQty;
+        }
+      }
+
+      if (res.type === "grass") {
+        const tileBiome = getSurfaceBiomeAtTile(world, res.tx, res.ty);
+        const targetDropQty = getBiomeGrassDropQty(tileBiome);
+        const currentDropQty = Math.floor(Number(res.dropQty) || 1);
+        if (targetDropQty > 1) {
+          if (currentDropQty < targetDropQty) {
+            res.dropQty = targetDropQty;
+          }
+        } else if (currentDropQty <= 1 && "dropQty" in res) {
+          delete res.dropQty;
         }
       }
 
@@ -6766,33 +7614,129 @@
           });
         }
       }
+
+      if (res.type === "biomeStone" && res.removed) {
+        queueBiomeStoneRespawnTask(world, res);
+      }
     }
+
+    ensureMinimumBiomeStonePerBiome(world);
+  }
+
+  function isValidEntityLandTile(world, tx, ty) {
+    if (!world || !inBounds(tx, ty, world.size)) return false;
+    const idx = tileIndex(tx, ty, world.size);
+    return world.tiles[idx] === 1;
+  }
+
+  function findNearestEntityLandTile(world, startTx, startTy, maxRadius = 18) {
+    if (!world || !Number.isFinite(startTx) || !Number.isFinite(startTy)) return null;
+    const baseTx = Math.floor(startTx);
+    const baseTy = Math.floor(startTy);
+    if (isValidEntityLandTile(world, baseTx, baseTy)) {
+      return { tx: baseTx, ty: baseTy };
+    }
+    for (let radius = 1; radius <= maxRadius; radius += 1) {
+      for (let dy = -radius; dy <= radius; dy += 1) {
+        for (let dx = -radius; dx <= radius; dx += 1) {
+          if (Math.max(Math.abs(dx), Math.abs(dy)) !== radius) continue;
+          const tx = baseTx + dx;
+          const ty = baseTy + dy;
+          if (!isValidEntityLandTile(world, tx, ty)) continue;
+          return { tx, ty };
+        }
+      }
+    }
+    return null;
+  }
+
+  function clampEntityPositionToLand(world, x, y, maxRadius = 18) {
+    if (!world || !Number.isFinite(x) || !Number.isFinite(y)) return null;
+    const tx = Math.floor(x / CONFIG.tileSize);
+    const ty = Math.floor(y / CONFIG.tileSize);
+    const tile = findNearestEntityLandTile(world, tx, ty, maxRadius);
+    if (!tile) return null;
+    return {
+      tx: tile.tx,
+      ty: tile.ty,
+      x: (tile.tx + 0.5) * CONFIG.tileSize,
+      y: (tile.ty + 0.5) * CONFIG.tileSize,
+    };
+  }
+
+  function findNearestWalkableTileInWorld(world, startTx, startTy, maxRadius = 18) {
+    if (!world || !Number.isFinite(startTx) || !Number.isFinite(startTy)) return null;
+    const baseTx = Math.floor(startTx);
+    const baseTy = Math.floor(startTy);
+    if (isWalkableTileInWorld(world, baseTx, baseTy)) {
+      return { tx: baseTx, ty: baseTy };
+    }
+    for (let radius = 1; radius <= maxRadius; radius += 1) {
+      for (let dy = -radius; dy <= radius; dy += 1) {
+        for (let dx = -radius; dx <= radius; dx += 1) {
+          if (Math.max(Math.abs(dx), Math.abs(dy)) !== radius) continue;
+          const tx = baseTx + dx;
+          const ty = baseTy + dy;
+          if (!isWalkableTileInWorld(world, tx, ty)) continue;
+          return { tx, ty };
+        }
+      }
+    }
+    return null;
+  }
+
+  function clampEntityPositionToWalkable(world, x, y, maxRadius = 18) {
+    if (!world || !Number.isFinite(x) || !Number.isFinite(y)) return null;
+    const tx = Math.floor(x / CONFIG.tileSize);
+    const ty = Math.floor(y / CONFIG.tileSize);
+    const tile = findNearestWalkableTileInWorld(world, tx, ty, maxRadius);
+    if (!tile) return null;
+    return {
+      tx: tile.tx,
+      ty: tile.ty,
+      x: (tile.tx + 0.5) * CONFIG.tileSize,
+      y: (tile.ty + 0.5) * CONFIG.tileSize,
+    };
   }
 
   function applyAnimals(world, animals) {
     const prevAnimals = new Map(
       Array.isArray(world.animals) ? world.animals.map((animal) => [animal.id, animal]) : []
     );
+    let autoId = Number.isInteger(world.nextAnimalId) && world.nextAnimalId > 0
+      ? world.nextAnimalId
+      : 1;
     world.animals = Array.isArray(animals)
-      ? animals.map((animal) => ({
-          id: typeof animal.id === "number" ? animal.id : state.nextAnimalId++,
-          type: animal.type === "goat" ? "goat" : "boar",
-          x: animal.x,
-          y: animal.y,
-          hp: typeof animal.hp === "number" ? animal.hp : (animal.type === "goat" ? 4 : 5),
-          maxHp: typeof animal.maxHp === "number" ? animal.maxHp : (animal.type === "goat" ? 4 : 5),
-          speed: typeof animal.speed === "number" ? animal.speed : (animal.type === "goat" ? 48 : 42),
-          color: animal.color || (animal.type === "goat" ? "#d2cab8" : "#9f8160"),
-          drop: animal.type === "goat" ? { raw_meat: 1, hide: 1 } : { raw_meat: 2, hide: 1 },
-          hitTimer: 0,
-          fleeTimer: 0,
-          wanderTimer: 0,
-          dir: { x: 0, y: 0 },
-          renderX: prevAnimals.get(animal.id)?.renderX ?? animal.x,
-          renderY: prevAnimals.get(animal.id)?.renderY ?? animal.y,
-        }))
+      ? animals
+        .map((animal) => {
+          const type = animal.type === "goat" ? "goat" : "boar";
+          const sourceX = Number.isFinite(animal?.x) ? animal.x : 0;
+          const sourceY = Number.isFinite(animal?.y) ? animal.y : 0;
+          const pos = clampEntityPositionToLand(world, sourceX, sourceY, 22);
+          if (!pos) return null;
+          const id = typeof animal.id === "number" ? animal.id : autoId++;
+          const prev = prevAnimals.get(id);
+          return {
+            id,
+            type,
+            x: pos.x,
+            y: pos.y,
+            hp: typeof animal.hp === "number" ? animal.hp : (type === "goat" ? 4 : 5),
+            maxHp: typeof animal.maxHp === "number" ? animal.maxHp : (type === "goat" ? 4 : 5),
+            speed: typeof animal.speed === "number" ? animal.speed : (type === "goat" ? 48 : 42),
+            color: animal.color || (type === "goat" ? "#d2cab8" : "#9f8160"),
+            drop: type === "goat" ? { raw_meat: 1, hide: 1 } : { raw_meat: 2, hide: 1 },
+            hitTimer: 0,
+            fleeTimer: 0,
+            wanderTimer: 0,
+            dir: { x: 0, y: 0 },
+            renderX: prev?.renderX ?? pos.x,
+            renderY: prev?.renderY ?? pos.y,
+          };
+        })
+        .filter(Boolean)
       : [];
-    world.nextAnimalId = world.animals.reduce((max, animal) => Math.max(max, animal.id + 1), 1);
+    world.nextAnimalId = world.animals.reduce((max, animal) => Math.max(max, animal.id + 1), autoId);
   }
 
   function applyVillagers(world, villagers) {
@@ -6803,10 +7747,15 @@
       ? world.nextVillagerId
       : 1;
     world.villagers = Array.isArray(villagers)
-      ? villagers.map((villager) => {
+      ? villagers
+        .map((villager) => {
           const baseId = typeof villager?.id === "number" ? villager.id : autoId++;
-          const x = Number.isFinite(villager?.x) ? villager.x : 0;
-          const y = Number.isFinite(villager?.y) ? villager.y : 0;
+          const sourceX = Number.isFinite(villager?.x) ? villager.x : 0;
+          const sourceY = Number.isFinite(villager?.y) ? villager.y : 0;
+          const pos = clampEntityPositionToLand(world, sourceX, sourceY, 24);
+          if (!pos) return null;
+          const x = pos.x;
+          const y = pos.y;
           const prev = prevVillagers.get(baseId);
           const speed = clamp(
             Number(villager?.speed) || ((VILLAGER_CONFIG.speedMin + VILLAGER_CONFIG.speedMax) * 0.5),
@@ -6833,11 +7782,60 @@
             renderY: prev?.renderY ?? y,
           };
         })
+        .filter(Boolean)
       : [];
     world.nextVillagerId = world.villagers.reduce((max, villager) => Math.max(max, villager.id + 1), 1);
   }
 
-  function isStructureValidOnLoad(world, entry, bridgeSet) {
+  function bridgeTouchesLand(world, tx, ty) {
+    if (!world) return false;
+    const neighbors = [
+      { tx: tx - 1, ty },
+      { tx: tx + 1, ty },
+      { tx, ty: ty - 1 },
+      { tx, ty: ty + 1 },
+    ];
+    for (const next of neighbors) {
+      if (!inBounds(next.tx, next.ty, world.size)) continue;
+      const idx = tileIndex(next.tx, next.ty, world.size);
+      if (world.tiles[idx] === 1) return true;
+    }
+    return false;
+  }
+
+  function getAnchoredBridgeNetwork(world, bridgeSet) {
+    const anchored = new Set();
+    if (!world || !(bridgeSet instanceof Set) || bridgeSet.size === 0) return anchored;
+    const queue = [];
+    for (const key of bridgeSet) {
+      const [sx, sy] = String(key).split(",");
+      const tx = Number(sx);
+      const ty = Number(sy);
+      if (!Number.isFinite(tx) || !Number.isFinite(ty)) continue;
+      if (!bridgeTouchesLand(world, tx, ty)) continue;
+      anchored.add(key);
+      queue.push({ tx, ty });
+    }
+    let cursor = 0;
+    while (cursor < queue.length) {
+      const node = queue[cursor++];
+      const neighbors = [
+        { tx: node.tx - 1, ty: node.ty },
+        { tx: node.tx + 1, ty: node.ty },
+        { tx: node.tx, ty: node.ty - 1 },
+        { tx: node.tx, ty: node.ty + 1 },
+      ];
+      for (const next of neighbors) {
+        const nextKey = `${next.tx},${next.ty}`;
+        if (!bridgeSet.has(nextKey) || anchored.has(nextKey)) continue;
+        anchored.add(nextKey);
+        queue.push(next);
+      }
+    }
+    return anchored;
+  }
+
+  function isStructureValidOnLoad(world, entry, bridgeSet, anchoredBridgeSet = null) {
     if (!entry || !inBounds(entry.tx, entry.ty, world.size)) return false;
     if (REMOVED_STRUCTURE_TYPES.has(entry.type)) return false;
     const idx = tileIndex(entry.tx, entry.ty, world.size);
@@ -6845,19 +7843,24 @@
 
     if (entry.type === "bridge" || entry.type === "dock") {
       if (baseLand) return false;
-      const key = (tx, ty) => `${tx},${ty}`;
+      const key = `${entry.tx},${entry.ty}`;
+      if (anchoredBridgeSet instanceof Set && !anchoredBridgeSet.has(key)) {
+        return false;
+      }
+      if (bridgeTouchesLand(world, entry.tx, entry.ty)) return true;
+      const toKey = (tx, ty) => `${tx},${ty}`;
       const left = inBounds(entry.tx - 1, entry.ty, world.size)
         && (world.tiles[tileIndex(entry.tx - 1, entry.ty, world.size)] === 1
-          || bridgeSet?.has(key(entry.tx - 1, entry.ty)));
+          || bridgeSet?.has(toKey(entry.tx - 1, entry.ty)));
       const right = inBounds(entry.tx + 1, entry.ty, world.size)
         && (world.tiles[tileIndex(entry.tx + 1, entry.ty, world.size)] === 1
-          || bridgeSet?.has(key(entry.tx + 1, entry.ty)));
+          || bridgeSet?.has(toKey(entry.tx + 1, entry.ty)));
       const up = inBounds(entry.tx, entry.ty - 1, world.size)
         && (world.tiles[tileIndex(entry.tx, entry.ty - 1, world.size)] === 1
-          || bridgeSet?.has(key(entry.tx, entry.ty - 1)));
+          || bridgeSet?.has(toKey(entry.tx, entry.ty - 1)));
       const down = inBounds(entry.tx, entry.ty + 1, world.size)
         && (world.tiles[tileIndex(entry.tx, entry.ty + 1, world.size)] === 1
-          || bridgeSet?.has(key(entry.tx, entry.ty + 1)));
+          || bridgeSet?.has(toKey(entry.tx, entry.ty + 1)));
       return left || right || up || down;
     }
 
@@ -7789,6 +8792,96 @@
     return spawned;
   }
 
+  function canPlaceWildRobotTile(world, tx, ty) {
+    if (!world || !inBounds(tx, ty, world.size)) return false;
+    const idx = tileIndex(tx, ty, world.size);
+    if (world.tiles[idx] !== 1) return false;
+    if (world.beachGrid?.[idx]) return false;
+    if (getCaveAt(world, tx, ty)) return false;
+    const structure = getStructureAt(tx, ty);
+    if (structure && !structure.removed) return false;
+    return true;
+  }
+
+  function spawnWildRobotAt(world, tx, ty) {
+    if (!canPlaceWildRobotTile(world, tx, ty)) return false;
+    clearResourceForStructure(world, tx, ty);
+    const structure = addStructure("robot", tx, ty, {
+      meta: {
+        wildSpawn: true,
+      },
+    });
+    const robot = ensureRobotMeta(structure);
+    if (!robot) return false;
+    robot.mode = null;
+    robot.manualStop = false;
+    robot.state = "idle";
+    robot.targetResourceId = null;
+    robot.mineTimer = 0;
+    robot.retargetTimer = 0;
+    robot.pauseTimer = 0;
+    robot.recallActive = false;
+    robot.recallBenchTx = null;
+    robot.recallBenchTy = null;
+    return true;
+  }
+
+  function hasWildSpawnRobot() {
+    return Array.isArray(state.structures)
+      && state.structures.some(
+        (structure) => structure
+          && !structure.removed
+          && structure.type === "robot"
+          && !!structure.meta?.wildSpawn
+      );
+  }
+
+  function ensureRareOuterWildRobot(world) {
+    if (!world || !Array.isArray(world.islands) || world.islands.length < 2) return false;
+    if (!Array.isArray(state.structures) || !state.structureGrid) return false;
+    if (hasWildSpawnRobot()) return false;
+
+    const seedInt = Number.isFinite(world.seedInt) ? world.seedInt : seedToInt(String(world.seed || "island-1"));
+    const spawnRoll = rand2d(73, 411, seedInt + 19421);
+    if (spawnRoll >= 0.02) return false;
+
+    const centerX = world.size * 0.5;
+    const centerY = world.size * 0.5;
+    const outerIslands = world.islands
+      .filter((island) => island && !island.starter && island.radius >= 6.5)
+      .map((island) => ({
+        island,
+        outerScore: Math.hypot(island.x - centerX, island.y - centerY) + island.radius * 0.45,
+      }))
+      .sort((a, b) => b.outerScore - a.outerScore)
+      .slice(0, 14);
+    if (outerIslands.length === 0) return false;
+
+    const rng = makeRng(seedInt ^ 0x51f2ac9d);
+    for (const entry of outerIslands) {
+      const island = entry.island;
+      for (let attempt = 0; attempt < 42; attempt += 1) {
+        const angle = rng() * Math.PI * 2;
+        const radius = island.radius * (0.12 + rng() * 0.52);
+        const tx = Math.floor(island.x + Math.cos(angle) * radius);
+        const ty = Math.floor(island.y + Math.sin(angle) * radius);
+        if (!spawnWildRobotAt(world, tx, ty)) continue;
+        return true;
+      }
+      for (let ring = 0.08; ring <= 0.56; ring += 0.08) {
+        const radius = island.radius * ring;
+        for (let i = 0; i < 24; i += 1) {
+          const angle = (i / 24) * Math.PI * 2 + ring * 5.3;
+          const tx = Math.floor(island.x + Math.cos(angle) * radius);
+          const ty = Math.floor(island.y + Math.sin(angle) * radius);
+          if (!spawnWildRobotAt(world, tx, ty)) continue;
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
   function startNewGame(seedStr) {
     const normalizedSeed = normalizeSeedValue(seedStr);
     const world = generateWorld(normalizedSeed);
@@ -7858,6 +8951,7 @@
     const benchSpot = findBenchSpot(world, spawn);
     addStructure("bench", benchSpot.tx, benchSpot.ty, { meta: { spawnBench: true } });
     seedSurfaceVillages(world);
+    ensureRareOuterWildRobot(world);
 
     state.dirty = true;
     saveStatus.textContent = "Saving...";
@@ -7877,14 +8971,18 @@
     const savedRaw = loadGame(targetSeed);
     const saved = migrateSave(savedRaw);
     if (saved) {
-      const world = generateWorld(saved.seed);
+      const layoutCompatible = isSaveLayoutCompatible(saved);
+      const preparedSave = layoutCompatible
+        ? saved
+        : sanitizeSaveForCurrentLayout(saved, targetSeed);
+      const world = generateWorld(preparedSave.seed);
       normalizeSurfaceResources(world);
       state.nextDropId = 1;
-      applyResourceStates(world, saved.resourceStates);
-      applyRespawnTasks(world, saved.respawnTasks);
-      applyDrops(world, saved.drops);
-      applyAnimals(world, saved.animals);
-      applyVillagers(world, saved.villagers);
+      applyResourceStates(world, preparedSave.resourceStates);
+      applyRespawnTasks(world, preparedSave.respawnTasks);
+      applyDrops(world, preparedSave.drops);
+      applyAnimals(world, preparedSave.animals);
+      applyVillagers(world, preparedSave.villagers);
       world.monsters = world.monsters || [];
       world.nextMonsterId = world.nextMonsterId || 1;
       world.projectiles = [];
@@ -7897,11 +8995,11 @@
       if (world.animals.length === 0) {
         seedSurfaceAnimals(world, 24);
       }
-      ensureSurfaceCaves(world, saved.caves);
+      ensureSurfaceCaves(world, preparedSave.caves);
 
       if (Array.isArray(world.caves)) {
         for (const cave of world.caves) {
-          const savedCave = saved.caves?.find((entry) => entry.id === cave.id);
+          const savedCave = preparedSave.caves?.find((entry) => entry.id === cave.id);
           if (savedCave) {
             applyResourceStates(cave.world, savedCave.resourceStates);
             applyRespawnTasks(cave.world, savedCave.respawnTasks);
@@ -7921,20 +9019,21 @@
 
       state.surfaceWorld = world;
       state.world = world;
-      state.inventory = sanitizeInventorySlots(saved.inventory, INVENTORY_SIZE);
+      state.inventory = sanitizeInventorySlots(preparedSave.inventory, INVENTORY_SIZE);
       state.structures = [];
       state.structureGrid = new Array(world.size * world.size).fill(null);
 
-      if (Array.isArray(saved.structures)) {
+      if (Array.isArray(preparedSave.structures)) {
         const bridgeSet = new Set(
-          saved.structures
+          preparedSave.structures
             .filter((entry) => entry && (entry.type === "bridge" || entry.type === "dock"))
             .map((entry) => `${entry.tx},${entry.ty}`)
         );
-        for (const entry of saved.structures) {
+        const anchoredBridgeSet = getAnchoredBridgeNetwork(world, bridgeSet);
+        for (const entry of preparedSave.structures) {
           if (!entry) continue;
           const normalized = { ...entry, type: normalizeLegacyStructureType(entry.type) };
-          if (!isStructureValidOnLoad(world, normalized, bridgeSet)) continue;
+          if (!isStructureValidOnLoad(world, normalized, bridgeSet, anchoredBridgeSet)) continue;
           const storageSize = normalized.type === "robot"
             ? ROBOT_STORAGE_SIZE
             : (normalized.type === "chest" ? CHEST_SIZE : null);
@@ -7955,17 +9054,17 @@
 
       const spawnTile = findSpawnTile(world);
       state.player = {
-        x: saved.player?.x ?? (spawnTile.x + 0.5) * CONFIG.tileSize,
-        y: saved.player?.y ?? (spawnTile.y + 0.5) * CONFIG.tileSize,
-        toolTier: saved.player?.toolTier ?? 1,
-        unlocks: normalizeUnlocks(saved.player?.unlocks),
-        checkpoint: normalizeCheckpoint(saved.player?.checkpoint) ?? {
+        x: preparedSave.player?.x ?? (spawnTile.x + 0.5) * CONFIG.tileSize,
+        y: preparedSave.player?.y ?? (spawnTile.y + 0.5) * CONFIG.tileSize,
+        toolTier: preparedSave.player?.toolTier ?? 1,
+        unlocks: normalizeUnlocks(preparedSave.player?.unlocks),
+        checkpoint: normalizeCheckpoint(preparedSave.player?.checkpoint) ?? {
           x: (spawnTile.x + 0.5) * CONFIG.tileSize,
           y: (spawnTile.y + 0.5) * CONFIG.tileSize,
         },
         facing: { x: 1, y: 0 },
-        maxHp: saved.player?.maxHp ?? 100,
-        hp: saved.player?.hp ?? 100,
+        maxHp: preparedSave.player?.maxHp ?? 100,
+        hp: preparedSave.player?.hp ?? 100,
         poisonTimer: 0,
         poisonDps: 0,
         inHut: false,
@@ -7977,21 +9076,21 @@
       state.activeHouse = null;
       state.housePlayer = null;
       state.spawnTile = spawnTile;
-      state.timeOfDay = typeof saved.timeOfDay === "number" ? saved.timeOfDay : 0;
+      state.timeOfDay = typeof preparedSave.timeOfDay === "number" ? preparedSave.timeOfDay : 0;
       state.checkpointTimer = 0;
       state.animalVocalTimer = 2.4 + Math.random() * 1.8;
-      state.gameWon = !!saved.gameWon;
+      state.gameWon = !!preparedSave.gameWon;
       state.winSequencePlayed = false;
       state.winTimer = 0;
       state.winPlayerPos = state.player ? { x: state.player.x, y: state.player.y } : null;
       state.isNight = state.timeOfDay >= CONFIG.dayLength;
       state.surfaceSpawnTimer = MONSTER.spawnInterval;
-      state.inCave = !!saved.player?.inCave;
+      state.inCave = !!preparedSave.player?.inCave;
       state.activeCave = null;
-      state.returnPosition = saved.player?.returnPosition ?? null;
+      state.returnPosition = preparedSave.player?.returnPosition ?? null;
 
       if (state.inCave && world.caves) {
-        const cave = world.caves.find((entry) => entry.id === saved.player?.caveId);
+        const cave = world.caves.find((entry) => entry.id === preparedSave.player?.caveId);
         if (cave) {
           state.world = cave.world;
           state.activeCave = cave;
@@ -8031,11 +9130,12 @@
 
       const villagesAdded = ensureSurfaceVillagePresence(world);
       const villagersAdded = ensureVillageVillagers(world);
+      const wildRobotAdded = ensureRareOuterWildRobot(world);
 
       state.targetResource = null;
       state.activeStation = null;
       state.activeChest = null;
-      state.dirty = villagesAdded || villagersAdded > 0;
+      state.dirty = (!layoutCompatible) || villagesAdded || villagersAdded > 0 || wildRobotAdded;
       if (state.dirty && !netIsClientReady()) {
         saveStatus.textContent = "Saving...";
       }
@@ -8198,6 +9298,177 @@
     if (!Number.isFinite(resource.hp) || resource.hp <= 0 || resource.hp > resource.maxHp) {
       resource.hp = resource.maxHp;
     }
+  }
+
+  function getBiomeStoneBiomeCount() {
+    return Math.min(BIOMES.length, BIOME_STONES.length);
+  }
+
+  function queueBiomeStoneRespawnTask(world, resource, timerOverride = null) {
+    if (!world || !resource || resource.type !== "biomeStone") return false;
+    if (!Array.isArray(world.respawnTasks)) world.respawnTasks = [];
+    const delay = Number.isFinite(timerOverride)
+      ? Math.max(1, Number(timerOverride))
+      : getBiomeStoneRespawnDelay();
+    const existing = world.respawnTasks.find(
+      (task) => task?.type === "biomeStone" && task.id === resource.id
+    );
+    if (existing) {
+      existing.tx = resource.tx;
+      existing.ty = resource.ty;
+      existing.timer = Math.min(
+        Math.max(1, Number(existing.timer) || delay),
+        delay
+      );
+      return false;
+    }
+    world.respawnTasks.push({
+      type: "biomeStone",
+      id: resource.id,
+      tx: resource.tx,
+      ty: resource.ty,
+      timer: delay,
+    });
+    return true;
+  }
+
+  function canPlaceBiomeStoneAt(world, tx, ty, biomeId, allowResourceId = null) {
+    if (!world || !inBounds(tx, ty, world.size)) return false;
+    const idx = tileIndex(tx, ty, world.size);
+    if (world.tiles[idx] !== 1) return false;
+    if (world.beachGrid?.[idx]) return false;
+    if (Array.isArray(world.biomeGrid) && world.biomeGrid[idx] !== biomeId) return false;
+    const occupiedResId = Array.isArray(world.resourceGrid) ? world.resourceGrid[idx] : -1;
+    if (
+      occupiedResId !== -1
+      && occupiedResId !== null
+      && occupiedResId !== undefined
+      && occupiedResId !== allowResourceId
+    ) {
+      return false;
+    }
+    const surface = state.surfaceWorld || state.world;
+    if (world === surface) {
+      if (getStructureAt(tx, ty)) return false;
+      if (getCaveAt(world, tx, ty)) return false;
+    }
+    return true;
+  }
+
+  function findBiomeStoneSpawnTile(world, biomeId, preferredTx = null, preferredTy = null, allowResourceId = null) {
+    if (!world || !Number.isInteger(biomeId) || biomeId < 0 || biomeId >= getBiomeStoneBiomeCount()) return null;
+
+    const tryTile = (tx, ty) => {
+      if (!canPlaceBiomeStoneAt(world, tx, ty, biomeId, allowResourceId)) return null;
+      return { tx, ty };
+    };
+
+    if (Number.isFinite(preferredTx) && Number.isFinite(preferredTy)) {
+      const baseTx = Math.floor(preferredTx);
+      const baseTy = Math.floor(preferredTy);
+      const direct = tryTile(baseTx, baseTy);
+      if (direct) return direct;
+      for (let radius = 1; radius <= 18; radius += 1) {
+        for (let dy = -radius; dy <= radius; dy += 1) {
+          for (let dx = -radius; dx <= radius; dx += 1) {
+            if (Math.max(Math.abs(dx), Math.abs(dy)) !== radius) continue;
+            const found = tryTile(baseTx + dx, baseTy + dy);
+            if (found) return found;
+          }
+        }
+      }
+    }
+
+    if (Array.isArray(world.islands) && world.islands.length > 0) {
+      const candidates = world.islands.filter(
+        (island) => island && Number.isInteger(island.biomeId) && island.biomeId === biomeId
+      );
+      for (const island of candidates) {
+        const radius = Math.max(3, Math.floor((Number(island.radius) || 6) * 0.86));
+        for (let attempt = 0; attempt < 60; attempt += 1) {
+          const angle = Math.random() * Math.PI * 2;
+          const dist = Math.random() * radius;
+          const tx = Math.floor(island.x + Math.cos(angle) * dist);
+          const ty = Math.floor(island.y + Math.sin(angle) * dist);
+          const found = tryTile(tx, ty);
+          if (found) return found;
+        }
+      }
+    }
+
+    for (let attempt = 0; attempt < 320; attempt += 1) {
+      const tx = Math.floor(Math.random() * world.size);
+      const ty = Math.floor(Math.random() * world.size);
+      const found = tryTile(tx, ty);
+      if (found) return found;
+    }
+
+    return null;
+  }
+
+  function spawnBiomeStoneResource(world, tx, ty, biomeId) {
+    if (!canPlaceBiomeStoneAt(world, tx, ty, biomeId)) return null;
+    if (!Array.isArray(world.resources)) world.resources = [];
+    if (!Array.isArray(world.resourceGrid)) world.resourceGrid = createResourceGrid(world.size);
+    const idx = tileIndex(tx, ty, world.size);
+    const resource = {
+      id: world.resources.length,
+      type: "biomeStone",
+      biomeId,
+      x: (tx + 0.5) * CONFIG.tileSize,
+      y: (ty + 0.5) * CONFIG.tileSize,
+      tx,
+      ty,
+      hp: 6,
+      maxHp: 6,
+      removed: false,
+      hitTimer: 0,
+      stage: "alive",
+      respawnTimer: 0,
+    };
+    world.resources.push(resource);
+    world.resourceGrid[idx] = resource.id;
+    return resource;
+  }
+
+  function ensureMinimumBiomeStonePerBiome(world) {
+    if (!world || !Array.isArray(world.resources)) return false;
+    if (!Array.isArray(world.respawnTasks)) world.respawnTasks = [];
+    const minActive = Math.max(1, Number(BIOME_STONE_RESPAWN.minActivePerBiome) || 1);
+    const biomeCount = getBiomeStoneBiomeCount();
+    let changed = false;
+
+    for (let biomeId = 0; biomeId < biomeCount; biomeId += 1) {
+      const stones = world.resources.filter(
+        (res) => res && res.type === "biomeStone" && res.biomeId === biomeId
+      );
+      const activeCount = stones.reduce((count, res) => count + Number(!res.removed), 0);
+      if (activeCount >= minActive) continue;
+
+      let pending = stones.filter(
+        (res) => world.respawnTasks.some((task) => task?.type === "biomeStone" && task.id === res.id)
+      ).length;
+      const removed = stones.filter((res) => res.removed);
+
+      while (activeCount + pending < minActive && removed.length > 0) {
+        const res = removed.shift();
+        if (!res) break;
+        if (queueBiomeStoneRespawnTask(world, res)) {
+          pending += 1;
+          changed = true;
+        }
+      }
+
+      while (activeCount + pending < minActive) {
+        const spot = findBiomeStoneSpawnTile(world, biomeId);
+        if (!spot) break;
+        const spawned = spawnBiomeStoneResource(world, spot.tx, spot.ty, biomeId);
+        if (!spawned) break;
+        pending += 1;
+        changed = true;
+      }
+    }
+    return changed;
   }
 
   function canHarvestResource(resource, player = state.player) {
@@ -8751,14 +10022,15 @@
     return null;
   }
 
-  function spawnDrop(itemId, qty, x, y, world = state.world) {
-    if (qty <= 0 || !world) return;
+  function spawnDrop(itemId, qty, x, y, world = state.world, ttl = DROP_DESPAWN.lifetime) {
+    if (qty <= 0 || !world || !ITEMS[itemId]) return;
     world.drops.push({
       id: state.nextDropId++,
       itemId,
       qty,
       x,
       y,
+      ttl: clamp(Number(ttl) || DROP_DESPAWN.lifetime, 0, DROP_DESPAWN.lifetime),
     });
     markDirty();
   }
@@ -8860,19 +10132,45 @@
     setPrompt(`Dropped ${ITEMS[dropItemId]?.name || dropItemId}`, 0.9);
   }
 
-  function updateDrops() {
-    if (!state.player) return;
-    if (state.player.inHut) return;
-    if (!state.world.drops) state.world.drops = [];
+  function updateDropsInWorld(world, dt = 0, allowPickup = false) {
+    if (!world) return { changed: false, pickedUp: false };
+    if (!Array.isArray(world.drops)) world.drops = [];
+    const step = Number.isFinite(dt) ? Math.max(0, dt) : 0;
+    const authoritative = !netIsClientReady();
     let changed = false;
-    for (const drop of state.world.drops) {
+    let pickedUp = false;
+
+    for (const drop of world.drops) {
+      if (!drop) continue;
+      drop.qty = Math.max(0, Math.floor(Number(drop.qty) || 0));
       if (drop.qty <= 0) continue;
-      const dist = Math.hypot(drop.x - state.player.x, drop.y - state.player.y);
-      if (dist < CONFIG.interactRange * 0.8) {
-        const remaining = addItem(state.inventory, drop.itemId, drop.qty);
-        if (remaining === 0) {
+      if (!Number.isFinite(drop.ttl)) {
+        drop.ttl = DROP_DESPAWN.lifetime;
+        changed = true;
+      }
+
+      if (authoritative) {
+        drop.ttl = Math.max(0, drop.ttl - step);
+        if (drop.ttl <= 0) {
           drop.qty = 0;
           changed = true;
+          continue;
+        }
+      } else {
+        // Smooth local warning visuals between host snapshots.
+        drop.ttl = Math.max(0, drop.ttl - step);
+      }
+
+      if (!allowPickup || !state.player) continue;
+      const dist = Math.hypot(drop.x - state.player.x, drop.y - state.player.y);
+      if (dist < CONFIG.interactRange * 0.8) {
+        const beforeQty = drop.qty;
+        const remaining = addItem(state.inventory, drop.itemId, beforeQty);
+        if (remaining < beforeQty) {
+          const pickedQty = beforeQty - remaining;
+          drop.qty = remaining;
+          changed = true;
+          pickedUp = true;
           markDirty();
           if (netIsClient()) {
             sendToHost({
@@ -8880,20 +10178,51 @@
               world: state.inCave ? "cave" : "surface",
               caveId: state.activeCave?.id ?? null,
               dropId: drop.id,
+              qty: pickedQty,
               itemId: drop.itemId,
               x: drop.x,
               y: drop.y,
             });
           }
-        } else if (remaining < drop.qty) {
-          drop.qty = remaining;
-          changed = true;
-          markDirty();
         }
       }
     }
-    state.world.drops = state.world.drops.filter((drop) => drop.qty > 0);
-    if (changed) updateAllSlotUI();
+
+    const previousCount = world.drops.length;
+    if (authoritative) {
+      world.drops = world.drops.filter((drop) => drop && drop.qty > 0 && drop.ttl > 0);
+    } else {
+      world.drops = world.drops.filter((drop) => drop && drop.qty > 0);
+    }
+    if (world.drops.length !== previousCount) changed = true;
+    if (authoritative && changed) markDirty();
+    return { changed, pickedUp };
+  }
+
+  function updateDrops(dt = 0) {
+    if (!state.world) return;
+    const step = Number.isFinite(dt) ? Math.max(0, dt) : 0;
+
+    const authoritative = !netIsClientReady();
+    const worlds = [state.world];
+    if (authoritative && state.surfaceWorld && state.surfaceWorld !== state.world) {
+      worlds.push(state.surfaceWorld);
+    }
+    if (authoritative && Array.isArray(state.surfaceWorld?.caves)) {
+      for (const cave of state.surfaceWorld.caves) {
+        if (!cave?.world) continue;
+        if (cave.world === state.world) continue;
+        worlds.push(cave.world);
+      }
+    }
+
+    const canPickup = !!state.player && !state.player.inHut;
+    let inventoryChanged = false;
+    for (const world of worlds) {
+      const result = updateDropsInWorld(world, step, world === state.world && canPickup);
+      if (result.pickedUp) inventoryChanged = true;
+    }
+    if (inventoryChanged) updateAllSlotUI();
   }
 
   function applyHarvestToResource(world, resource, damage, awardItems, emitSfx = true) {
@@ -8943,9 +10272,12 @@
         resource.removed = true;
         const idx = tileIndex(resource.tx, resource.ty, world.size);
         world.resourceGrid[idx] = -1;
-        if (resource.type === "rock" || resource.type === "grass") {
-          const respawnType = resource.type;
-          const respawnDelay = resource.type === "grass" ? RESPAWN.grass : RESPAWN.rock;
+        if (!Array.isArray(world.respawnTasks)) world.respawnTasks = [];
+        if (resource.type === "rock" || resource.type === "grass" || resource.type === "biomeStone") {
+          const respawnType = resource.type === "biomeStone" ? "biomeStone" : resource.type;
+          const respawnDelay = respawnType === "biomeStone"
+            ? getBiomeStoneRespawnDelay()
+            : (respawnType === "grass" ? RESPAWN.grass : RESPAWN.rock);
           const exists = world.respawnTasks.some((task) => task?.type === respawnType && task.id === resource.id);
           if (!exists) {
             world.respawnTasks.push({
@@ -9070,6 +10402,31 @@
     iconCtx.lineJoin = "round";
 
     switch (itemId) {
+      case "tree_resource":
+        iconCtx.fillStyle = "#7a532f";
+        iconCtx.fillRect(cx - s * 0.07, cy - s * 0.04, s * 0.14, s * 0.3);
+        iconCtx.fillStyle = "#2ba061";
+        iconCtx.beginPath();
+        iconCtx.arc(cx - s * 0.13, cy - s * 0.12, s * 0.14, 0, Math.PI * 2);
+        iconCtx.arc(cx + s * 0.13, cy - s * 0.12, s * 0.14, 0, Math.PI * 2);
+        iconCtx.arc(cx, cy - s * 0.23, s * 0.15, 0, Math.PI * 2);
+        iconCtx.fill();
+        iconCtx.fillStyle = "rgba(225, 255, 236, 0.24)";
+        iconCtx.beginPath();
+        iconCtx.arc(cx - s * 0.04, cy - s * 0.19, s * 0.07, 0, Math.PI * 2);
+        iconCtx.fill();
+        break;
+      case "stop_icon":
+        iconCtx.fillStyle = "#f5d4d4";
+        drawRoundedRect(iconCtx, cx - s * 0.22, cy - s * 0.22, s * 0.44, s * 0.44, 4);
+        iconCtx.fill();
+        iconCtx.strokeStyle = "#cc5f5f";
+        iconCtx.lineWidth = 1.8;
+        iconCtx.beginPath();
+        iconCtx.moveTo(cx - s * 0.12, cy);
+        iconCtx.lineTo(cx + s * 0.12, cy);
+        iconCtx.stroke();
+        break;
       case "wood":
       case "plank":
       case "stick":
@@ -10142,10 +11499,41 @@
     }
   }
 
+  const ROBOT_MODE_MENU_OPTIONS = Object.freeze([
+    {
+      mode: ROBOT_MODE.trees,
+      label: "Trees",
+      icon: "tree_resource",
+      description: "Hunt and chop nearby trees.",
+      hint: "Robot will mine for trees.",
+    },
+    {
+      mode: ROBOT_MODE.stone,
+      label: "Stone",
+      icon: "stone",
+      description: "Hunt and break rock nodes.",
+      hint: "Robot will mine for stone.",
+    },
+    {
+      mode: ROBOT_MODE.grass,
+      label: "Grass",
+      icon: "grass",
+      description: "Hunt and harvest grass nodes.",
+      hint: "Robot will mine for grass.",
+    },
+  ]);
+
+  function getRobotModeHint(mode, manualStop = false) {
+    if (manualStop) return "Robot movement is stopped. Select a resource icon to resume.";
+    const selected = ROBOT_MODE_MENU_OPTIONS.find((entry) => entry.mode === mode);
+    return selected?.hint || "Select a target resource for this robot.";
+  }
+
   function renderRobotStationMenu() {
     const structure = state.activeStation;
     if (!structure || structure.type !== "robot") return;
     const robot = ensureRobotMeta(structure);
+    if (!robot) return;
     stationTitle.textContent = STRUCTURE_DEFS.robot?.name ?? "Robot";
     stationOptions.innerHTML = "";
 
@@ -10169,104 +11557,99 @@
     status.appendChild(modeLine);
     stationOptions.appendChild(status);
 
-    const treesCard = document.createElement("div");
-    treesCard.className = "recipe-card";
-    const treesTitle = document.createElement("div");
-    treesTitle.className = "recipe-title";
-    treesTitle.textContent = "Mine Trees";
-    const treesDesc = document.createElement("div");
-    treesDesc.className = "recipe-desc";
-    treesDesc.textContent = "Harvests wood from trees in the surrounding islands.";
-    const treesBtn = document.createElement("button");
-    const treesActive = robot.mode === ROBOT_MODE.trees;
-    treesBtn.textContent = treesActive ? (robot.recallActive ? "Resume" : "Selected") : "Select";
-    treesBtn.disabled = treesActive && !robot.recallActive;
-    treesBtn.addEventListener("click", () => {
-      setRobotMode(structure, ROBOT_MODE.trees);
-      renderRobotStationMenu();
-    });
-    treesCard.appendChild(treesTitle);
-    treesCard.appendChild(treesDesc);
-    treesCard.appendChild(treesBtn);
-    stationOptions.appendChild(treesCard);
+    const modeCard = document.createElement("div");
+    modeCard.className = "recipe-card";
+    const modeTitle = document.createElement("div");
+    modeTitle.className = "recipe-title";
+    modeTitle.textContent = "Target Resource";
+    const modeDesc = document.createElement("div");
+    modeDesc.className = "recipe-desc";
+    modeDesc.textContent = "Select what this robot should hunt and mine.";
+    const modeGrid = document.createElement("div");
+    modeGrid.className = "robot-mode-grid";
+    for (const option of ROBOT_MODE_MENU_OPTIONS) {
+      const modeBtn = document.createElement("button");
+      modeBtn.type = "button";
+      modeBtn.className = "robot-mode-btn";
+      const active = robot.mode === option.mode;
+      if (active) modeBtn.classList.add("active");
+      modeBtn.title = option.description;
 
-    const stoneCard = document.createElement("div");
-    stoneCard.className = "recipe-card";
-    const stoneTitle = document.createElement("div");
-    stoneTitle.className = "recipe-title";
-    stoneTitle.textContent = "Mine Stone";
-    const stoneDesc = document.createElement("div");
-    stoneDesc.className = "recipe-desc";
-    stoneDesc.textContent = "Harvests rock nodes for building and refining.";
-    const stoneBtn = document.createElement("button");
-    const stoneActive = robot.mode === ROBOT_MODE.stone;
-    stoneBtn.textContent = stoneActive ? (robot.recallActive ? "Resume" : "Selected") : "Select";
-    stoneBtn.disabled = stoneActive && !robot.recallActive;
-    stoneBtn.addEventListener("click", () => {
-      setRobotMode(structure, ROBOT_MODE.stone);
-      renderRobotStationMenu();
-    });
-    stoneCard.appendChild(stoneTitle);
-    stoneCard.appendChild(stoneDesc);
-    stoneCard.appendChild(stoneBtn);
-    stationOptions.appendChild(stoneCard);
+      const iconWrap = document.createElement("span");
+      iconWrap.className = "robot-mode-icon";
+      applyItemVisual(iconWrap, option.icon, true);
+      const label = document.createElement("span");
+      label.className = "robot-mode-label";
+      label.textContent = option.label;
 
-    const grassCard = document.createElement("div");
-    grassCard.className = "recipe-card";
-    const grassTitle = document.createElement("div");
-    grassTitle.className = "recipe-title";
-    grassTitle.textContent = "Mine Grass";
-    const grassDesc = document.createElement("div");
-    grassDesc.className = "recipe-desc";
-    grassDesc.textContent = "Harvests grass nodes for paper and utility recipes.";
-    const grassBtn = document.createElement("button");
-    const grassActive = robot.mode === ROBOT_MODE.grass;
-    grassBtn.textContent = grassActive ? (robot.recallActive ? "Resume" : "Selected") : "Select";
-    grassBtn.disabled = grassActive && !robot.recallActive;
-    grassBtn.addEventListener("click", () => {
-      setRobotMode(structure, ROBOT_MODE.grass);
-      renderRobotStationMenu();
-    });
-    grassCard.appendChild(grassTitle);
-    grassCard.appendChild(grassDesc);
-    grassCard.appendChild(grassBtn);
-    stationOptions.appendChild(grassCard);
+      modeBtn.appendChild(iconWrap);
+      modeBtn.appendChild(label);
+      modeBtn.addEventListener("click", () => {
+        setRobotMode(structure, option.mode);
+        renderRobotStationMenu();
+      });
+      modeGrid.appendChild(modeBtn);
+    }
+    modeCard.appendChild(modeTitle);
+    modeCard.appendChild(modeDesc);
+    modeCard.appendChild(modeGrid);
+    stationOptions.appendChild(modeCard);
 
-    const invCard = document.createElement("div");
-    invCard.className = "recipe-card";
-    const invTitle = document.createElement("div");
-    invTitle.className = "recipe-title";
-    invTitle.textContent = "Robot Inventory";
-    const invDesc = document.createElement("div");
-    invDesc.className = "recipe-desc";
-    invDesc.textContent = "Collect resources gathered by the robot.";
+    const actionCard = document.createElement("div");
+    actionCard.className = "recipe-card";
+    const actionTitle = document.createElement("div");
+    actionTitle.className = "recipe-title";
+    actionTitle.textContent = "Robot Commands";
+    const actionDesc = document.createElement("div");
+    actionDesc.className = "recipe-desc";
+    actionDesc.textContent = "Open cargo or force the robot to return to the spawn crafting bench.";
+    const actionRow = document.createElement("div");
+    actionRow.className = "robot-action-row";
+
     const invBtn = document.createElement("button");
-    invBtn.textContent = "Open Inventory";
-    invBtn.addEventListener("click", () => openChest(structure));
-    invCard.appendChild(invTitle);
-    invCard.appendChild(invDesc);
-    invCard.appendChild(invBtn);
-    stationOptions.appendChild(invCard);
+    invBtn.type = "button";
+    invBtn.className = "robot-action-btn";
+    const invIcon = document.createElement("span");
+    invIcon.className = "robot-action-icon";
+    applyItemVisual(invIcon, "robot", true);
+    const invLabel = document.createElement("span");
+    invLabel.className = "robot-action-label";
+    invLabel.textContent = "Inventory";
+    invBtn.appendChild(invIcon);
+    invBtn.appendChild(invLabel);
+    invBtn.addEventListener("click", () => {
+      closeStationMenu();
+      openChest(structure);
+    });
 
-    const stopCard = document.createElement("div");
-    stopCard.className = "recipe-card";
-    const stopTitle = document.createElement("div");
-    stopTitle.className = "recipe-title";
-    stopTitle.textContent = "Emergency Control";
-    const stopDesc = document.createElement("div");
-    stopDesc.className = "recipe-desc";
-    stopDesc.textContent = "Stop mining now and send robot back to spawn crafting bench.";
     const stopBtn = document.createElement("button");
-    stopBtn.textContent = robot.manualStop ? "Stopped" : "Stop Movement";
+    stopBtn.type = "button";
+    stopBtn.className = "robot-action-btn danger";
+    const stopIcon = document.createElement("span");
+    stopIcon.className = "robot-action-icon";
+    applyItemVisual(stopIcon, "stop_icon", true);
+    const stopLabel = document.createElement("span");
+    stopLabel.className = "robot-action-label";
+    stopLabel.textContent = robot.manualStop ? "Stopped" : "Stop Movement";
+    stopBtn.appendChild(stopIcon);
+    stopBtn.appendChild(stopLabel);
     stopBtn.disabled = !!robot.manualStop && robot.state !== "returning";
     stopBtn.addEventListener("click", () => {
       stopRobotMovement(structure);
       renderRobotStationMenu();
     });
-    stopCard.appendChild(stopTitle);
-    stopCard.appendChild(stopDesc);
-    stopCard.appendChild(stopBtn);
-    stationOptions.appendChild(stopCard);
+
+    actionRow.appendChild(invBtn);
+    actionRow.appendChild(stopBtn);
+    actionCard.appendChild(actionTitle);
+    actionCard.appendChild(actionDesc);
+    actionCard.appendChild(actionRow);
+    stationOptions.appendChild(actionCard);
+
+    const bubble = document.createElement("div");
+    bubble.className = "robot-menu-bubble";
+    bubble.textContent = getRobotModeHint(robot.mode, robot.manualStop);
+    stationOptions.appendChild(bubble);
   }
 
   function craftStationRecipe(recipe) {
@@ -10871,6 +12254,8 @@
   function updateWorldResources(world, dt) {
     if (!world) return;
     if (!Array.isArray(world.resources)) return;
+    if (!Array.isArray(world.resourceGrid)) world.resourceGrid = createResourceGrid(world.size);
+    if (!Array.isArray(world.respawnTasks)) world.respawnTasks = [];
     for (const res of world.resources) {
       if (res.hitTimer > 0) res.hitTimer -= dt;
       if (res.type === "tree" && res.stage && res.stage !== "alive") {
@@ -10895,11 +12280,79 @@
       if (res.removed) continue;
     }
 
-    if (!Array.isArray(world.respawnTasks) || world.respawnTasks.length === 0) return;
+    if (world.respawnTasks.length === 0) return;
     for (let i = world.respawnTasks.length - 1; i >= 0; i -= 1) {
       const task = world.respawnTasks[i];
+      if (!task || typeof task !== "object") {
+        world.respawnTasks.splice(i, 1);
+        continue;
+      }
+      task.tx = Math.floor(Number(task.tx) || 0);
+      task.ty = Math.floor(Number(task.ty) || 0);
+      if (!Number.isFinite(task.timer)) {
+        task.timer = getRespawnDelayForTaskType(task.type);
+      }
+      if (!inBounds(task.tx, task.ty, world.size)) {
+        world.respawnTasks.splice(i, 1);
+        continue;
+      }
       task.timer -= dt;
       if (task.timer > 0) continue;
+
+      if (task.type === "biomeStone") {
+        const res = typeof task.id === "number" ? world.resources[task.id] : null;
+        if (res && res.type !== "biomeStone") {
+          world.respawnTasks.splice(i, 1);
+          continue;
+        }
+        const tileBiome = Array.isArray(world.biomeGrid)
+          ? world.biomeGrid[tileIndex(task.tx, task.ty, world.size)]
+          : 0;
+        let biomeId = Number.isInteger(res?.biomeId) ? res.biomeId : tileBiome;
+        if (!Number.isInteger(biomeId) || biomeId < 0 || biomeId >= getBiomeStoneBiomeCount()) {
+          biomeId = 0;
+        }
+        const spot = findBiomeStoneSpawnTile(
+          world,
+          biomeId,
+          task.tx,
+          task.ty,
+          typeof task.id === "number" ? task.id : null
+        );
+        if (!spot) {
+          task.timer = BIOME_STONE_RESPAWN.retryDelay;
+          continue;
+        }
+
+        if (res) {
+          if (inBounds(res.tx, res.ty, world.size)) {
+            const prevIdx = tileIndex(res.tx, res.ty, world.size);
+            if (world.resourceGrid[prevIdx] === res.id) {
+              world.resourceGrid[prevIdx] = -1;
+            }
+          }
+          res.tx = spot.tx;
+          res.ty = spot.ty;
+          res.x = (spot.tx + 0.5) * CONFIG.tileSize;
+          res.y = (spot.ty + 0.5) * CONFIG.tileSize;
+          res.biomeId = biomeId;
+          res.maxHp = getResourceBaseHp(res);
+          res.hp = res.maxHp;
+          res.stage = "alive";
+          res.respawnTimer = 0;
+          res.hitTimer = 0;
+          res.removed = false;
+          const nextIdx = tileIndex(spot.tx, spot.ty, world.size);
+          world.resourceGrid[nextIdx] = res.id;
+        } else if (!spawnBiomeStoneResource(world, spot.tx, spot.ty, biomeId)) {
+          task.timer = BIOME_STONE_RESPAWN.retryDelay;
+          continue;
+        }
+        world.respawnTasks.splice(i, 1);
+        markDirty();
+        continue;
+      }
+
       const idx = tileIndex(task.tx, task.ty, world.size);
       const tileIsLand = world.tiles[idx] === 1;
       const resAt = getResourceAt(world, task.tx, task.ty);
@@ -11086,18 +12539,29 @@
   }
 
   function handleDeathDropRequest(conn, message) {
+    if (!conn || !message) return;
+    const player = net.players.get(conn.peer);
+    if (!player) return;
     const items = Array.isArray(message?.items) ? message.items : [];
     if (items.length === 0) return;
-    const world = message.world === "cave"
-      ? getCaveWorld(message.caveId)
-      : state.surfaceWorld;
+    const wantsCave = message.world === "cave";
+    const world = wantsCave
+      ? (
+        player.inCave
+          && Number.isInteger(player.caveId)
+          && Number(message.caveId) === player.caveId
+          ? getCaveWorld(player.caveId)
+          : null
+      )
+      : (player.inCave ? null : state.surfaceWorld);
     if (!world) return;
-    const player = net.players.get(conn.peer);
-    const x = Number.isFinite(message.x) ? message.x : (player?.x ?? 0);
-    const y = Number.isFinite(message.y) ? message.y : (player?.y ?? 0);
+    const x = Number.isFinite(message.x) ? message.x : (player.x ?? 0);
+    const y = Number.isFinite(message.y) ? message.y : (player.y ?? 0);
+    const offset = Math.hypot(x - (player.x ?? 0), y - (player.y ?? 0));
+    if (offset > CONFIG.tileSize * 2.6) return;
     const normalized = items
       .map((entry) => ({
-        id: typeof entry?.id === "string" ? entry.id : null,
+        id: typeof entry?.id === "string" && ITEMS[entry.id] ? entry.id : null,
         qty: Math.max(0, Math.floor(Number(entry?.qty) || 0)),
       }))
       .filter((entry) => entry.id && entry.qty > 0);
@@ -11134,6 +12598,8 @@
       attackCooldown: options.attackCooldown ?? variant.attackCooldown,
       aggroRange: options.aggroRange ?? variant.aggroRange,
       rangedRange: options.rangedRange ?? variant.rangedRange,
+      drop: options.drop ?? variant.drop ?? null,
+      dropLootOnDeath: false,
       attackTimer: 0,
       hitTimer: 0,
       wanderTimer: 0,
@@ -11145,6 +12611,39 @@
       dir: { x: 0, y: 0 },
     };
     world.monsters.push(monster);
+  }
+
+  function rollDropQty(spec) {
+    if (typeof spec === "number") {
+      return Math.max(0, Math.floor(spec));
+    }
+    if (Array.isArray(spec) && spec.length >= 2) {
+      const min = Math.floor(Number(spec[0]) || 0);
+      const max = Math.floor(Number(spec[1]) || min);
+      if (max <= min) return Math.max(0, min);
+      return Math.max(0, min + Math.floor(Math.random() * (max - min + 1)));
+    }
+    if (spec && typeof spec === "object") {
+      const chance = clamp(Number(spec.chance) || 1, 0, 1);
+      if (Math.random() > chance) return 0;
+      const min = Math.floor(Number(spec.min) || 0);
+      const max = Math.floor(Number(spec.max) || min);
+      if (max <= min) return Math.max(0, min);
+      return Math.max(0, min + Math.floor(Math.random() * (max - min + 1)));
+    }
+    return 0;
+  }
+
+  function spawnMonsterDrops(world, monster) {
+    if (!world || !monster || !monster.drop || typeof monster.drop !== "object") return;
+    for (const [itemId, spec] of Object.entries(monster.drop)) {
+      if (!ITEMS[itemId]) continue;
+      const qty = clamp(rollDropQty(spec), 0, MAX_STACK);
+      if (qty <= 0) continue;
+      const jitterX = (Math.random() - 0.5) * 12;
+      const jitterY = (Math.random() - 0.5) * 12;
+      spawnDrop(itemId, qty, monster.x + jitterX, monster.y + jitterY, world);
+    }
   }
 
   function spawnAnimal(world, tx, ty, type = "boar") {
@@ -11234,16 +12733,13 @@
     }
   }
 
-  function buildSurfaceMonsterSpawnOptions(world, tx, ty, island = null) {
+  function buildSurfaceMonsterSpawnOptions(world, tx, ty, island = null, forcePoison = false) {
     const biomeId = Number.isInteger(island?.biomeId)
       ? island.biomeId
       : getSurfaceBiomeIdAtTile(world, tx, ty);
     const biome = BIOMES[biomeId] || BIOMES[0];
-    let type = pickMonsterType();
-
-    if (biome.key === "marsh" && state.isNight && Math.random() < (biome.poisonMonsterChance || 0.6)) {
-      type = "marsh_stalker";
-    }
+    let type = pickMonsterTypeForBiome(biome, Math.random, state.isNight);
+    if (forcePoison && state.isNight && biome.key === "marsh") type = "marsh_stalker";
 
     const variant = getMonsterVariant(type);
     const options = { type };
@@ -11302,11 +12798,29 @@
     return active;
   }
 
+  function hasMarshStalkerOnIsland(world, island) {
+    if (!world || !island || !Array.isArray(world.monsters)) return false;
+    const islandCx = (island.x + 0.5) * CONFIG.tileSize;
+    const islandCy = (island.y + 0.5) * CONFIG.tileSize;
+    const searchRadius = Math.max(CONFIG.tileSize * 3, island.radius * CONFIG.tileSize * 1.08);
+    return world.monsters.some(
+      (monster) => monster
+        && monster.hp > 0
+        && monster.type === "marsh_stalker"
+        && Math.hypot(monster.x - islandCx, monster.y - islandCy) <= searchRadius
+    );
+  }
+
   function spawnSurfaceMonsterOnIsland(world, island, players) {
     if (!world || !island) return false;
     const cx = island.x;
     const cy = island.y;
     const maxRadius = Math.max(4, Math.floor(island.radius * 0.82));
+    const biomeId = Number.isInteger(island.biomeId) ? island.biomeId : 0;
+    const biome = BIOMES[biomeId] || BIOMES[0];
+    const forcePoison = state.isNight
+      && biome.key === "marsh"
+      && !hasMarshStalkerOnIsland(world, island);
     for (let attempt = 0; attempt < 28; attempt += 1) {
       const angle = Math.random() * Math.PI * 2;
       const dist = Math.random() * maxRadius;
@@ -11319,7 +12833,7 @@
         (player) => Math.hypot(player.x - wx, player.y - wy) < (MONSTER.spawnMinTiles * CONFIG.tileSize * 0.55)
       );
       if (tooClose) continue;
-      spawnMonster(world, tx, ty, buildSurfaceMonsterSpawnOptions(world, tx, ty, island));
+      spawnMonster(world, tx, ty, buildSurfaceMonsterSpawnOptions(world, tx, ty, island, forcePoison));
       return true;
     }
     return false;
@@ -11421,7 +12935,7 @@
       }
     }
     if (targetMonster && !canFightMonsters) {
-      setPrompt("Need a sword upgrade", 0.9);
+      setPrompt("Craft a sword first", 0.9);
       return;
     }
     state.player.attackTimer = 0.35;
@@ -11450,6 +12964,7 @@
       playSfx("hit");
       if (targetMonster.hp <= 0) {
         targetMonster.hp = 0;
+        targetMonster.dropLootOnDeath = true;
       }
       markDirty();
       return;
@@ -11952,6 +13467,9 @@
       if (monster.attackTimer > 0) monster.attackTimer -= dt;
 
       if (monster.hp <= 0) {
+        if (monster.dropLootOnDeath) {
+          spawnMonsterDrops(world, monster);
+        }
         world.monsters.splice(i, 1);
         continue;
       }
@@ -13534,7 +15052,7 @@
           const ey = (entrance.ty + 0.5) * CONFIG.tileSize;
           const dist = Math.hypot(ex - state.player.x, ey - state.player.y);
           if (dist < CONFIG.interactRange) setPrompt("Press E to leave cave");
-          else if (state.targetMonster && !swordUnlocked) setPrompt("Need a sword upgrade");
+          else if (state.targetMonster && !swordUnlocked) setPrompt("Craft a sword first");
           else if (state.targetMonster || state.targetAnimal) setPrompt("Press Space / Tap Attack");
           else if (state.targetResource && !resourceGate.ok) setPrompt(resourceGate.reason);
           else if (state.targetResource) setPrompt(`Press Space / Tap Attack to ${getResourceActionName(state.targetResource)}`);
@@ -13557,7 +15075,7 @@
       } else if (state.nearHouse) {
         setPrompt("Press E to enter house");
       } else if (state.targetMonster && !swordUnlocked) {
-        setPrompt("Need a sword upgrade");
+        setPrompt("Craft a sword first");
       } else if (state.targetMonster || state.targetAnimal) {
         setPrompt("Press Space / Tap Attack");
       } else if (state.targetResource && !resourceGate.ok) {
@@ -13683,7 +15201,7 @@
       worldDtRemaining -= worldStep;
     }
     updatePlayerEffects(dt);
-    updateDrops();
+    updateDrops(dt);
     updateInteraction();
     updateRemoteRender(dt);
     updateAudio(dt);
@@ -15241,6 +16759,15 @@
       const biome = BIOMES[biomeId] || BIOMES[0];
 
       if (res.type === "tree") {
+        const treeScale = getBiomeTreeVisualScale(biome);
+        const useScaledTree = treeScale > 1.001 && res.stage !== "stump";
+        if (useScaledTree) {
+          const anchorY = res.stage === "sapling" ? screen.y + 14 : screen.y + 21;
+          ctx.save();
+          ctx.translate(screen.x, anchorY);
+          ctx.scale(treeScale, treeScale);
+          ctx.translate(-screen.x, -anchorY);
+        }
         if (res.stage === "stump") {
           ctx.fillStyle = tintColor(TREE_TRUNK, -0.1);
           ctx.fillRect(screen.x - 6, screen.y + 8, 12, 8);
@@ -15471,6 +16998,7 @@
             ctx.fill();
           }
         }
+        if (useScaledTree) ctx.restore();
       } else if (res.type === "grass") {
         const grassColor = biome.grassColor || tintColor(biome.tree, 0.25);
         if (biome.key === "temperate") {
@@ -15745,18 +17273,51 @@
         continue;
       }
       const color = ITEMS[drop.itemId]?.color ?? "#fff";
+      const ttl = Number.isFinite(drop.ttl) ? drop.ttl : DROP_DESPAWN.lifetime;
+      const warningAmount = clamp(
+        (DROP_DESPAWN.warningStart - ttl) / DROP_DESPAWN.warningStart,
+        0,
+        1
+      );
+      const criticalAmount = clamp(
+        (DROP_DESPAWN.criticalStart - ttl) / DROP_DESPAWN.criticalStart,
+        0,
+        1
+      );
+      const pulse = 0.5 + (0.5 * Math.sin((performance.now() * 0.02) + ((drop.id ?? 0) * 0.73)));
+      const baseAlpha = 1 - (warningAmount * 0.3) - (criticalAmount * 0.2);
+      const flickerAlpha = criticalAmount > 0 ? (0.45 + (pulse * 0.55)) : 1;
+      const drawAlpha = clamp(baseAlpha * flickerAlpha, 0.18, 1);
+      const sizeScale = 1 - (warningAmount * 0.08) - (criticalAmount * (0.08 + ((1 - pulse) * 0.06)));
+      const itemRadius = 6 * sizeScale;
+      const shadowRadiusX = 7 * sizeScale;
+      const shadowRadiusY = 3 * sizeScale;
+
+      ctx.save();
+      ctx.globalAlpha = drawAlpha;
       ctx.fillStyle = "rgba(0,0,0,0.22)";
       ctx.beginPath();
-      ctx.ellipse(screen.x, screen.y + 6, 7, 3, 0, 0, Math.PI * 2);
+      ctx.ellipse(screen.x, screen.y + 6, shadowRadiusX, shadowRadiusY, 0, 0, Math.PI * 2);
       ctx.fill();
       ctx.fillStyle = color;
       ctx.beginPath();
-      ctx.arc(screen.x, screen.y, 6, 0, Math.PI * 2);
+      ctx.arc(screen.x, screen.y, itemRadius, 0, Math.PI * 2);
       ctx.fill();
       ctx.fillStyle = "rgba(255,255,255,0.35)";
       ctx.beginPath();
-      ctx.arc(screen.x - 2, screen.y - 2, 2, 0, Math.PI * 2);
+      ctx.arc(screen.x - (2 * sizeScale), screen.y - (2 * sizeScale), Math.max(1.4, 2 * sizeScale), 0, Math.PI * 2);
       ctx.fill();
+      ctx.restore();
+
+      if (warningAmount > 0) {
+        const ringAlpha = clamp(0.08 + (warningAmount * 0.2) + (criticalAmount * 0.26), 0, 0.66);
+        const ringRadius = (9 + (warningAmount * 2)) * (1 + (criticalAmount * pulse * 0.25));
+        ctx.strokeStyle = `rgba(255, 241, 188, ${ringAlpha})`;
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.arc(screen.x, screen.y, ringRadius, 0, Math.PI * 2);
+        ctx.stroke();
+      }
     }
 
     if (
@@ -16213,6 +17774,11 @@
     if (newRunBtn) {
       newRunBtn.addEventListener("click", () => {
         promptNewSeed();
+      });
+    }
+    if (startScreen) {
+      startScreen.addEventListener("pointerdown", () => {
+        ensureAudioContext();
       });
     }
     if (soloBtn) soloBtn.addEventListener("click", () => {
