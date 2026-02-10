@@ -518,6 +518,34 @@ html, body {
   background: linear-gradient(155deg, rgba(10, 18, 30, 0.72), rgba(10, 16, 24, 0.64));
 }
 
+.build-robot-controls {
+  margin: -2px 0 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 5px;
+}
+
+.build-robot-btn {
+  border-radius: 999px;
+  border: 1px solid rgba(150, 205, 255, 0.52);
+  background: linear-gradient(145deg, rgba(46, 87, 129, 0.86), rgba(18, 41, 70, 0.86));
+  color: #f4f7ff;
+  padding: 6px 11px;
+  font-size: 11px;
+  letter-spacing: 0.35px;
+  text-transform: uppercase;
+  cursor: pointer;
+  box-shadow: 0 7px 14px rgba(0, 0, 0, 0.25);
+}
+
+.build-robot-hint {
+  font-size: 10px;
+  line-height: 1.3;
+  color: rgba(208, 227, 244, 0.82);
+  text-align: right;
+}
+
 .recipe-list {
   display: flex;
   flex-direction: column;

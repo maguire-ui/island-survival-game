@@ -7,7 +7,7 @@
     content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no, viewport-fit=cover"
   />
   <title>Island Survival Game</title>
-  <link rel="stylesheet" href="styles.css?v=20260210-12" />
+  <link rel="stylesheet" href="styles.css?v=20260210-13" />
 </head>
 <body>
   <canvas id="game"></canvas>
@@ -61,6 +61,10 @@
 
     <div id="buildMenu" class="panel hidden">
       <div class="panel-title">Crafting Bench</div>
+      <div id="buildRobotControls" class="build-robot-controls hidden">
+        <button id="toggleRobotRecallBtn" class="build-robot-btn" type="button">Call All Robots</button>
+        <div id="buildRobotControlsHint" class="build-robot-hint"></div>
+      </div>
       <div id="buildCategoryTabs" class="build-category-tabs" role="tablist" aria-label="Crafting categories">
         <button class="build-category-btn active" data-category="navigation" type="button" title="Paths, bridges, and travel structures.">
           <span class="build-category-icon" data-icon="bridge" aria-hidden="true"></span>
@@ -207,6 +211,6 @@
   </div>
 
   <script src="https://unpkg.com/peerjs@1.5.5/dist/peerjs.min.js"></script>
-  <script src="src/main.js?v=20260210-22"></script>
+  <script src="src/main.js?v=20260210-28"></script>
 </body>
 </html>

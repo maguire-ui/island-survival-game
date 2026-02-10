@@ -15,6 +15,9 @@
   const inventorySlotsEl = document.getElementById("inventorySlots");
   const buildMenu = document.getElementById("buildMenu");
   const buildList = document.getElementById("buildList");
+  const buildRobotControls = document.getElementById("buildRobotControls");
+  const toggleRobotRecallBtn = document.getElementById("toggleRobotRecallBtn");
+  const buildRobotControlsHint = document.getElementById("buildRobotControlsHint");
   const stationMenu = document.getElementById("stationMenu");
   const stationTitle = document.getElementById("stationTitle");
   const stationOptions = document.getElementById("stationOptions");
@@ -109,9 +112,9 @@
   });
 
   const MONSTER_DAY_BURN = Object.freeze({
-    durationMin: 2.1,
-    durationMax: 3.2,
-    moveSpeedScale: 0.36,
+    durationMin: 3.8,
+    durationMax: 5.4,
+    moveSpeedScale: 0.52,
     staggerResetMin: 0.16,
     staggerResetMax: 0.44,
   });
@@ -174,7 +177,8 @@
   };
 
   const NET_CONFIG = {
-    snapshotInterval: 0.18,
+    snapshotInterval: 0.3,
+    motionInterval: 0.08,
     playerSendInterval: 0.05,
     renderSmooth: 12,
     houseSmooth: 18,
@@ -961,8 +965,6 @@
     stuckRetargetTime: 1.1,
     sandStuckRetargetTime: 0.7,
     bridgePathChecks: 28,
-    minSeparationDistance: 16,
-    crowdingResolvePasses: 2,
   });
 
   let dpr = window.devicePixelRatio || 1;
@@ -1008,6 +1010,7 @@
     targetMonster: null,
     targetAnimal: null,
     nearBench: false,
+    nearBenchStructure: null,
     nearStation: null,
     nearChest: null,
     nearCave: null,
@@ -1065,6 +1068,7 @@
     pendingPlaces: new Map(),
     pendingHousePlaces: new Map(),
     snapshotTimer: NET_CONFIG.snapshotInterval,
+    motionTimer: NET_CONFIG.motionInterval,
     playerTimer: NET_CONFIG.playerSendInterval,
     robotPausePingTimer: 0.2,
     localName: "",
@@ -2085,6 +2089,9 @@
       case "snapshot":
         if (!net.isHost) applyNetworkSnapshot(message);
         break;
+      case "motion":
+        if (!net.isHost) applyNetworkMotion(message);
+        break;
       case "playerUpdate":
         if (net.isHost) {
           handlePlayerUpdate(conn, message);
@@ -2115,6 +2122,9 @@
         break;
       case "robotCommand":
         if (net.isHost) handleRobotCommand(conn, message);
+        break;
+      case "benchRobotControl":
+        if (net.isHost) handleBenchRobotControl(conn, message);
         break;
       case "houseChestUpdate":
         if (net.isHost) handleHouseChestUpdate(message);
@@ -2286,6 +2296,9 @@
           mineTimer: robot.mineTimer,
           retargetTimer: robot.retargetTimer,
           pauseTimer: robot.pauseTimer,
+          recallActive: !!robot.recallActive,
+          recallBenchTx: Number.isInteger(robot.recallBenchTx) ? robot.recallBenchTx : null,
+          recallBenchTy: Number.isInteger(robot.recallBenchTy) ? robot.recallBenchTy : null,
         },
       };
     }
@@ -2420,6 +2433,151 @@
       structures: serializeStructuresList(),
       players: getPlayersSnapshot(),
     };
+  }
+
+  function serializeWorldMotion(world) {
+    return {
+      monsters: (world.monsters ?? []).map((monster) => ({
+        id: monster.id,
+        type: monster.type ?? "crawler",
+        x: monster.x,
+        y: monster.y,
+        hp: monster.hp,
+        maxHp: monster.maxHp,
+        dayBurning: !!monster.dayBurning,
+        burnTimer: Math.max(0, Number(monster.burnTimer) || 0),
+        burnDuration: Math.max(0, Number(monster.burnDuration) || 0),
+      })),
+      projectiles: (world.projectiles ?? []).map((projectile) => ({
+        id: projectile.id,
+        type: projectile.type || "arrow",
+        x: projectile.x,
+        y: projectile.y,
+        vx: projectile.vx,
+        vy: projectile.vy,
+        life: projectile.life,
+        maxLife: projectile.maxLife,
+        damage: projectile.damage,
+        radius: projectile.radius,
+      })),
+      animals: (world.animals ?? []).map((animal) => ({
+        id: animal.id,
+        type: animal.type,
+        x: animal.x,
+        y: animal.y,
+        hp: animal.hp,
+        maxHp: animal.maxHp,
+        speed: animal.speed,
+        color: animal.color,
+      })),
+      villagers: (world.villagers ?? []).map((villager) => ({
+        id: villager.id,
+        x: villager.x,
+        y: villager.y,
+        homeX: villager.homeX,
+        homeY: villager.homeY,
+        speed: villager.speed,
+        color: villager.color,
+        wanderRadius: villager.wanderRadius,
+      })),
+    };
+  }
+
+  function serializeRobotMotion() {
+    if (!Array.isArray(state.structures)) return [];
+    const robots = [];
+    for (const structure of state.structures) {
+      if (!structure || structure.removed || structure.type !== "robot") continue;
+      const robot = ensureRobotMeta(structure);
+      if (!robot) continue;
+      robots.push({
+        tx: structure.tx,
+        ty: structure.ty,
+        x: robot.x,
+        y: robot.y,
+        mode: robot.mode,
+        state: robot.state,
+        manualStop: !!robot.manualStop,
+        recallActive: !!robot.recallActive,
+        recallBenchTx: Number.isInteger(robot.recallBenchTx) ? robot.recallBenchTx : null,
+        recallBenchTy: Number.isInteger(robot.recallBenchTy) ? robot.recallBenchTy : null,
+      });
+    }
+    return robots;
+  }
+
+  function buildMotionUpdate() {
+    const surface = state.surfaceWorld || state.world;
+    if (!surface) return null;
+    return {
+      type: "motion",
+      seed: surface.seed,
+      world: serializeWorldMotion(surface),
+      caves: (surface.caves ?? [])
+        .filter((cave) => cave?.world && getPlayersForWorld(cave.world).length > 0)
+        .map((cave) => ({
+          id: cave.id,
+          world: serializeWorldMotion(cave.world),
+        })),
+      robots: serializeRobotMotion(),
+    };
+  }
+
+  function applyMotionWorld(world, motionWorld) {
+    if (!world || !motionWorld || typeof motionWorld !== "object") return;
+    if (Array.isArray(motionWorld.monsters)) {
+      world.monsters = buildMonstersFromSnapshot(world.monsters, motionWorld.monsters);
+    }
+    if (Array.isArray(motionWorld.projectiles)) {
+      world.projectiles = buildProjectilesFromSnapshot(world.projectiles, motionWorld.projectiles);
+    }
+    if (Array.isArray(motionWorld.animals)) {
+      applyAnimals(world, motionWorld.animals);
+    }
+    if (Array.isArray(motionWorld.villagers)) {
+      applyVillagers(world, motionWorld.villagers);
+    }
+  }
+
+  function applyRobotMotion(robots) {
+    if (!Array.isArray(robots)) return;
+    for (const entry of robots) {
+      if (!entry || !Number.isInteger(entry.tx) || !Number.isInteger(entry.ty)) continue;
+      const structure = getStructureAt(entry.tx, entry.ty);
+      if (!structure || structure.removed || structure.type !== "robot") continue;
+      const robot = ensureRobotMeta(structure);
+      if (!robot) continue;
+      if (Number.isFinite(entry.x)) robot.x = entry.x;
+      if (Number.isFinite(entry.y)) robot.y = entry.y;
+      if (typeof entry.mode === "string" || entry.mode === null) {
+        robot.mode = normalizeRobotMode(entry.mode);
+      }
+      if (typeof entry.state === "string") robot.state = entry.state;
+      if (typeof entry.manualStop === "boolean") robot.manualStop = entry.manualStop;
+      if (typeof entry.recallActive === "boolean") robot.recallActive = entry.recallActive;
+      if (Number.isInteger(entry.recallBenchTx) && Number.isInteger(entry.recallBenchTy)) {
+        robot.recallBenchTx = entry.recallBenchTx;
+        robot.recallBenchTy = entry.recallBenchTy;
+      } else if (!robot.recallActive) {
+        robot.recallBenchTx = null;
+        robot.recallBenchTy = null;
+      }
+    }
+  }
+
+  function applyNetworkMotion(message) {
+    if (!message || !message.seed) return;
+    if (!state.surfaceWorld || state.surfaceWorld.seed !== message.seed) return;
+    applyMotionWorld(state.surfaceWorld, message.world);
+    if (Array.isArray(message.caves) && Array.isArray(state.surfaceWorld.caves)) {
+      for (const caveMotion of message.caves) {
+        if (!caveMotion || typeof caveMotion.id !== "number") continue;
+        const cave = state.surfaceWorld.caves.find((entry) => entry.id === caveMotion.id);
+        if (!cave?.world) continue;
+        applyMotionWorld(cave.world, caveMotion.world);
+      }
+    }
+    applyRobotMotion(message.robots);
   }
 
   function applySnapshotStructures(structures) {
@@ -3006,6 +3164,14 @@
     return dist <= CONFIG.interactRange * 1.9;
   }
 
+  function canRemotePlayerUseBench(player, structure) {
+    if (!player || !structure || structure.type !== "bench") return false;
+    if (player.inCave || player.inHut) return false;
+    const center = getStructureCenterWorld(structure);
+    const dist = Math.hypot((player.x ?? 0) - center.x, (player.y ?? 0) - center.y);
+    return dist <= CONFIG.interactRange * 1.9;
+  }
+
   function handleRobotCommand(conn, message) {
     if (!conn || !message) return;
     if (typeof message.tx !== "number" || typeof message.ty !== "number") return;
@@ -3021,6 +3187,9 @@
       if (!isRobotMode(nextMode)) return;
       robot.mode = nextMode;
       robot.manualStop = false;
+      robot.recallActive = false;
+      robot.recallBenchTx = null;
+      robot.recallBenchTy = null;
       robot.targetResourceId = null;
       robot.retargetTimer = 0;
       robot.mineTimer = 0;
@@ -3033,6 +3202,9 @@
 
     if (message.action === "stop") {
       robot.manualStop = true;
+      robot.recallActive = false;
+      robot.recallBenchTx = null;
+      robot.recallBenchTy = null;
       robot.targetResourceId = null;
       robot.retargetTimer = 0;
       robot.mineTimer = 0;
@@ -3045,6 +3217,26 @@
 
     if (message.action === "ping") {
       setRobotInteractionPause(structure, ROBOT_CONFIG.interactionPause);
+    }
+  }
+
+  function handleBenchRobotControl(conn, message) {
+    if (!conn || !message) return;
+    const action = typeof message.action === "string" ? message.action : "";
+    if (action !== "call" && action !== "release") return;
+    if (!Number.isInteger(message.tx) || !Number.isInteger(message.ty)) return;
+    const player = net.players.get(conn.peer);
+    if (!player) return;
+    const bench = getStructureAt(message.tx, message.ty);
+    if (!bench || bench.type !== "bench") return;
+    if (!canRemotePlayerUseBench(player, bench)) return;
+
+    if (action === "call") {
+      applyCallAllRobotsToBench(bench);
+      return;
+    }
+    if (action === "release") {
+      releaseAllRecalledRobots();
     }
   }
 
@@ -3303,6 +3495,14 @@
     }
     if (net.isHost) {
       if (net.connections.size === 0) return;
+      net.motionTimer -= dt;
+      if (net.motionTimer <= 0) {
+        const motion = buildMotionUpdate();
+        if (motion) {
+          broadcastNet(motion);
+        }
+        net.motionTimer = NET_CONFIG.motionInterval;
+      }
       net.snapshotTimer -= dt;
       if (net.snapshotTimer <= 0) {
         broadcastNet(buildSnapshot());
@@ -5503,7 +5703,7 @@
 
   function getStructureCenterWorld(structure) {
     if (structure?.type === "robot") {
-      const robotPos = getRobotPosition(structure);
+      const robotPos = getRobotDisplayPosition(structure, false);
       if (robotPos) return robotPos;
     }
     const footprint = getStructureFootprint(structure?.type);
@@ -5598,6 +5798,9 @@
         mineTimer: 0,
         retargetTimer: 0,
         pauseTimer: 0,
+        recallActive: false,
+        recallBenchTx: null,
+        recallBenchTy: null,
       },
     };
   }
@@ -5623,6 +5826,9 @@
     if (!Number.isFinite(robot.mineTimer)) robot.mineTimer = 0;
     if (!Number.isFinite(robot.retargetTimer)) robot.retargetTimer = 0;
     if (!Number.isFinite(robot.pauseTimer)) robot.pauseTimer = 0;
+    robot.recallActive = !!robot.recallActive;
+    if (!Number.isInteger(robot.recallBenchTx)) robot.recallBenchTx = null;
+    if (!Number.isInteger(robot.recallBenchTy)) robot.recallBenchTy = null;
     if (!Number.isInteger(robot.targetResourceId)) robot.targetResourceId = null;
     structure.storage = sanitizeInventorySlots(structure.storage, ROBOT_STORAGE_SIZE);
     return robot;
@@ -5632,6 +5838,59 @@
     const robot = ensureRobotMeta(structure);
     if (!robot) return null;
     return { x: robot.x, y: robot.y };
+  }
+
+  function getRobotVisualOffset(structure, tileSourceX = null, tileSourceY = null) {
+    if (!structure || structure.type !== "robot" || !Array.isArray(state.structures)) {
+      return { x: 0, y: 0 };
+    }
+    const robot = ensureRobotMeta(structure);
+    if (!robot) return { x: 0, y: 0 };
+    const anchorX = Number.isFinite(tileSourceX) ? tileSourceX : robot.x;
+    const anchorY = Number.isFinite(tileSourceY) ? tileSourceY : robot.y;
+    if (!Number.isFinite(anchorX) || !Number.isFinite(anchorY)) {
+      return { x: 0, y: 0 };
+    }
+    const tileTx = Math.floor(anchorX / CONFIG.tileSize);
+    const tileTy = Math.floor(anchorY / CONFIG.tileSize);
+    const stackedIds = [];
+    for (const candidate of state.structures) {
+      if (!candidate || candidate.removed || candidate.type !== "robot") continue;
+      const candidateRobot = ensureRobotMeta(candidate);
+      if (!candidateRobot) continue;
+      const candidateTx = Math.floor(candidateRobot.x / CONFIG.tileSize);
+      const candidateTy = Math.floor(candidateRobot.y / CONFIG.tileSize);
+      if (candidateTx !== tileTx || candidateTy !== tileTy) continue;
+      stackedIds.push(candidate.id);
+    }
+    if (stackedIds.length <= 1) return { x: 0, y: 0 };
+    stackedIds.sort((a, b) => a - b);
+    const slot = stackedIds.indexOf(structure.id);
+    if (slot < 0) return { x: 0, y: 0 };
+
+    const spread = Math.min(CONFIG.tileSize * 0.28, 7 + Math.ceil(Math.min(stackedIds.length, 8) * 0.5));
+    const seed = ((tileTx * 73856093) ^ (tileTy * 19349663)) >>> 0;
+    const baseAngle = (seed % 360) * (Math.PI / 180);
+    const angle = stackedIds.length === 2
+      ? (baseAngle + (slot === 0 ? Math.PI * 0.25 : Math.PI * 1.25))
+      : (baseAngle + (slot * (Math.PI * 2 / stackedIds.length)));
+
+    return {
+      x: Math.cos(angle) * spread,
+      y: Math.sin(angle) * spread,
+    };
+  }
+
+  function getRobotDisplayPosition(structure, useRenderPosition = false) {
+    const robot = ensureRobotMeta(structure);
+    if (!robot) return null;
+    const baseX = useRenderPosition && Number.isFinite(robot.renderX) ? robot.renderX : robot.x;
+    const baseY = useRenderPosition && Number.isFinite(robot.renderY) ? robot.renderY : robot.y;
+    const offset = getRobotVisualOffset(structure, robot.x, robot.y);
+    return {
+      x: baseX + offset.x,
+      y: baseY + offset.y,
+    };
   }
 
   function setRobotInteractionPause(structure, duration = ROBOT_CONFIG.interactionPause) {
@@ -5660,6 +5919,10 @@
     const robot = ensureRobotMeta(structure);
     if (!robot) return "Idle";
     if (robot.pauseTimer > 0) return "Paused (interacting)";
+    if (robot.recallActive) {
+      if (robot.state === "recalling") return "Heading to called bench";
+      return "Holding at called bench";
+    }
     if (robot.manualStop) {
       if (robot.state === "returning") return "Stopping (returning to spawn bench)";
       return "Stopped at spawn bench";
@@ -7999,6 +8262,167 @@
     });
   }
 
+  function getActiveRobotStructures() {
+    if (!Array.isArray(state.structures)) return [];
+    return state.structures.filter((structure) => (
+      structure && !structure.removed && structure.type === "robot"
+    ));
+  }
+
+  function getRobotRecallStatus() {
+    let activeCount = 0;
+    let benchTx = null;
+    let benchTy = null;
+    for (const structure of getActiveRobotStructures()) {
+      const robot = ensureRobotMeta(structure);
+      if (!robot || !robot.recallActive) continue;
+      activeCount += 1;
+      if (benchTx === null && Number.isInteger(robot.recallBenchTx) && Number.isInteger(robot.recallBenchTy)) {
+        benchTx = robot.recallBenchTx;
+        benchTy = robot.recallBenchTy;
+      }
+    }
+    return {
+      active: activeCount > 0,
+      count: activeCount,
+      benchTx,
+      benchTy,
+    };
+  }
+
+  function getNearbyCraftingBench() {
+    if (state.nearBenchStructure && !state.nearBenchStructure.removed && state.nearBenchStructure.type === "bench") {
+      return state.nearBenchStructure;
+    }
+    if (!state.player || state.inCave || state.player.inHut) return null;
+    return findNearestStructure(state.player, (structure) => structure.type === "bench");
+  }
+
+  function applyCallAllRobotsToBench(bench) {
+    if (!bench || bench.type !== "bench") return 0;
+    let changed = false;
+    let robotCount = 0;
+    for (const structure of getActiveRobotStructures()) {
+      const robot = ensureRobotMeta(structure);
+      if (!robot) continue;
+      robotCount += 1;
+      if (
+        !robot.recallActive
+        || robot.recallBenchTx !== bench.tx
+        || robot.recallBenchTy !== bench.ty
+      ) {
+        changed = true;
+      }
+      robot.recallActive = true;
+      robot.recallBenchTx = bench.tx;
+      robot.recallBenchTy = bench.ty;
+      robot.pauseTimer = 0;
+      if (robot.state !== "recalling" && robot.state !== "recalled") {
+        robot.state = "recalling";
+      }
+      clearRobotNavigation(robot);
+    }
+    if (changed) {
+      markDirty();
+    }
+    return robotCount;
+  }
+
+  function releaseAllRecalledRobots() {
+    let changed = false;
+    let released = 0;
+    for (const structure of getActiveRobotStructures()) {
+      const robot = ensureRobotMeta(structure);
+      if (!robot || !robot.recallActive) continue;
+      changed = true;
+      released += 1;
+      robot.recallActive = false;
+      robot.recallBenchTx = null;
+      robot.recallBenchTy = null;
+      robot.retargetTimer = 0;
+      if (robot.state === "recalling" || robot.state === "recalled") {
+        robot.state = robot.manualStop ? "returning" : "idle";
+      }
+      clearRobotNavigation(robot);
+    }
+    if (changed) {
+      markDirty();
+    }
+    return released;
+  }
+
+  function sendBenchRobotControl(action, bench) {
+    if (!netIsClientReady() || !bench || bench.type !== "bench") return;
+    if (action !== "call" && action !== "release") return;
+    sendToHost({
+      type: "benchRobotControl",
+      action,
+      tx: bench.tx,
+      ty: bench.ty,
+    });
+  }
+
+  function toggleBenchRobotRecall() {
+    const bench = getNearbyCraftingBench();
+    if (!bench) {
+      setPrompt("Stand near a crafting bench", 1);
+      return;
+    }
+    const robots = getActiveRobotStructures();
+    if (robots.length === 0) {
+      setPrompt("No robots deployed", 1.1);
+      renderBuildMenu();
+      return;
+    }
+    const recall = getRobotRecallStatus();
+    if (recall.active) {
+      if (netIsClientReady()) {
+        sendBenchRobotControl("release", bench);
+        setPrompt("Releasing robots...", 0.9);
+      } else {
+        const released = releaseAllRecalledRobots();
+        setPrompt(`Released ${released} robot${released === 1 ? "" : "s"}`, 1.1);
+      }
+    } else if (netIsClientReady()) {
+      sendBenchRobotControl("call", bench);
+      setPrompt("Calling robots...", 0.9);
+    } else {
+      const called = applyCallAllRobotsToBench(bench);
+      setPrompt(`Calling ${called} robot${called === 1 ? "" : "s"} to bench`, 1.1);
+    }
+    renderBuildMenu();
+  }
+
+  function renderBuildRobotControls() {
+    if (!buildRobotControls || !toggleRobotRecallBtn || !buildRobotControlsHint) return;
+    const robotCount = getActiveRobotStructures().length;
+    const bench = getNearbyCraftingBench();
+    if (robotCount <= 0 || !bench) {
+      buildRobotControls.classList.add("hidden");
+      buildRobotControlsHint.textContent = "";
+      toggleRobotRecallBtn.disabled = true;
+      toggleRobotRecallBtn.textContent = "Call All Robots";
+      return;
+    }
+    buildRobotControls.classList.remove("hidden");
+    const recall = getRobotRecallStatus();
+    const recallBench = recall.active ? getBenchAtTile(recall.benchTx, recall.benchTy) : null;
+    const sameBench = !!(
+      recall.active
+      && recallBench
+      && recallBench.tx === bench.tx
+      && recallBench.ty === bench.ty
+    );
+    toggleRobotRecallBtn.disabled = false;
+    toggleRobotRecallBtn.textContent = recall.active ? "Release Robots" : "Call All Robots";
+    if (recall.active) {
+      const locationText = sameBench ? "at this bench" : "at another bench";
+      buildRobotControlsHint.textContent = `${recall.count} robot${recall.count === 1 ? "" : "s"} waiting ${locationText}.`;
+    } else {
+      buildRobotControlsHint.textContent = `${robotCount} robot${robotCount === 1 ? "" : "s"} ready for recall.`;
+    }
+  }
+
   function getBuildCategoryDefinition(categoryId) {
     return BUILD_CATEGORY_DEFS.find((entry) => entry.id === categoryId) || BUILD_CATEGORY_DEFS[0];
   }
@@ -8064,6 +8488,7 @@
   }
 
   function renderBuildMenu() {
+    renderBuildRobotControls();
     buildList.innerHTML = "";
     const recipes = getBuildRecipesForCategory(buildCategory);
     if (!recipes.length) {
@@ -8335,6 +8760,9 @@
     if (!robot) return;
     robot.mode = normalizedMode;
     robot.manualStop = false;
+    robot.recallActive = false;
+    robot.recallBenchTx = null;
+    robot.recallBenchTy = null;
     robot.targetResourceId = null;
     robot.retargetTimer = 0;
     robot.mineTimer = 0;
@@ -8353,6 +8781,9 @@
     const robot = ensureRobotMeta(structure);
     if (!robot) return;
     robot.manualStop = true;
+    robot.recallActive = false;
+    robot.recallBenchTx = null;
+    robot.recallBenchTy = null;
     robot.targetResourceId = null;
     robot.retargetTimer = 0;
     robot.mineTimer = 0;
@@ -8403,8 +8834,8 @@
     treesDesc.textContent = "Harvests wood from trees in the surrounding islands.";
     const treesBtn = document.createElement("button");
     const treesActive = robot.mode === ROBOT_MODE.trees;
-    treesBtn.textContent = treesActive ? "Selected" : "Select";
-    treesBtn.disabled = treesActive;
+    treesBtn.textContent = treesActive ? (robot.recallActive ? "Resume" : "Selected") : "Select";
+    treesBtn.disabled = treesActive && !robot.recallActive;
     treesBtn.addEventListener("click", () => {
       setRobotMode(structure, ROBOT_MODE.trees);
       renderRobotStationMenu();
@@ -8424,8 +8855,8 @@
     stoneDesc.textContent = "Harvests rock nodes for building and refining.";
     const stoneBtn = document.createElement("button");
     const stoneActive = robot.mode === ROBOT_MODE.stone;
-    stoneBtn.textContent = stoneActive ? "Selected" : "Select";
-    stoneBtn.disabled = stoneActive;
+    stoneBtn.textContent = stoneActive ? (robot.recallActive ? "Resume" : "Selected") : "Select";
+    stoneBtn.disabled = stoneActive && !robot.recallActive;
     stoneBtn.addEventListener("click", () => {
       setRobotMode(structure, ROBOT_MODE.stone);
       renderRobotStationMenu();
@@ -8445,8 +8876,8 @@
     grassDesc.textContent = "Harvests grass nodes for paper and utility recipes.";
     const grassBtn = document.createElement("button");
     const grassActive = robot.mode === ROBOT_MODE.grass;
-    grassBtn.textContent = grassActive ? "Selected" : "Select";
-    grassBtn.disabled = grassActive;
+    grassBtn.textContent = grassActive ? (robot.recallActive ? "Resume" : "Selected") : "Select";
+    grassBtn.disabled = grassActive && !robot.recallActive;
     grassBtn.addEventListener("click", () => {
       setRobotMode(structure, ROBOT_MODE.grass);
       renderRobotStationMenu();
@@ -9827,7 +10258,26 @@
       if (!monster || monster.hp <= 0) continue;
       igniteMonsterForDay(monster);
     }
-    world.projectiles = [];
+  }
+
+  function getNearestMonsterTarget(monster, players, isSurface) {
+    let target = null;
+    let targetDist = Infinity;
+    if (!monster || !Array.isArray(players)) {
+      return { target, targetDist };
+    }
+    for (const player of players) {
+      if (!player) continue;
+      if (isSurface && player.inHut && !player.inCave) continue;
+      const dx = player.x - monster.x;
+      const dy = player.y - monster.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist < targetDist) {
+        target = player;
+        targetDist = dist;
+      }
+    }
+    return { target, targetDist };
   }
 
   function updateMonsterProjectiles(world, dt, players, isSurface) {
@@ -10015,40 +10465,77 @@
         continue;
       }
 
+      const { target, targetDist } = getNearestMonsterTarget(monster, players, isSurface);
+
       if (isSurface && !state.isNight) {
         igniteMonsterForDay(monster);
         monster.burnTimer = Math.max(0, (monster.burnTimer ?? 0) - dt);
+        const aggroRange = monster.aggroRange ?? MONSTER.aggroRange;
+        const meleeRange = monster.attackRange ?? MONSTER.attackRange;
+        const hitDamage = monster.damage ?? MONSTER.damage;
+        const hitCooldown = monster.attackCooldown ?? MONSTER.attackCooldown;
+        const rangedRange = monster.rangedRange ?? 0;
+        const campfireFear = getNearestCampfireFear(campfireFearZones, monster.x, monster.y);
+        const burnSpeedScale = MONSTER_DAY_BURN.moveSpeedScale;
 
-        monster.wanderTimer = Number.isFinite(monster.wanderTimer) ? (monster.wanderTimer - dt) : 0;
-        if (monster.wanderTimer <= 0) {
-          const angle = Math.random() * Math.PI * 2;
-          monster.dir.x = Math.cos(angle);
-          monster.dir.y = Math.sin(angle);
-          monster.wanderTimer = MONSTER_DAY_BURN.staggerResetMin
-            + Math.random() * (MONSTER_DAY_BURN.staggerResetMax - MONSTER_DAY_BURN.staggerResetMin);
+        if (campfireFear && campfireFear.dist < campfireFear.avoidRadius) {
+          monster.wanderTimer = 0;
+          const panicStep = monster.speed * dt * Math.max(0.4, burnSpeedScale * 1.05);
+          moveMonsterWithCampfireFear(world, monster, 0, 0, panicStep, campfireFearZones);
+        } else if (target && targetDist < aggroRange) {
+          const dx = target.x - monster.x;
+          const dy = target.y - monster.y;
+          const dist = Math.max(1, Math.hypot(dx, dy));
+          const vx = dx / dist;
+          const vy = dy / dist;
+          const isRanged = rangedRange > meleeRange + 10;
+
+          if (isRanged && dist > meleeRange * 1.05 && dist < rangedRange) {
+            if (monster.attackTimer <= 0) {
+              spawnMonsterArrow(world, monster, target, hitDamage);
+              monster.attackTimer = hitCooldown;
+            }
+
+            const desired = rangedRange * 0.62;
+            let moveDir = 0;
+            if (dist < desired * 0.88) moveDir = -1;
+            else if (dist > desired * 1.18) moveDir = 1;
+            if (moveDir !== 0) {
+              const step = monster.speed * 0.7 * burnSpeedScale * dt;
+              moveMonsterWithCampfireFear(world, monster, vx * moveDir, vy * moveDir, step, campfireFearZones);
+            }
+          } else {
+            const step = monster.speed * burnSpeedScale * dt;
+            moveMonsterWithCampfireFear(world, monster, vx, vy, step, campfireFearZones);
+
+            if (dist < meleeRange && monster.attackTimer <= 0) {
+              if (target.id === (net.playerId || "local")) {
+                damagePlayer(hitDamage);
+              } else if (net.isHost) {
+                damageRemotePlayer(target, hitDamage);
+              }
+              monster.attackTimer = hitCooldown;
+            }
+          }
+        } else {
+          monster.wanderTimer = Number.isFinite(monster.wanderTimer) ? (monster.wanderTimer - dt) : 0;
+          if (monster.wanderTimer <= 0) {
+            const angle = Math.random() * Math.PI * 2;
+            monster.dir.x = Math.cos(angle);
+            monster.dir.y = Math.sin(angle);
+            monster.wanderTimer = MONSTER_DAY_BURN.staggerResetMin
+              + Math.random() * (MONSTER_DAY_BURN.staggerResetMax - MONSTER_DAY_BURN.staggerResetMin);
+          }
+
+          const burnStep = monster.speed * burnSpeedScale * dt;
+          moveMonsterWithCampfireFear(world, monster, monster.dir.x, monster.dir.y, burnStep, campfireFearZones);
         }
-
-        const burnStep = monster.speed * MONSTER_DAY_BURN.moveSpeedScale * dt;
-        moveMonsterWithCampfireFear(world, monster, monster.dir.x, monster.dir.y, burnStep, campfireFearZones);
 
         if (monster.burnTimer <= 0) {
           spawnMonsterBurnBurst(world, monster.x, monster.y);
           world.monsters.splice(i, 1);
         }
         continue;
-      }
-
-      let target = null;
-      let targetDist = Infinity;
-      for (const player of players) {
-        if (isSurface && player.inHut && !player.inCave) continue;
-        const dx = player.x - monster.x;
-        const dy = player.y - monster.y;
-        const dist = Math.hypot(dx, dy);
-        if (dist < targetDist) {
-          target = player;
-          targetDist = dist;
-        }
       }
 
       if (isSurface && targetDist > Math.max(viewWidth, viewHeight) + MONSTER.aggroRange) {
@@ -10332,20 +10819,54 @@
     return nearestSpawnBench || nearestBench || null;
   }
 
+  function getBenchAtTile(tx, ty) {
+    if (!Number.isInteger(tx) || !Number.isInteger(ty)) return null;
+    const atTile = getStructureAt(tx, ty);
+    if (atTile && !atTile.removed && atTile.type === "bench") return atTile;
+    for (const structure of state.structures) {
+      if (!structure || structure.removed || structure.type !== "bench") continue;
+      if (structure.tx === tx && structure.ty === ty) return structure;
+    }
+    return null;
+  }
+
+  function getBenchStandCandidates(bench) {
+    if (!bench) return [];
+    return [
+      { tx: bench.tx + 1, ty: bench.ty },
+      { tx: bench.tx - 1, ty: bench.ty },
+      { tx: bench.tx, ty: bench.ty + 1 },
+      { tx: bench.tx, ty: bench.ty - 1 },
+      { tx: bench.tx + 1, ty: bench.ty + 1 },
+      { tx: bench.tx - 1, ty: bench.ty + 1 },
+      { tx: bench.tx + 1, ty: bench.ty - 1 },
+      { tx: bench.tx - 1, ty: bench.ty - 1 },
+    ];
+  }
+
+  function getRobotRecallTargetPosition(world, structure, robot, bench) {
+    if (!world || !structure || !bench) return null;
+    const candidates = getBenchStandCandidates(bench).filter((candidate) => (
+      isRobotWalkableTile(world, structure, candidate.tx, candidate.ty)
+    ));
+    if (candidates.length === 0) return null;
+    const seed = Math.abs(
+      ((structure.id || 0) * 37)
+      + ((bench.tx || 0) * 17)
+      + ((bench.ty || 0) * 29)
+    );
+    const pick = candidates[seed % candidates.length];
+    return {
+      x: (pick.tx + 0.5) * CONFIG.tileSize,
+      y: (pick.ty + 0.5) * CONFIG.tileSize,
+    };
+  }
+
   function getSpawnCraftingReturnTile(world, structure, robot) {
     if (!world) return null;
     const bench = getSpawnCraftingBench(world);
     if (bench) {
-      const candidates = [
-        { tx: bench.tx + 1, ty: bench.ty },
-        { tx: bench.tx - 1, ty: bench.ty },
-        { tx: bench.tx, ty: bench.ty + 1 },
-        { tx: bench.tx, ty: bench.ty - 1 },
-        { tx: bench.tx + 1, ty: bench.ty + 1 },
-        { tx: bench.tx - 1, ty: bench.ty + 1 },
-        { tx: bench.tx + 1, ty: bench.ty - 1 },
-        { tx: bench.tx - 1, ty: bench.ty - 1 },
-      ];
+      const candidates = getBenchStandCandidates(bench);
       let best = null;
       let bestDist = Infinity;
       for (const candidate of candidates) {
@@ -10452,32 +10973,6 @@
     const ty = Math.floor(robot.y / CONFIG.tileSize);
     if (!inBounds(tx, ty, world.size)) return false;
     return !!world.beachGrid?.[tileIndex(tx, ty, world.size)];
-  }
-
-  function canRobotOccupyPosition(world, structure, robot, x, y) {
-    if (!world || !Array.isArray(state.structures)) return true;
-    const minDist = Math.max(2, Number(ROBOT_CONFIG.minSeparationDistance) || 16);
-    const minDistSq = minDist * minDist;
-    const currentX = Number(robot?.x);
-    const currentY = Number(robot?.y);
-    for (const otherStructure of state.structures) {
-      if (!otherStructure || otherStructure === structure || otherStructure.removed || otherStructure.type !== "robot") continue;
-      const otherRobot = ensureRobotMeta(otherStructure);
-      if (!otherRobot) continue;
-      const nextDx = x - otherRobot.x;
-      const nextDy = y - otherRobot.y;
-      const nextDistSq = nextDx * nextDx + nextDy * nextDy;
-      if (nextDistSq >= minDistSq) continue;
-      // Allow move attempts that increase spacing when robots start stacked together.
-      if (Number.isFinite(currentX) && Number.isFinite(currentY)) {
-        const currentDx = currentX - otherRobot.x;
-        const currentDy = currentY - otherRobot.y;
-        const currentDistSq = currentDx * currentDx + currentDy * currentDy;
-        if (nextDistSq > currentDistSq + 0.15) continue;
-      }
-      return false;
-    }
-    return true;
   }
 
   function tryRouteRobotTowardNearestBridge(world, structure, robot, target = null) {
@@ -10627,7 +11122,6 @@
     const tx = Math.floor(x / CONFIG.tileSize);
     const ty = Math.floor(y / CONFIG.tileSize);
     if (!isRobotWalkableTile(world, structure, tx, ty)) return false;
-    if (!canRobotOccupyPosition(world, structure, robot, x, y)) return false;
     robot.x = x;
     robot.y = y;
     return true;
@@ -10728,70 +11222,14 @@
     return moved;
   }
 
-  function resolveRobotCrowding(world) {
-    if (!world || !Array.isArray(state.structures)) return false;
-    const robots = [];
-    for (const structure of state.structures) {
-      if (!structure || structure.removed || structure.type !== "robot") continue;
-      const robot = ensureRobotMeta(structure);
-      if (!robot) continue;
-      robots.push({ structure, robot });
-    }
-    if (robots.length < 2) return false;
-
-    const minDist = Math.max(2, Number(ROBOT_CONFIG.minSeparationDistance) || 16);
-    let changed = false;
-    const passes = Math.max(1, Number(ROBOT_CONFIG.crowdingResolvePasses) || 1);
-    for (let pass = 0; pass < passes; pass += 1) {
-      let movedInPass = false;
-      for (let i = 0; i < robots.length; i += 1) {
-        const a = robots[i];
-        for (let j = i + 1; j < robots.length; j += 1) {
-          const b = robots[j];
-          const dx = b.robot.x - a.robot.x;
-          const dy = b.robot.y - a.robot.y;
-          const dist = Math.hypot(dx, dy);
-          if (dist >= minDist) continue;
-
-          let nx = 1;
-          let ny = 0;
-          if (dist > 0.001) {
-            nx = dx / dist;
-            ny = dy / dist;
-          } else {
-            const angle = (((a.structure.id || 0) * 37 + (b.structure.id || 0) * 53) % 360) * (Math.PI / 180);
-            nx = Math.cos(angle);
-            ny = Math.sin(angle);
-          }
-          const push = Math.max(0.35, (minDist - dist) * 0.6);
-          const moveAX = a.robot.x - nx * push;
-          const moveAY = a.robot.y - ny * push;
-          const moveBX = b.robot.x + nx * push;
-          const moveBY = b.robot.y + ny * push;
-
-          const movedA = tryMoveRobotTo(world, a.structure, a.robot, moveAX, moveAY)
-            || tryMoveRobotTo(world, a.structure, a.robot, moveAX, a.robot.y)
-            || tryMoveRobotTo(world, a.structure, a.robot, a.robot.x, moveAY);
-          const movedB = tryMoveRobotTo(world, b.structure, b.robot, moveBX, moveBY)
-            || tryMoveRobotTo(world, b.structure, b.robot, moveBX, b.robot.y)
-            || tryMoveRobotTo(world, b.structure, b.robot, b.robot.x, moveBY);
-
-          if (movedA || movedB) {
-            movedInPass = true;
-            changed = true;
-          }
-        }
-      }
-      if (!movedInPass) break;
-    }
-    return changed;
-  }
-
-  function findRobotTargetResource(world, structure, robot) {
+  function findRobotTargetResource(world, structure, robot, reservedResourceIds = null) {
     if (!world || !robot || !Array.isArray(world.resources)) return null;
     const candidates = [];
     for (const resource of world.resources) {
       if (!robotCanMineResource(robot, resource)) continue;
+      if (reservedResourceIds && Number.isInteger(resource.id) && reservedResourceIds.has(resource.id)) {
+        continue;
+      }
       const dist = Math.hypot(resource.x - robot.x, resource.y - robot.y);
       candidates.push({ resource, dist });
     }
@@ -10827,7 +11265,7 @@
     return null;
   }
 
-  function updateRobot(structure, world, dt) {
+  function updateRobot(structure, world, dt, reservedResourceIds = null) {
     const robot = ensureRobotMeta(structure);
     if (!robot || !world) return;
     const nav = ensureRobotNavigationState(robot);
@@ -10850,10 +11288,59 @@
     }
 
     const home = getRobotHomeWorldPosition(world, structure, robot);
+    let claimedResourceId = null;
+    const claimResourceTarget = (resourceId) => {
+      if (!Number.isInteger(resourceId)) return false;
+      if (reservedResourceIds) {
+        if (reservedResourceIds.has(resourceId)) return false;
+        reservedResourceIds.add(resourceId);
+      }
+      claimedResourceId = resourceId;
+      return true;
+    };
+    const clearRobotTarget = (resetRetarget = false) => {
+      if (
+        reservedResourceIds
+        && Number.isInteger(claimedResourceId)
+        && Number.isInteger(robot.targetResourceId)
+        && robot.targetResourceId === claimedResourceId
+      ) {
+        reservedResourceIds.delete(claimedResourceId);
+      }
+      claimedResourceId = null;
+      robot.targetResourceId = null;
+      if (resetRetarget) {
+        robot.retargetTimer = 0;
+      }
+    };
+
+    if (robot.recallActive) {
+      const recallBench = getBenchAtTile(robot.recallBenchTx, robot.recallBenchTy);
+      if (!recallBench) {
+        robot.recallActive = false;
+        robot.recallBenchTx = null;
+        robot.recallBenchTy = null;
+      } else {
+        const recallPos = getRobotRecallTargetPosition(world, structure, robot, recallBench);
+        if (recallPos) {
+          const recallDist = Math.hypot(recallPos.x - robot.x, recallPos.y - robot.y);
+          if (recallDist > CONFIG.tileSize * 0.45) {
+            robot.state = "recalling";
+            moveRobotToward(world, structure, robot, recallPos.x, recallPos.y, dt);
+          } else {
+            robot.state = "recalled";
+            clearRobotNavigation(robot);
+          }
+        } else {
+          robot.state = "recalled";
+          clearRobotNavigation(robot);
+        }
+        return;
+      }
+    }
 
     if (robot.manualStop) {
-      robot.targetResourceId = null;
-      robot.retargetTimer = 0;
+      clearRobotTarget(true);
       const stopDist = Math.hypot(home.x - robot.x, home.y - robot.y);
       if (stopDist > CONFIG.tileSize * 0.5) {
         robot.state = "returning";
@@ -10866,8 +11353,7 @@
     }
 
     if (!isRobotMode(robot.mode)) {
-      robot.targetResourceId = null;
-      robot.retargetTimer = 0;
+      clearRobotTarget(true);
       robot.state = "idle";
       clearRobotNavigation(robot);
       return;
@@ -10883,7 +11369,7 @@
         robot.state = "waiting";
         clearRobotNavigation(robot);
       }
-      robot.targetResourceId = null;
+      clearRobotTarget(false);
       return;
     }
 
@@ -10892,13 +11378,22 @@
       : null;
     if (!robotCanMineResource(robot, target)) {
       target = null;
-      robot.targetResourceId = null;
+      clearRobotTarget(false);
+      clearRobotNavigation(robot);
+    } else if (target && !claimResourceTarget(target.id)) {
+      target = null;
+      clearRobotTarget(true);
       clearRobotNavigation(robot);
     }
 
     if (!target && robot.retargetTimer <= 0) {
-      target = findRobotTargetResource(world, structure, robot);
-      robot.targetResourceId = target ? target.id : null;
+      target = findRobotTargetResource(world, structure, robot, reservedResourceIds);
+      if (target && claimResourceTarget(target.id)) {
+        robot.targetResourceId = target.id;
+      } else {
+        target = null;
+        robot.targetResourceId = null;
+      }
       robot.retargetTimer = target
         ? ROBOT_CONFIG.retargetInterval
         : ROBOT_CONFIG.retargetIdleInterval;
@@ -10943,8 +11438,7 @@
             robot.state = "moving";
             return;
           }
-          robot.targetResourceId = null;
-          robot.retargetTimer = 0;
+          clearRobotTarget(true);
           robot.state = "idle";
           clearRobotNavigation(robot);
         }
@@ -10960,8 +11454,7 @@
 
     const dropId = getResourceDropId(target);
     if (!dropId) {
-      robot.targetResourceId = null;
-      robot.retargetTimer = 0;
+      clearRobotTarget(true);
       robot.state = "idle";
       clearRobotNavigation(robot);
       return;
@@ -10971,7 +11464,7 @@
     const nextDamage = Math.max(1, Math.floor(ROBOT_CONFIG.mineDamage));
     const willBreak = target.hp <= nextDamage;
     if (willBreak && !canAddItem(structure.storage, dropId, 1)) {
-      robot.targetResourceId = null;
+      clearRobotTarget(false);
       robot.state = "returning";
       clearRobotNavigation(robot);
       return;
@@ -10981,8 +11474,7 @@
     applyHarvestToResource(world, target, nextDamage, false, canHear);
     if (willBreak) {
       addItem(structure.storage, dropId, 1);
-      robot.targetResourceId = null;
-      robot.retargetTimer = 0;
+      clearRobotTarget(true);
       clearRobotNavigation(robot);
     }
     robot.mineTimer = ROBOT_CONFIG.mineCooldown;
@@ -10996,18 +11488,16 @@
     if (!world) return;
     if (state.gameWon) return;
     let changed = false;
+    const reservedResourceIds = new Set();
     for (const structure of state.structures) {
       if (!structure || structure.removed || structure.type !== "robot") continue;
       const before = getRobotPosition(structure);
-      updateRobot(structure, world, dt);
+      updateRobot(structure, world, dt, reservedResourceIds);
       const after = getRobotPosition(structure);
       if (!before || !after) continue;
       if (Math.hypot(after.x - before.x, after.y - before.y) > 0.01) {
         changed = true;
       }
-    }
-    if (resolveRobotCrowding(world)) {
-      changed = true;
     }
     if (changed) {
       markDirty();
@@ -11431,6 +11921,7 @@
 
     if (inHouse) {
       state.nearBench = false;
+      state.nearBenchStructure = null;
       state.nearCave = null;
       state.nearDock = null;
       state.nearHouse = state.activeHouse;
@@ -11453,7 +11944,9 @@
       state.nearStation = station;
       state.nearBed = bed;
     } else if (!state.inCave) {
-      state.nearBench = !!findNearestStructure(state.player, (structure) => structure.type === "bench");
+      const nearbyBench = findNearestStructure(state.player, (structure) => structure.type === "bench");
+      state.nearBench = !!nearbyBench;
+      state.nearBenchStructure = nearbyBench;
       state.nearStation = findNearestStructure(state.player, (structure) => STRUCTURE_DEFS[structure.type]?.station);
       state.nearChest = findNearestStructure(state.player, (structure) => structure.type === "chest");
       state.nearDock = findNearestStructure(state.player, (structure) => structure.type === "dock");
@@ -11462,6 +11955,7 @@
       state.nearBed = findNearestStructure(state.player, (structure) => structure.type === "bed");
     } else {
       state.nearBench = false;
+      state.nearBenchStructure = null;
       state.nearStation = null;
       state.nearChest = null;
       state.nearDock = null;
@@ -12166,12 +12660,10 @@
     let worldX = structure.tx * CONFIG.tileSize;
     let worldY = structure.ty * CONFIG.tileSize;
     if (structure.type === "robot") {
-      const robot = ensureRobotMeta(structure);
-      if (robot) {
-        const drawX = (!net.isHost && Number.isFinite(robot.renderX)) ? robot.renderX : robot.x;
-        const drawY = (!net.isHost && Number.isFinite(robot.renderY)) ? robot.renderY : robot.y;
-        worldX = drawX - CONFIG.tileSize * 0.5;
-        worldY = drawY - CONFIG.tileSize * 0.5;
+      const drawPos = getRobotDisplayPosition(structure, !net.isHost);
+      if (drawPos) {
+        worldX = drawPos.x - CONFIG.tileSize * 0.5;
+        worldY = drawPos.y - CONFIG.tileSize * 0.5;
       }
     }
     const screenX = worldX - camera.x;
@@ -13968,6 +14460,12 @@
     if (mosesBtn) mosesBtn.addEventListener("click", toggleDebugMoses);
     if (infiniteResourcesBtn) infiniteResourcesBtn.addEventListener("click", toggleInfiniteResources);
     if (debugWorldMapBtn) debugWorldMapBtn.addEventListener("click", toggleDebugWorldMap);
+    if (toggleRobotRecallBtn) {
+      toggleRobotRecallBtn.addEventListener("click", () => {
+        ensureAudioContext();
+        toggleBenchRobotRecall();
+      });
+    }
     gameLoop();
   }
 
