@@ -558,8 +558,8 @@
       icon: "bridge",
       name: "Bridge Bundle",
       description: "Craft multiple bridges at once for rapid expansion.",
-      cost: { wood: 8, plank: 1, stick: 4 },
-      output: { bridge: 3 },
+      cost: { wood: 6, plank: 1, stick: 3 },
+      output: { bridge: 5 },
     },
     {
       id: "village_path",
@@ -3772,7 +3772,7 @@
     if (structure.type === "robot") {
       const robot = ensureRobotMeta(structure);
       if (!robot) return null;
-      return {
+      const meta = {
         robot: {
           homeTx: robot.homeTx,
           homeTy: robot.homeTy,
@@ -3790,6 +3790,8 @@
           recallBenchTy: Number.isInteger(robot.recallBenchTy) ? robot.recallBenchTy : null,
         },
       };
+      if (structure.meta?.wildSpawn) meta.wildSpawn = true;
+      return meta;
     }
     if (!structure.meta) return null;
     const meta = structure.meta;
