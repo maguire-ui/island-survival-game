@@ -4987,8 +4987,24 @@
     const aimX = aimDist > CONFIG.tileSize * 6 ? sourceX : aimXRaw;
     const aimY = aimDist > CONFIG.tileSize * 6 ? sourceY : aimYRaw;
     const maxReach = MONSTER.attackRange + 12;
+    const targetKind = message.targetKind === "monster" || message.targetKind === "animal"
+      ? message.targetKind
+      : null;
+    const targetIdValue = Number(message.targetId);
+    const targetId = Number.isInteger(targetIdValue) ? targetIdValue : null;
 
-    let target = findNearestMonsterAt(world, { x: aimX, y: aimY }, maxReach);
+    let target = null;
+    if (targetKind === "monster" && targetId != null && Array.isArray(world.monsters)) {
+      target = world.monsters.find((monster) => (
+        monster && monster.hp > 0 && monster.id === targetId
+      )) || null;
+      if (target && Math.hypot(target.x - sourceX, target.y - sourceY) > maxReach) {
+        target = null;
+      }
+    }
+    if (!target) {
+      target = findNearestMonsterAt(world, { x: aimX, y: aimY }, maxReach);
+    }
     if (target && Math.hypot(target.x - sourceX, target.y - sourceY) > maxReach) {
       target = findNearestMonsterAt(world, { x: sourceX, y: sourceY }, maxReach);
     }
@@ -5009,7 +5025,18 @@
     }
     const surface = state.surfaceWorld || state.world;
     if (world !== surface) return;
-    let animal = findNearestAnimalAt(world, { x: aimX, y: aimY }, maxReach);
+    let animal = null;
+    if (targetKind === "animal" && targetId != null && Array.isArray(world.animals)) {
+      animal = world.animals.find((entry) => (
+        entry && entry.hp > 0 && entry.id === targetId
+      )) || null;
+      if (animal && Math.hypot(animal.x - sourceX, animal.y - sourceY) > maxReach) {
+        animal = null;
+      }
+    }
+    if (!animal) {
+      animal = findNearestAnimalAt(world, { x: aimX, y: aimY }, maxReach);
+    }
     if (animal && Math.hypot(animal.x - sourceX, animal.y - sourceY) > maxReach) {
       animal = findNearestAnimalAt(world, { x: sourceX, y: sourceY }, maxReach);
     }
@@ -5462,15 +5489,26 @@
     }
   }
 
+  function smoothRemoteEntityRender(entity, dt, smoothFactor, snapDistance) {
+    if (!entity || !Number.isFinite(entity.x) || !Number.isFinite(entity.y)) return;
+    if (!Number.isFinite(entity.renderX) || !Number.isFinite(entity.renderY)) {
+      entity.renderX = entity.x;
+      entity.renderY = entity.y;
+      return;
+    }
+    const drift = Math.hypot(entity.x - entity.renderX, entity.y - entity.renderY);
+    if (drift > snapDistance) {
+      entity.renderX = entity.x;
+      entity.renderY = entity.y;
+      return;
+    }
+    entity.renderX = smoothValue(entity.renderX, entity.x, dt, smoothFactor);
+    entity.renderY = smoothValue(entity.renderY, entity.y, dt, smoothFactor);
+  }
+
   function updateRemoteRender(dt) {
     for (const player of net.players.values()) {
-      if (player.renderX == null || player.renderY == null) {
-        player.renderX = player.x;
-        player.renderY = player.y;
-      } else {
-        player.renderX = smoothValue(player.renderX, player.x, dt, NET_CONFIG.renderSmooth);
-        player.renderY = smoothValue(player.renderY, player.y, dt, NET_CONFIG.renderSmooth);
-      }
+      smoothRemoteEntityRender(player, dt, NET_CONFIG.renderSmooth, CONFIG.tileSize * 3.2);
 
       if (player.inHut && typeof player.houseX === "number" && typeof player.houseY === "number") {
         if (player.renderHouseX == null || player.renderHouseY == null) {
@@ -5491,37 +5529,19 @@
         if (monster.dayBurning && (monster.burnTimer ?? 0) > 0) {
           monster.burnTimer = Math.max(0, monster.burnTimer - dt);
         }
-        if (monster.renderX == null || monster.renderY == null) {
-          monster.renderX = monster.x;
-          monster.renderY = monster.y;
-        } else {
-          monster.renderX = smoothValue(monster.renderX, monster.x, dt, NET_CONFIG.monsterSmooth);
-          monster.renderY = smoothValue(monster.renderY, monster.y, dt, NET_CONFIG.monsterSmooth);
-        }
+        smoothRemoteEntityRender(monster, dt, NET_CONFIG.monsterSmooth, CONFIG.tileSize * 2.1);
       }
     }
 
     if (!net.isHost && state.world?.animals) {
       for (const animal of state.world.animals) {
-        if (animal.renderX == null || animal.renderY == null) {
-          animal.renderX = animal.x;
-          animal.renderY = animal.y;
-        } else {
-          animal.renderX = smoothValue(animal.renderX, animal.x, dt, NET_CONFIG.animalSmooth);
-          animal.renderY = smoothValue(animal.renderY, animal.y, dt, NET_CONFIG.animalSmooth);
-        }
+        smoothRemoteEntityRender(animal, dt, NET_CONFIG.animalSmooth, CONFIG.tileSize * 1.8);
       }
     }
 
     if (!net.isHost && state.world?.villagers) {
       for (const villager of state.world.villagers) {
-        if (villager.renderX == null || villager.renderY == null) {
-          villager.renderX = villager.x;
-          villager.renderY = villager.y;
-        } else {
-          villager.renderX = smoothValue(villager.renderX, villager.x, dt, NET_CONFIG.villagerSmooth);
-          villager.renderY = smoothValue(villager.renderY, villager.y, dt, NET_CONFIG.villagerSmooth);
-        }
+        smoothRemoteEntityRender(villager, dt, NET_CONFIG.villagerSmooth, CONFIG.tileSize * 1.8);
       }
     }
 
@@ -5548,13 +5568,12 @@
 
     if (!net.isHost && state.world?.projectiles) {
       for (const projectile of state.world.projectiles) {
-        if (projectile.renderX == null || projectile.renderY == null) {
-          projectile.renderX = projectile.x;
-          projectile.renderY = projectile.y;
-        } else {
-          projectile.renderX = smoothValue(projectile.renderX, projectile.x, dt, NET_CONFIG.monsterSmooth + 2);
-          projectile.renderY = smoothValue(projectile.renderY, projectile.y, dt, NET_CONFIG.monsterSmooth + 2);
-        }
+        smoothRemoteEntityRender(
+          projectile,
+          dt,
+          NET_CONFIG.monsterSmooth + 2,
+          CONFIG.tileSize * 1.35
+        );
       }
     }
   }
@@ -5993,28 +6012,7 @@
     if (!world || !Array.isArray(world.islands)) return { x, y };
     const island = world.islands[islandIndex];
     if (!island) return { x, y };
-    let next = clampIslandCenterToBounds(world, island, x, y);
-    const minGap = 1.8;
-    for (let pass = 0; pass < 6; pass += 1) {
-      let pushX = 0;
-      let pushY = 0;
-      for (let i = 0; i < world.islands.length; i += 1) {
-        if (i === islandIndex) continue;
-        const other = world.islands[i];
-        if (!other) continue;
-        const dx = next.x - other.x;
-        const dy = next.y - other.y;
-        const dist = Math.hypot(dx, dy) || 0.0001;
-        const desired = Math.max(2, (island.radius + other.radius) + minGap);
-        if (dist >= desired) continue;
-        const overlap = desired - dist;
-        pushX += (dx / dist) * overlap;
-        pushY += (dy / dist) * overlap;
-      }
-      if (Math.abs(pushX) < 0.001 && Math.abs(pushY) < 0.001) break;
-      next = clampIslandCenterToBounds(world, island, next.x + pushX, next.y + pushY);
-    }
-    return next;
+    return clampIslandCenterToBounds(world, island, x, y);
   }
 
   function rebuildSurfaceTerrainFromIslands(world) {
@@ -8994,6 +8992,9 @@
     if (!world || !Number.isFinite(x) || !Number.isFinite(y)) return null;
     const tx = Math.floor(x / CONFIG.tileSize);
     const ty = Math.floor(y / CONFIG.tileSize);
+    if (isValidEntityLandTile(world, tx, ty)) {
+      return { tx, ty, x, y };
+    }
     const tile = findNearestEntityLandTile(world, tx, ty, maxRadius);
     if (!tile) return null;
     return {
@@ -9029,6 +9030,9 @@
     if (!world || !Number.isFinite(x) || !Number.isFinite(y)) return null;
     const tx = Math.floor(x / CONFIG.tileSize);
     const ty = Math.floor(y / CONFIG.tileSize);
+    if (isWalkableTileInWorld(world, tx, ty)) {
+      return { tx, ty, x, y };
+    }
     const tile = findNearestWalkableTileInWorld(world, tx, ty, maxRadius);
     if (!tile) return null;
     return {
@@ -14623,12 +14627,30 @@
     }
   }
 
-  function findNearestMonsterAt(world, position, range = CONFIG.interactRange) {
+  function getEntityWorldPosition(entity, preferRender = false) {
+    if (!entity) return null;
+    const hasRender = Number.isFinite(entity.renderX) && Number.isFinite(entity.renderY);
+    if (preferRender && hasRender) {
+      return { x: entity.renderX, y: entity.renderY };
+    }
+    if (Number.isFinite(entity.x) && Number.isFinite(entity.y)) {
+      return { x: entity.x, y: entity.y };
+    }
+    if (hasRender) {
+      return { x: entity.renderX, y: entity.renderY };
+    }
+    return null;
+  }
+
+  function findNearestMonsterAt(world, position, range = CONFIG.interactRange, preferRender = false) {
     if (!world?.monsters) return null;
     let closest = null;
     let closestDist = Infinity;
     for (const monster of world.monsters) {
-      const dist = Math.hypot(monster.x - position.x, monster.y - position.y);
+      if (!monster || monster.hp <= 0) continue;
+      const monsterPos = getEntityWorldPosition(monster, preferRender);
+      if (!monsterPos) continue;
+      const dist = Math.hypot(monsterPos.x - position.x, monsterPos.y - position.y);
       if (dist < range && dist < closestDist) {
         closest = monster;
         closestDist = dist;
@@ -14637,17 +14659,19 @@
     return closest;
   }
 
-  function findNearestMonster(world, player, range = CONFIG.interactRange) {
-    return findNearestMonsterAt(world, player, range);
+  function findNearestMonster(world, player, range = CONFIG.interactRange, preferRender = false) {
+    return findNearestMonsterAt(world, player, range, preferRender);
   }
 
-  function findNearestAnimalAt(world, position, range = CONFIG.interactRange) {
+  function findNearestAnimalAt(world, position, range = CONFIG.interactRange, preferRender = false) {
     if (!world?.animals) return null;
     let closest = null;
     let closestDist = Infinity;
     for (const animal of world.animals) {
       if (!animal || animal.hp <= 0) continue;
-      const dist = Math.hypot(animal.x - position.x, animal.y - position.y);
+      const animalPos = getEntityWorldPosition(animal, preferRender);
+      if (!animalPos) continue;
+      const dist = Math.hypot(animalPos.x - position.x, animalPos.y - position.y);
       if (dist < range && dist < closestDist) {
         closest = animal;
         closestDist = dist;
@@ -14665,25 +14689,47 @@
     if (state.player.attackTimer > 0) return;
     const combatWorld = getCombatWorld();
     if (!combatWorld) return;
+    const preferRenderTargets = netIsClient();
     const hasPreferredPos = preferredTargetPos
       && Number.isFinite(preferredTargetPos.x)
       && Number.isFinite(preferredTargetPos.y);
     const searchOrigin = hasPreferredPos ? preferredTargetPos : state.player;
     const canFightMonsters = canDamageMonsters(state.player);
-    let targetMonster = findNearestMonsterAt(combatWorld, searchOrigin, MONSTER.attackRange + 12);
+    let targetMonster = findNearestMonsterAt(
+      combatWorld,
+      searchOrigin,
+      MONSTER.attackRange + 12,
+      preferRenderTargets
+    );
     let targetAnimal = targetMonster
       ? null
-      : findNearestAnimalAt(combatWorld, searchOrigin, MONSTER.attackRange + 12);
+      : findNearestAnimalAt(combatWorld, searchOrigin, MONSTER.attackRange + 12, preferRenderTargets);
     if (targetMonster) {
-      const distToPlayer = Math.hypot(targetMonster.x - state.player.x, targetMonster.y - state.player.y);
+      const targetPos = getEntityWorldPosition(targetMonster, preferRenderTargets);
+      const distToPlayer = targetPos
+        ? Math.hypot(targetPos.x - state.player.x, targetPos.y - state.player.y)
+        : Infinity;
       if (distToPlayer > MONSTER.attackRange + 12) {
-        targetMonster = findNearestMonsterAt(combatWorld, state.player, MONSTER.attackRange + 8);
+        targetMonster = findNearestMonsterAt(
+          combatWorld,
+          state.player,
+          MONSTER.attackRange + 8,
+          preferRenderTargets
+        );
       }
     }
     if (!targetMonster && targetAnimal) {
-      const distToPlayer = Math.hypot(targetAnimal.x - state.player.x, targetAnimal.y - state.player.y);
+      const targetPos = getEntityWorldPosition(targetAnimal, preferRenderTargets);
+      const distToPlayer = targetPos
+        ? Math.hypot(targetPos.x - state.player.x, targetPos.y - state.player.y)
+        : Infinity;
       if (distToPlayer > MONSTER.attackRange + 12) {
-        targetAnimal = findNearestAnimalAt(combatWorld, state.player, MONSTER.attackRange + 8);
+        targetAnimal = findNearestAnimalAt(
+          combatWorld,
+          state.player,
+          MONSTER.attackRange + 8,
+          preferRenderTargets
+        );
       }
     }
     if (targetMonster && !canFightMonsters) {
@@ -14696,7 +14742,17 @@
       if (targetMonster || targetAnimal) {
         playSfx("hit");
       }
-      sendToHost({
+      const selectedTarget = targetMonster || targetAnimal;
+      const selectedTargetPos = selectedTarget
+        ? getEntityWorldPosition(selectedTarget, true)
+        : null;
+      const aimX = hasPreferredPos
+        ? preferredTargetPos.x
+        : (selectedTargetPos?.x ?? state.player.x);
+      const aimY = hasPreferredPos
+        ? preferredTargetPos.y
+        : (selectedTargetPos?.y ?? state.player.y);
+      const message = {
         type: "attack",
         world: state.inCave ? "cave" : "surface",
         caveId: state.activeCave?.id ?? null,
@@ -14704,8 +14760,18 @@
         unlocks: normalizeUnlocks(state.player.unlocks),
         x: state.player.x,
         y: state.player.y,
-        aimX: hasPreferredPos ? preferredTargetPos.x : state.player.x,
-        aimY: hasPreferredPos ? preferredTargetPos.y : state.player.y,
+        aimX,
+        aimY,
+      };
+      if (targetMonster) {
+        message.targetKind = "monster";
+        message.targetId = targetMonster.id;
+      } else if (targetAnimal) {
+        message.targetKind = "animal";
+        message.targetId = targetAnimal.id;
+      }
+      sendToHost({
+        ...message,
       });
       return;
     }
@@ -16841,9 +16907,14 @@
 
     const inHouse = !!(state.player.inHut && state.activeHouse);
     const combatWorld = getCombatWorld();
+    const preferRenderTargets = netIsClient();
     state.targetResource = inHouse ? null : findNearestResource(combatWorld, state.player);
-    state.targetMonster = inHouse ? null : findNearestMonster(combatWorld, state.player, MONSTER.attackRange + 12);
-    state.targetAnimal = inHouse ? null : findNearestAnimalAt(combatWorld, state.player, MONSTER.attackRange + 12);
+    state.targetMonster = inHouse
+      ? null
+      : findNearestMonster(combatWorld, state.player, MONSTER.attackRange + 12, preferRenderTargets);
+    state.targetAnimal = inHouse
+      ? null
+      : findNearestAnimalAt(combatWorld, state.player, MONSTER.attackRange + 12, preferRenderTargets);
     const resourceGate = state.targetResource ? canHarvestResource(state.targetResource) : { ok: true, reason: "" };
     const swordUnlocked = canDamageMonsters(state.player);
 
@@ -19807,21 +19878,27 @@
     }
 
     if (state.targetMonster) {
-      const screen = worldToScreen(state.targetMonster.x, state.targetMonster.y, camera);
-      ctx.strokeStyle = "rgba(255, 80, 80, 0.8)";
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(screen.x, screen.y, 18, 0, Math.PI * 2);
-      ctx.stroke();
+      const targetPos = getEntityWorldPosition(state.targetMonster, netIsClient());
+      if (targetPos) {
+        const screen = worldToScreen(targetPos.x, targetPos.y, camera);
+        ctx.strokeStyle = "rgba(255, 80, 80, 0.8)";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(screen.x, screen.y, 18, 0, Math.PI * 2);
+        ctx.stroke();
+      }
     }
 
     if (state.targetAnimal) {
-      const screen = worldToScreen(state.targetAnimal.x, state.targetAnimal.y, camera);
-      ctx.strokeStyle = "rgba(255, 180, 100, 0.8)";
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(screen.x, screen.y, 16, 0, Math.PI * 2);
-      ctx.stroke();
+      const targetPos = getEntityWorldPosition(state.targetAnimal, netIsClient());
+      if (targetPos) {
+        const screen = worldToScreen(targetPos.x, targetPos.y, camera);
+        ctx.strokeStyle = "rgba(255, 180, 100, 0.8)";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(screen.x, screen.y, 16, 0, Math.PI * 2);
+        ctx.stroke();
+      }
     }
 
     drawRobotInteractionHighlight(camera);
@@ -20104,29 +20181,40 @@
   function tryMobileTapAction(screenX, screenY) {
     const combatWorld = getCombatWorld();
     if (!combatWorld || !state.player) return false;
+    const preferRenderTargets = netIsClient();
 
     const worldPos = screenToWorld(screenX, screenY);
     const tapRange = CONFIG.tileSize * 0.92;
     const candidates = [];
 
-    const monster = findNearestMonsterAt(combatWorld, worldPos, tapRange);
+    const monster = findNearestMonsterAt(combatWorld, worldPos, tapRange, preferRenderTargets);
     if (monster) {
-      candidates.push({
-        kind: "monster",
-        target: monster,
-        dist: Math.hypot(monster.x - worldPos.x, monster.y - worldPos.y),
-        priority: 0,
-      });
+      const monsterPos = getEntityWorldPosition(monster, preferRenderTargets);
+      if (monsterPos) {
+        candidates.push({
+          kind: "monster",
+          target: monster,
+          targetX: monsterPos.x,
+          targetY: monsterPos.y,
+          dist: Math.hypot(monsterPos.x - worldPos.x, monsterPos.y - worldPos.y),
+          priority: 0,
+        });
+      }
     }
 
-    const animal = findNearestAnimalAt(combatWorld, worldPos, tapRange);
+    const animal = findNearestAnimalAt(combatWorld, worldPos, tapRange, preferRenderTargets);
     if (animal) {
-      candidates.push({
-        kind: "animal",
-        target: animal,
-        dist: Math.hypot(animal.x - worldPos.x, animal.y - worldPos.y),
-        priority: 1,
-      });
+      const animalPos = getEntityWorldPosition(animal, preferRenderTargets);
+      if (animalPos) {
+        candidates.push({
+          kind: "animal",
+          target: animal,
+          targetX: animalPos.x,
+          targetY: animalPos.y,
+          dist: Math.hypot(animalPos.x - worldPos.x, animalPos.y - worldPos.y),
+          priority: 1,
+        });
+      }
     }
 
     const resource = findNearestResourceAt(combatWorld, worldPos, tapRange);
@@ -20147,10 +20235,12 @@
     const selected = candidates[0];
     const target = selected.target;
     if (!target) return false;
+    const targetX = Number.isFinite(selected.targetX) ? selected.targetX : target.x;
+    const targetY = Number.isFinite(selected.targetY) ? selected.targetY : target.y;
 
-    setPlayerFacingToward(target.x, target.y);
+    setPlayerFacingToward(targetX, targetY);
     const maxRange = selected.kind === "resource" ? CONFIG.interactRange : MONSTER.attackRange + 8;
-    const distToPlayer = Math.hypot(target.x - state.player.x, target.y - state.player.y);
+    const distToPlayer = Math.hypot(targetX - state.player.x, targetY - state.player.y);
     if (distToPlayer > maxRange) {
       setPrompt("Move closer", 0.65);
       return true;
@@ -20161,7 +20251,7 @@
       return true;
     }
 
-    performAttack({ x: target.x, y: target.y });
+    performAttack({ x: targetX, y: targetY });
     return true;
   }
 
