@@ -72,6 +72,7 @@
   const mosesBtn = document.getElementById("mosesBtn");
   const infiniteResourcesBtn = document.getElementById("infiniteResourcesBtn");
   const debugWorldMapBtn = document.getElementById("debugWorldMapBtn");
+  const continentalShiftBtn = document.getElementById("continentalShiftBtn");
 
   const buildCategoryTabs = Array.from(buildMenu.querySelectorAll(".build-category-btn"));
   const buildCategoryIcons = Array.from(buildMenu.querySelectorAll(".build-category-icon"));
@@ -1200,6 +1201,7 @@
 
   const ABANDONED_ROBOT_OUTER_RING_RATIO = 0.16;
   const ABANDONED_ROBOT_FARTHEST_PERCENT = 0.28;
+  const MAX_ISLAND_BRIDGE_GAP_TILES = 15;
 
   const SURFACE_GUARDIAN_CONFIG = Object.freeze({
     spawnInterval: 5.8,
@@ -1415,6 +1417,8 @@
     debugInfiniteResources: SETTINGS_DEFAULTS.debugInfiniteResources,
     debugWorldMapVisible: false,
     debugShowAbandonedRobot: false,
+    debugContinentalShift: false,
+    debugIslandDrag: null,
     debugSpeedMultiplier: SETTINGS_DEFAULTS.debugSpeedMultiplier,
     debugWorldSpeedMultiplier: SETTINGS_DEFAULTS.debugWorldSpeedMultiplier,
     ambientFish: [],
@@ -1733,6 +1737,8 @@
       state.debugInfiniteResources = false;
       state.debugWorldMapVisible = false;
       state.debugShowAbandonedRobot = false;
+      state.debugContinentalShift = false;
+      state.debugIslandDrag = null;
       state.debugSpeedMultiplier = 1;
       state.debugWorldSpeedMultiplier = 1;
       if (buildMenu && !buildMenu.classList.contains("hidden")) {
@@ -1745,6 +1751,7 @@
     updateMosesButton();
     updateInfiniteResourcesButton();
     updateDebugWorldMapButton();
+    updateContinentalShiftButton();
     updateDebugSpeedUI();
     updateDebugWorldSpeedUI();
     if (persist) saveUserSettings();
@@ -1777,6 +1784,16 @@
       ? "World Mini-Map: On"
       : "World Mini-Map: Off";
     debugWorldMapBtn.setAttribute("aria-pressed", enabled ? "true" : "false");
+  }
+
+  function updateContinentalShiftButton() {
+    if (!continentalShiftBtn) return;
+    const enabled = !!state.debugUnlocked && !!state.debugContinentalShift;
+    continentalShiftBtn.disabled = !state.debugUnlocked;
+    continentalShiftBtn.textContent = enabled
+      ? "Continental Shift: On"
+      : "Continental Shift: Off";
+    continentalShiftBtn.setAttribute("aria-pressed", enabled ? "true" : "false");
   }
 
   function ensureAudioContext() {
@@ -4138,6 +4155,7 @@
     return {
       type: "snapshot",
       seed: surface.seed,
+      islandLayout: serializeIslandLayout(surface),
       timeOfDay: state.timeOfDay,
       isNight: state.isNight,
       gameWon: state.gameWon,
@@ -4515,6 +4533,12 @@
     }
 
     const world = state.surfaceWorld;
+    if (Array.isArray(snapshot.islandLayout)) {
+      applySurfaceIslandLayout(world, snapshot.islandLayout, { shiftSession: false });
+      if (!state.spawnTile || !isSpawnableTile(world, state.spawnTile.x, state.spawnTile.y)) {
+        state.spawnTile = findSpawnTile(world);
+      }
+    }
     ensurePlayerProgress(state.player);
     ensureSurfaceCaves(world, snapshot.caves);
     applyResourceStates(world, snapshot.world?.resourceStates ?? []);
@@ -5889,6 +5913,778 @@
     return ranked.map((entry) => entry.island);
   }
 
+  function getIslandIndexForTileInList(islands, tx, ty) {
+    if (!Array.isArray(islands) || !Number.isFinite(tx) || !Number.isFinite(ty)) return -1;
+    const px = tx + 0.5;
+    const py = ty + 0.5;
+    let bestIndex = -1;
+    let bestDelta = Infinity;
+    for (let i = 0; i < islands.length; i += 1) {
+      const island = islands[i];
+      if (!island) continue;
+      const delta = Math.hypot(px - island.x, py - island.y) - island.radius;
+      if (delta <= 0 && delta < bestDelta) {
+        bestDelta = delta;
+        bestIndex = i;
+      }
+    }
+    return bestIndex;
+  }
+
+  function getIslandIndexForWorldPositionInList(islands, x, y) {
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return -1;
+    const tx = Math.floor(x / CONFIG.tileSize);
+    const ty = Math.floor(y / CONFIG.tileSize);
+    return getIslandIndexForTileInList(islands, tx, ty);
+  }
+
+  function getIslandDeltaForTile(islandsBefore, deltas, tx, ty) {
+    const islandIndex = getIslandIndexForTileInList(islandsBefore, tx, ty);
+    if (islandIndex < 0 || !Array.isArray(deltas)) return null;
+    const delta = deltas[islandIndex];
+    if (!delta) return null;
+    if ((delta.dx || 0) === 0 && (delta.dy || 0) === 0) return null;
+    return delta;
+  }
+
+  function getIslandDeltaForWorldPosition(islandsBefore, deltas, x, y) {
+    const islandIndex = getIslandIndexForWorldPositionInList(islandsBefore, x, y);
+    if (islandIndex < 0 || !Array.isArray(deltas)) return null;
+    const delta = deltas[islandIndex];
+    if (!delta) return null;
+    if ((delta.dx || 0) === 0 && (delta.dy || 0) === 0) return null;
+    return delta;
+  }
+
+  function serializeIslandLayout(world) {
+    if (!world || !Array.isArray(world.islands)) return [];
+    return world.islands.map((island) => ({
+      x: Number.isFinite(island?.x) ? island.x : 0,
+      y: Number.isFinite(island?.y) ? island.y : 0,
+    }));
+  }
+
+  function normalizeIslandLayoutForWorld(world, layout) {
+    if (!world || !Array.isArray(world.islands) || !Array.isArray(layout)) return null;
+    if (layout.length !== world.islands.length) return null;
+    const normalized = [];
+    for (let i = 0; i < layout.length; i += 1) {
+      const entry = layout[i];
+      if (!entry || !Number.isFinite(entry.x) || !Number.isFinite(entry.y)) return null;
+      normalized.push({ x: entry.x, y: entry.y });
+    }
+    return normalized;
+  }
+
+  function clampIslandCenterToBounds(world, island, x, y) {
+    if (!world || !island) {
+      return { x: Number(x) || 0, y: Number(y) || 0 };
+    }
+    const edgePad = Math.max(6, Number(island.radius) || 0) + 14;
+    const minCoord = edgePad;
+    const maxCoord = Math.max(minCoord, world.size - edgePad);
+    return {
+      x: clamp(Number(x) || island.x, minCoord, maxCoord),
+      y: clamp(Number(y) || island.y, minCoord, maxCoord),
+    };
+  }
+
+  function clampIslandCenterForDebugDrag(world, islandIndex, x, y) {
+    if (!world || !Array.isArray(world.islands)) return { x, y };
+    const island = world.islands[islandIndex];
+    if (!island) return { x, y };
+    let next = clampIslandCenterToBounds(world, island, x, y);
+    const minGap = 1.8;
+    for (let pass = 0; pass < 6; pass += 1) {
+      let pushX = 0;
+      let pushY = 0;
+      for (let i = 0; i < world.islands.length; i += 1) {
+        if (i === islandIndex) continue;
+        const other = world.islands[i];
+        if (!other) continue;
+        const dx = next.x - other.x;
+        const dy = next.y - other.y;
+        const dist = Math.hypot(dx, dy) || 0.0001;
+        const desired = Math.max(2, (island.radius + other.radius) + minGap);
+        if (dist >= desired) continue;
+        const overlap = desired - dist;
+        pushX += (dx / dist) * overlap;
+        pushY += (dy / dist) * overlap;
+      }
+      if (Math.abs(pushX) < 0.001 && Math.abs(pushY) < 0.001) break;
+      next = clampIslandCenterToBounds(world, island, next.x + pushX, next.y + pushY);
+    }
+    return next;
+  }
+
+  function rebuildSurfaceTerrainFromIslands(world) {
+    if (!world || !Array.isArray(world.islands)) return false;
+    const size = world.size;
+    const seed = Number.isFinite(world.seedInt) ? world.seedInt : seedToInt(String(world.seed || "island-1"));
+    const tiles = new Array(size * size).fill(0);
+    const shades = new Array(size * size).fill(1);
+    const biomeGrid = new Array(size * size).fill(-1);
+    const beachGrid = new Array(size * size).fill(false);
+
+    for (let y = 0; y < size; y += 1) {
+      for (let x = 0; x < size; x += 1) {
+        let base = 0;
+        let bestIndex = -1;
+        for (let i = 0; i < world.islands.length; i += 1) {
+          const island = world.islands[i];
+          if (!island) continue;
+          const dx = x - island.x;
+          const dy = y - island.y;
+          const dist = Math.hypot(dx, dy);
+          const falloff = clamp(1 - dist / island.radius, 0, 1);
+          if (falloff > base) {
+            base = falloff;
+            bestIndex = i;
+          }
+        }
+
+        const edgeNoise = fbm(x * 0.2, y * 0.2, seed + 200);
+        const height = base + (edgeNoise - 0.5) * 0.3 * base;
+        const idx = tileIndex(x, y, size);
+        const isLand = height > 0.2;
+        tiles[idx] = isLand ? 1 : 0;
+        if (isLand && bestIndex !== -1) {
+          biomeGrid[idx] = world.islands[bestIndex].biomeId;
+          shades[idx] = 0.76 + fbm(x * 0.25, y * 0.25, seed + 500) * 0.35;
+        } else {
+          biomeGrid[idx] = -1;
+          shades[idx] = 0.7 + fbm(x * 0.25, y * 0.25, seed + 500) * 0.2;
+        }
+      }
+    }
+
+    function countLandTilesByBiome() {
+      const counts = new Array(BIOMES.length).fill(0);
+      for (let y = 0; y < size; y += 1) {
+        for (let x = 0; x < size; x += 1) {
+          const idx = tileIndex(x, y, size);
+          if (!tiles[idx]) continue;
+          const biomeId = biomeGrid[idx];
+          if (!Number.isInteger(biomeId) || biomeId < 0 || biomeId >= BIOMES.length) continue;
+          counts[biomeId] += 1;
+        }
+      }
+      return counts;
+    }
+
+    function stampBiomeLandForIsland(island, biomeId) {
+      if (!island) return 0;
+      const cx = clamp(Math.floor(island.x), 1, size - 2);
+      const cy = clamp(Math.floor(island.y), 1, size - 2);
+      const radius = Math.max(2, Math.min(4, Math.floor(island.radius * 0.34)));
+      let painted = 0;
+      for (let dy = -radius; dy <= radius; dy += 1) {
+        for (let dx = -radius; dx <= radius; dx += 1) {
+          const tx = cx + dx;
+          const ty = cy + dy;
+          if (!inBounds(tx, ty, size)) continue;
+          if (tx <= 0 || ty <= 0 || tx >= size - 1 || ty >= size - 1) continue;
+          if (Math.hypot(dx, dy) > radius + 0.35) continue;
+          const idx = tileIndex(tx, ty, size);
+          tiles[idx] = 1;
+          biomeGrid[idx] = biomeId;
+          shades[idx] = 0.78 + fbm(tx * 0.25, ty * 0.25, seed + 500) * 0.3;
+          painted += 1;
+        }
+      }
+      return painted;
+    }
+
+    function ensureBiomeLandCoverage() {
+      const minTilesPerBiome = 10;
+      const counts = countLandTilesByBiome();
+      for (let biomeId = 0; biomeId < BIOMES.length; biomeId += 1) {
+        if (counts[biomeId] >= minTilesPerBiome) continue;
+        const candidates = world.islands
+          .filter((island) => island && island.biomeId === biomeId)
+          .sort((a, b) => b.radius - a.radius);
+        for (const island of candidates) {
+          if (counts[biomeId] >= minTilesPerBiome) break;
+          counts[biomeId] += stampBiomeLandForIsland(island, biomeId);
+        }
+      }
+    }
+
+    ensureBiomeLandCoverage();
+
+    for (let y = 1; y < size - 1; y += 1) {
+      for (let x = 1; x < size - 1; x += 1) {
+        const idx = tileIndex(x, y, size);
+        if (!tiles[idx]) continue;
+        if (
+          !tiles[tileIndex(x + 1, y, size)]
+          || !tiles[tileIndex(x - 1, y, size)]
+          || !tiles[tileIndex(x, y + 1, size)]
+          || !tiles[tileIndex(x, y - 1, size)]
+        ) {
+          beachGrid[idx] = true;
+        }
+      }
+    }
+
+    world.tiles = tiles;
+    world.shades = shades;
+    world.biomeGrid = biomeGrid;
+    world.beachGrid = beachGrid;
+    return true;
+  }
+
+  function shiftSurfaceWorldByIslandDeltas(world, islandsBefore, deltas) {
+    if (!world || !Array.isArray(islandsBefore) || !Array.isArray(deltas)) return;
+    const tileSize = CONFIG.tileSize;
+
+    const shiftTile = (tx, ty) => {
+      const delta = getIslandDeltaForTile(islandsBefore, deltas, tx, ty);
+      if (!delta) return null;
+      return {
+        tx: tx + delta.dx,
+        ty: ty + delta.dy,
+        delta,
+      };
+    };
+
+    const shiftWorldPos = (x, y) => {
+      const delta = getIslandDeltaForWorldPosition(islandsBefore, deltas, x, y);
+      if (!delta) return null;
+      return {
+        x: x + delta.dx * tileSize,
+        y: y + delta.dy * tileSize,
+        delta,
+      };
+    };
+
+    if (Array.isArray(world.resources)) {
+      for (const resource of world.resources) {
+        if (!resource) continue;
+        const tx = Number.isFinite(resource.tx)
+          ? Math.floor(resource.tx)
+          : Math.floor((Number(resource.x) || 0) / tileSize);
+        const ty = Number.isFinite(resource.ty)
+          ? Math.floor(resource.ty)
+          : Math.floor((Number(resource.y) || 0) / tileSize);
+        const moved = shiftTile(tx, ty);
+        if (!moved) continue;
+        resource.tx = moved.tx;
+        resource.ty = moved.ty;
+        resource.x = (moved.tx + 0.5) * tileSize;
+        resource.y = (moved.ty + 0.5) * tileSize;
+      }
+    }
+
+    if (Array.isArray(world.respawnTasks)) {
+      for (const task of world.respawnTasks) {
+        if (!task || !Number.isFinite(task.tx) || !Number.isFinite(task.ty)) continue;
+        const moved = shiftTile(Math.floor(task.tx), Math.floor(task.ty));
+        if (!moved) continue;
+        task.tx = moved.tx;
+        task.ty = moved.ty;
+      }
+    }
+
+    if (Array.isArray(world.drops)) {
+      for (const drop of world.drops) {
+        if (!drop || !Number.isFinite(drop.x) || !Number.isFinite(drop.y)) continue;
+        const moved = shiftWorldPos(drop.x, drop.y);
+        if (!moved) continue;
+        drop.x = moved.x;
+        drop.y = moved.y;
+      }
+    }
+
+    if (Array.isArray(world.caves)) {
+      for (const cave of world.caves) {
+        if (!cave || !Number.isFinite(cave.tx) || !Number.isFinite(cave.ty)) continue;
+        const moved = shiftTile(Math.floor(cave.tx), Math.floor(cave.ty));
+        if (!moved) continue;
+        cave.tx = moved.tx;
+        cave.ty = moved.ty;
+      }
+    }
+
+    if (Array.isArray(world.monsters)) {
+      for (const monster of world.monsters) {
+        if (!monster || !Number.isFinite(monster.x) || !Number.isFinite(monster.y)) continue;
+        const moved = shiftWorldPos(monster.x, monster.y);
+        if (!moved) continue;
+        monster.x = moved.x;
+        monster.y = moved.y;
+        if (Number.isFinite(monster.renderX)) monster.renderX += moved.delta.dx * tileSize;
+        if (Number.isFinite(monster.renderY)) monster.renderY += moved.delta.dy * tileSize;
+      }
+    }
+
+    if (Array.isArray(world.projectiles)) {
+      for (const projectile of world.projectiles) {
+        if (!projectile || !Number.isFinite(projectile.x) || !Number.isFinite(projectile.y)) continue;
+        const moved = shiftWorldPos(projectile.x, projectile.y);
+        if (!moved) continue;
+        projectile.x = moved.x;
+        projectile.y = moved.y;
+        if (Number.isFinite(projectile.renderX)) projectile.renderX += moved.delta.dx * tileSize;
+        if (Number.isFinite(projectile.renderY)) projectile.renderY += moved.delta.dy * tileSize;
+      }
+    }
+
+    if (Array.isArray(world.animals)) {
+      for (const animal of world.animals) {
+        if (!animal || !Number.isFinite(animal.x) || !Number.isFinite(animal.y)) continue;
+        const moved = shiftWorldPos(animal.x, animal.y);
+        if (!moved) continue;
+        animal.x = moved.x;
+        animal.y = moved.y;
+        if (Number.isFinite(animal.renderX)) animal.renderX += moved.delta.dx * tileSize;
+        if (Number.isFinite(animal.renderY)) animal.renderY += moved.delta.dy * tileSize;
+      }
+    }
+
+    if (Array.isArray(world.villagers)) {
+      for (const villager of world.villagers) {
+        if (!villager) continue;
+        if (Number.isFinite(villager.x) && Number.isFinite(villager.y)) {
+          const moved = shiftWorldPos(villager.x, villager.y);
+          if (moved) {
+            villager.x = moved.x;
+            villager.y = moved.y;
+            if (Number.isFinite(villager.renderX)) villager.renderX += moved.delta.dx * tileSize;
+            if (Number.isFinite(villager.renderY)) villager.renderY += moved.delta.dy * tileSize;
+          }
+        }
+        if (Number.isFinite(villager.homeX) && Number.isFinite(villager.homeY)) {
+          const movedHome = shiftWorldPos(villager.homeX, villager.homeY);
+          if (movedHome) {
+            villager.homeX = movedHome.x;
+            villager.homeY = movedHome.y;
+          }
+        }
+      }
+    }
+  }
+
+  function shiftSurfaceSessionStateByIslandDeltas(world, islandsBefore, deltas) {
+    if (!world || !Array.isArray(islandsBefore) || !Array.isArray(deltas)) return;
+    const tileSize = CONFIG.tileSize;
+
+    const shiftTile = (tx, ty) => {
+      const delta = getIslandDeltaForTile(islandsBefore, deltas, tx, ty);
+      if (!delta) return null;
+      return {
+        tx: tx + delta.dx,
+        ty: ty + delta.dy,
+        delta,
+      };
+    };
+
+    const shiftWorldPos = (x, y) => {
+      const delta = getIslandDeltaForWorldPosition(islandsBefore, deltas, x, y);
+      if (!delta) return null;
+      return {
+        x: x + delta.dx * tileSize,
+        y: y + delta.dy * tileSize,
+        delta,
+      };
+    };
+
+    if (Array.isArray(state.structures)) {
+      for (const structure of state.structures) {
+        if (!structure || structure.removed || structure.interior) continue;
+        const footprint = getStructureFootprint(structure.type);
+        const anchorTx = structure.tx + footprint.w * 0.5;
+        const anchorTy = structure.ty + footprint.h * 0.5;
+        const moved = shiftTile(anchorTx, anchorTy);
+        if (!moved) continue;
+        structure.tx = Math.floor(structure.tx + moved.delta.dx);
+        structure.ty = Math.floor(structure.ty + moved.delta.dy);
+        if (structure.type === "robot") {
+          const robot = ensureRobotMeta(structure);
+          if (!robot) continue;
+          if (Number.isFinite(robot.homeTx)) robot.homeTx += moved.delta.dx;
+          else robot.homeTx = structure.tx;
+          if (Number.isFinite(robot.homeTy)) robot.homeTy += moved.delta.dy;
+          else robot.homeTy = structure.ty;
+          if (Number.isFinite(robot.x)) robot.x += moved.delta.dx * tileSize;
+          if (Number.isFinite(robot.y)) robot.y += moved.delta.dy * tileSize;
+          if (Number.isFinite(robot.renderX)) robot.renderX += moved.delta.dx * tileSize;
+          if (Number.isFinite(robot.renderY)) robot.renderY += moved.delta.dy * tileSize;
+          robot.targetResourceId = null;
+          robot.retargetTimer = 0;
+          clearRobotNavigation(robot);
+        }
+      }
+    }
+
+    if (state.player && !state.inCave && !state.player.inHut) {
+      const moved = shiftWorldPos(state.player.x, state.player.y);
+      if (moved) {
+        state.player.x = moved.x;
+        state.player.y = moved.y;
+      }
+    }
+
+    const localCheckpoint = normalizeCheckpoint(state.player?.checkpoint);
+    if (localCheckpoint) {
+      const moved = shiftWorldPos(localCheckpoint.x, localCheckpoint.y);
+      if (moved && state.player) {
+        state.player.checkpoint = { x: moved.x, y: moved.y };
+      }
+    }
+
+    if (state.spawnTile && Number.isFinite(state.spawnTile.x) && Number.isFinite(state.spawnTile.y)) {
+      const moved = shiftTile(state.spawnTile.x, state.spawnTile.y);
+      if (moved) {
+        state.spawnTile.x = Math.floor(moved.tx);
+        state.spawnTile.y = Math.floor(moved.ty);
+      }
+    }
+
+    if (state.returnPosition && Number.isFinite(state.returnPosition.x) && Number.isFinite(state.returnPosition.y)) {
+      const moved = shiftWorldPos(state.returnPosition.x, state.returnPosition.y);
+      if (moved) {
+        state.returnPosition.x = moved.x;
+        state.returnPosition.y = moved.y;
+      }
+    }
+
+    if (state.winPlayerPos && Number.isFinite(state.winPlayerPos.x) && Number.isFinite(state.winPlayerPos.y)) {
+      const moved = shiftWorldPos(state.winPlayerPos.x, state.winPlayerPos.y);
+      if (moved) {
+        state.winPlayerPos.x = moved.x;
+        state.winPlayerPos.y = moved.y;
+      }
+    }
+
+    for (const remote of net.players.values()) {
+      if (!remote) continue;
+      if (!remote.inCave && !remote.inHut && Number.isFinite(remote.x) && Number.isFinite(remote.y)) {
+        const moved = shiftWorldPos(remote.x, remote.y);
+        if (moved) {
+          remote.x = moved.x;
+          remote.y = moved.y;
+          if (Number.isFinite(remote.renderX)) remote.renderX += moved.delta.dx * tileSize;
+          if (Number.isFinite(remote.renderY)) remote.renderY += moved.delta.dy * tileSize;
+        }
+      }
+      const checkpoint = normalizeCheckpoint(remote.checkpoint);
+      if (checkpoint) {
+        const movedCheckpoint = shiftWorldPos(checkpoint.x, checkpoint.y);
+        if (movedCheckpoint) {
+          remote.checkpoint = { x: movedCheckpoint.x, y: movedCheckpoint.y };
+        }
+      }
+    }
+  }
+
+  function rebuildSurfaceStructureGrid(world) {
+    if (!world) return;
+    state.structureGrid = new Array(world.size * world.size).fill(null);
+    if (!Array.isArray(state.structures)) return;
+    for (const structure of state.structures) {
+      if (!structure || structure.removed || structure.interior) continue;
+      const footprint = getStructureFootprint(structure.type);
+      const maxTx = Math.max(0, world.size - footprint.w);
+      const maxTy = Math.max(0, world.size - footprint.h);
+      structure.tx = clamp(Math.floor(Number(structure.tx) || 0), 0, maxTx);
+      structure.ty = clamp(Math.floor(Number(structure.ty) || 0), 0, maxTy);
+      if (structure.type === "robot") {
+        const robot = ensureRobotMeta(structure);
+        if (robot) {
+          if (!Number.isFinite(robot.homeTx)) robot.homeTx = structure.tx;
+          if (!Number.isFinite(robot.homeTy)) robot.homeTy = structure.ty;
+        }
+      }
+      setStructureFootprintInGrid(structure, true);
+    }
+  }
+
+  function reindexSurfaceResourcesAfterIslandLayout(world) {
+    if (!world) return;
+    world.resourceGrid = createResourceGrid(world.size);
+    if (!Array.isArray(world.resources)) return;
+    for (const resource of world.resources) {
+      if (!resource) continue;
+      const baseTx = Number.isFinite(resource.tx)
+        ? Math.floor(resource.tx)
+        : Math.floor((Number(resource.x) || 0) / CONFIG.tileSize);
+      const baseTy = Number.isFinite(resource.ty)
+        ? Math.floor(resource.ty)
+        : Math.floor((Number(resource.y) || 0) / CONFIG.tileSize);
+      let tx = clamp(baseTx, 0, world.size - 1);
+      let ty = clamp(baseTy, 0, world.size - 1);
+      resource.tx = tx;
+      resource.ty = ty;
+      resource.x = (tx + 0.5) * CONFIG.tileSize;
+      resource.y = (ty + 0.5) * CONFIG.tileSize;
+
+      if (resource.removed) continue;
+      let idx = tileIndex(tx, ty, world.size);
+      let valid = world.tiles[idx] === 1
+        && !world.beachGrid?.[idx]
+        && world.resourceGrid[idx] === -1;
+      if (!valid) {
+        const nearby = findNearestEntityLandTile(world, tx, ty, 8);
+        if (nearby) {
+          const nearIdx = tileIndex(nearby.tx, nearby.ty, world.size);
+          if (!world.beachGrid?.[nearIdx] && world.resourceGrid[nearIdx] === -1) {
+            tx = nearby.tx;
+            ty = nearby.ty;
+            idx = nearIdx;
+            valid = true;
+          }
+        }
+      }
+      if (!valid) {
+        resource.removed = true;
+        continue;
+      }
+      resource.tx = tx;
+      resource.ty = ty;
+      resource.x = (tx + 0.5) * CONFIG.tileSize;
+      resource.y = (ty + 0.5) * CONFIG.tileSize;
+      world.resourceGrid[idx] = resource.id;
+    }
+  }
+
+  function normalizeSurfaceCavesAfterIslandLayout(world, checkStructures = true) {
+    if (!world || !Array.isArray(world.caves)) return;
+    const used = new Set();
+    const maxRadius = Math.max(8, Math.floor(world.size * 0.12));
+
+    const canUseTile = (tx, ty) => {
+      if (!inBounds(tx, ty, world.size)) return false;
+      const idx = tileIndex(tx, ty, world.size);
+      if (!world.tiles[idx]) return false;
+      if (world.beachGrid?.[idx]) return false;
+      if (used.has(`${tx},${ty}`)) return false;
+      if (checkStructures) {
+        const structure = getStructureAt(tx, ty);
+        if (structure && !structure.removed) return false;
+      }
+      return true;
+    };
+
+    for (const cave of world.caves) {
+      if (!cave) continue;
+      let tx = clamp(Math.floor(Number(cave.tx) || 0), 1, world.size - 2);
+      let ty = clamp(Math.floor(Number(cave.ty) || 0), 1, world.size - 2);
+      if (!canUseTile(tx, ty)) {
+        let found = null;
+        for (let radius = 1; radius <= maxRadius && !found; radius += 1) {
+          for (let dy = -radius; dy <= radius && !found; dy += 1) {
+            for (let dx = -radius; dx <= radius; dx += 1) {
+              if (Math.max(Math.abs(dx), Math.abs(dy)) !== radius) continue;
+              const nx = tx + dx;
+              const ny = ty + dy;
+              if (!canUseTile(nx, ny)) continue;
+              found = { tx: nx, ty: ny };
+              break;
+            }
+          }
+        }
+        if (found) {
+          tx = found.tx;
+          ty = found.ty;
+        }
+      }
+      cave.tx = tx;
+      cave.ty = ty;
+      used.add(`${tx},${ty}`);
+      cave.hostileBlocked = shouldBlockCaveHostilesForSurfaceTile(world, tx, ty);
+      if (cave.hostileBlocked && cave.world) {
+        cave.world.monsters = [];
+        cave.world.projectiles = [];
+      }
+    }
+  }
+
+  function clampSurfaceEntitiesAfterIslandLayout(world) {
+    if (!world) return;
+    if (Array.isArray(world.animals)) {
+      world.animals = world.animals.map((animal) => {
+        if (!animal || !Number.isFinite(animal.x) || !Number.isFinite(animal.y)) return null;
+        const clampedPos = clampEntityPositionToLand(world, animal.x, animal.y, 22);
+        if (!clampedPos) return null;
+        animal.x = clampedPos.x;
+        animal.y = clampedPos.y;
+        if (Number.isFinite(animal.renderX)) animal.renderX = clampedPos.x;
+        if (Number.isFinite(animal.renderY)) animal.renderY = clampedPos.y;
+        return animal;
+      }).filter(Boolean);
+      world.nextAnimalId = world.animals.reduce((max, animal) => Math.max(max, (animal.id || 0) + 1), 1);
+    }
+
+    if (Array.isArray(world.monsters)) {
+      world.monsters = world.monsters.map((monster) => {
+        if (!monster || !Number.isFinite(monster.x) || !Number.isFinite(monster.y)) return null;
+        const clampedPos = clampEntityPositionToWalkable(world, monster.x, monster.y, 26);
+        if (!clampedPos) return null;
+        monster.x = clampedPos.x;
+        monster.y = clampedPos.y;
+        if (Number.isFinite(monster.renderX)) monster.renderX = clampedPos.x;
+        if (Number.isFinite(monster.renderY)) monster.renderY = clampedPos.y;
+        return monster;
+      }).filter(Boolean);
+      world.nextMonsterId = world.monsters.reduce((max, monster) => Math.max(max, (monster.id || 0) + 1), 1);
+    }
+
+    if (Array.isArray(world.villagers)) {
+      world.villagers = world.villagers.map((villager) => {
+        if (!villager || !Number.isFinite(villager.x) || !Number.isFinite(villager.y)) return null;
+        const clampedPos = clampEntityPositionToLand(world, villager.x, villager.y, 24);
+        if (!clampedPos) return null;
+        villager.x = clampedPos.x;
+        villager.y = clampedPos.y;
+        if (Number.isFinite(villager.renderX)) villager.renderX = clampedPos.x;
+        if (Number.isFinite(villager.renderY)) villager.renderY = clampedPos.y;
+        if (Number.isFinite(villager.homeX) && Number.isFinite(villager.homeY)) {
+          const homePos = clampEntityPositionToLand(world, villager.homeX, villager.homeY, 26);
+          if (homePos) {
+            villager.homeX = homePos.x;
+            villager.homeY = homePos.y;
+          }
+        }
+        return villager;
+      }).filter(Boolean);
+      world.nextVillagerId = world.villagers.reduce((max, villager) => Math.max(max, (villager.id || 0) + 1), 1);
+    }
+
+    if (Array.isArray(world.projectiles)) {
+      world.projectiles = world.projectiles.filter((projectile) => {
+        if (!projectile || !Number.isFinite(projectile.x) || !Number.isFinite(projectile.y)) return false;
+        const tx = Math.floor(projectile.x / CONFIG.tileSize);
+        const ty = Math.floor(projectile.y / CONFIG.tileSize);
+        return inBounds(tx, ty, world.size);
+      });
+      world.nextProjectileId = world.projectiles.reduce((max, projectile) => Math.max(max, (projectile.id || 0) + 1), 1);
+    }
+  }
+
+  function applySurfaceIslandLayout(world, layout, options = {}) {
+    const shiftSession = !!options.shiftSession;
+    if (!world || !Array.isArray(world.islands)) return false;
+    const normalizedLayout = normalizeIslandLayoutForWorld(world, layout);
+    if (!normalizedLayout) return false;
+
+    const islandsBefore = world.islands.map((island) => ({
+      x: island.x,
+      y: island.y,
+      radius: island.radius,
+      biomeId: island.biomeId,
+      starter: !!island.starter,
+    }));
+
+    const deltas = [];
+    let changed = false;
+    for (let i = 0; i < world.islands.length; i += 1) {
+      const island = world.islands[i];
+      if (!island) {
+        deltas.push({ dx: 0, dy: 0 });
+        continue;
+      }
+      const target = normalizedLayout[i];
+      const clampedTarget = clampIslandCenterToBounds(world, island, target.x, target.y);
+      const dx = Math.round(clampedTarget.x - island.x);
+      const dy = Math.round(clampedTarget.y - island.y);
+      if (dx !== 0 || dy !== 0) changed = true;
+      deltas.push({ dx, dy });
+    }
+    if (!changed) return false;
+
+    shiftSurfaceWorldByIslandDeltas(world, islandsBefore, deltas);
+    if (shiftSession) {
+      shiftSurfaceSessionStateByIslandDeltas(world, islandsBefore, deltas);
+    }
+
+    for (let i = 0; i < world.islands.length; i += 1) {
+      const island = world.islands[i];
+      if (!island) continue;
+      island.x += deltas[i].dx;
+      island.y += deltas[i].dy;
+    }
+
+    rebuildSurfaceTerrainFromIslands(world);
+
+    if (shiftSession) {
+      rebuildSurfaceStructureGrid(world);
+    }
+    normalizeSurfaceCavesAfterIslandLayout(world, shiftSession);
+    reindexSurfaceResourcesAfterIslandLayout(world);
+
+    if (shiftSession && Array.isArray(state.structures)) {
+      for (const structure of state.structures) {
+        if (!structure || structure.removed || structure.interior) continue;
+        clearResourcesForFootprint(world, structure.type, structure.tx, structure.ty);
+      }
+    }
+    for (const cave of world.caves || []) {
+      if (!cave) continue;
+      clearResourceForStructure(world, cave.tx, cave.ty);
+    }
+    normalizeSurfaceResources(world);
+    clampSurfaceEntitiesAfterIslandLayout(world);
+
+    if (shiftSession) {
+      if (state.player && !state.inCave && !state.player.inHut) {
+        const playerPos = clampEntityPositionToWalkable(world, state.player.x, state.player.y, 28);
+        if (playerPos) {
+          state.player.x = playerPos.x;
+          state.player.y = playerPos.y;
+        }
+      }
+      for (const remote of net.players.values()) {
+        if (!remote || remote.inCave || remote.inHut) continue;
+        if (!Number.isFinite(remote.x) || !Number.isFinite(remote.y)) continue;
+        const remotePos = clampEntityPositionToWalkable(world, remote.x, remote.y, 28);
+        if (!remotePos) continue;
+        remote.x = remotePos.x;
+        remote.y = remotePos.y;
+        if (Number.isFinite(remote.renderX)) remote.renderX = remotePos.x;
+        if (Number.isFinite(remote.renderY)) remote.renderY = remotePos.y;
+      }
+      if (!state.spawnTile || !isSpawnableTile(world, state.spawnTile.x, state.spawnTile.y)) {
+        state.spawnTile = findSpawnTile(world);
+      }
+      if (state.player) {
+        const checkpoint = normalizeCheckpoint(state.player.checkpoint);
+        if (!checkpoint || !isSpawnableTile(world, Math.floor(checkpoint.x / CONFIG.tileSize), Math.floor(checkpoint.y / CONFIG.tileSize))) {
+          const fallbackX = (!state.inCave && !state.player.inHut && Number.isFinite(state.player.x))
+            ? state.player.x
+            : ((state.spawnTile?.x ?? Math.floor(world.size / 2)) + 0.5) * CONFIG.tileSize;
+          const fallbackY = (!state.inCave && !state.player.inHut && Number.isFinite(state.player.y))
+            ? state.player.y
+            : ((state.spawnTile?.y ?? Math.floor(world.size / 2)) + 0.5) * CONFIG.tileSize;
+          setPlayerCheckpoint(state.player, world, fallbackX, fallbackY, true);
+        }
+      }
+      if (state.returnPosition && Number.isFinite(state.returnPosition.x) && Number.isFinite(state.returnPosition.y)) {
+        const returnPos = clampEntityPositionToWalkable(world, state.returnPosition.x, state.returnPosition.y, 28);
+        if (returnPos) {
+          state.returnPosition.x = returnPos.x;
+          state.returnPosition.y = returnPos.y;
+        }
+      }
+    }
+
+    return true;
+  }
+
+  function moveSurfaceIslandForContinentalShift(world, islandIndex, targetX, targetY) {
+    if (!world || !Array.isArray(world.islands)) return false;
+    if (!Number.isInteger(islandIndex) || islandIndex < 0 || islandIndex >= world.islands.length) return false;
+    const island = world.islands[islandIndex];
+    if (!island) return false;
+    const clampedTarget = clampIslandCenterForDebugDrag(world, islandIndex, targetX, targetY);
+    const layout = serializeIslandLayout(world);
+    layout[islandIndex] = {
+      x: Math.round(clampedTarget.x),
+      y: Math.round(clampedTarget.y),
+    };
+    return applySurfaceIslandLayout(world, layout, { shiftSession: true });
+  }
+
   function getBiomeTreeMaxHp(biome) {
     const maxHp = Number(biome?.treeMaxHp);
     if (!Number.isFinite(maxHp)) return 4;
@@ -6405,7 +7201,11 @@
         const y = minCoord + rng() * (maxCoord - minCoord);
         const metrics = getIslandSpacingMetrics(x, y, radius, minGapScale);
         if (metrics.minGap < -0.8) continue;
-        const score = metrics.minGap + Math.min(metrics.nearestDistance, radius * 7.8) * 0.065 + (rng() - 0.5) * 0.55;
+        const spreadPenalty = Math.max(0, metrics.nearestDistance - (radius * 5.4)) * 0.05;
+        const score = metrics.minGap
+          + Math.min(metrics.nearestDistance, radius * 4.8) * 0.038
+          - spreadPenalty
+          + (rng() - 0.5) * 0.55;
         if (score > bestScore) {
           bestScore = score;
           best = { x, y };
@@ -6577,11 +7377,16 @@
       if (islands.length <= 2) return;
       const centerX = size * 0.5;
       const centerY = size * 0.5;
+      const maxBridgeGap = Math.max(6, Number(MAX_ISLAND_BRIDGE_GAP_TILES) || 15);
       for (let iter = 0; iter < iterations; iter += 1) {
         for (let i = 1; i < islands.length; i += 1) {
           const island = islands[i];
           let pushX = 0;
           let pushY = 0;
+          let nearestDx = 0;
+          let nearestDy = 0;
+          let nearestDist = Infinity;
+          let nearestEdgeGap = Infinity;
           for (let j = 0; j < islands.length; j += 1) {
             if (i === j) continue;
             const other = islands[j];
@@ -6589,6 +7394,13 @@
             const dy = island.y - other.y;
             const dist = Math.hypot(dx, dy) || 0.0001;
             const desired = (island.radius + other.radius) * 0.9 + 8;
+            const edgeGap = dist - (island.radius + other.radius);
+            if (edgeGap < nearestEdgeGap) {
+              nearestEdgeGap = edgeGap;
+              nearestDist = dist;
+              nearestDx = dx;
+              nearestDy = dy;
+            }
             if (dist < desired) {
               const strength = (desired - dist) / desired;
               pushX += (dx / dist) * strength;
@@ -6601,6 +7413,13 @@
           if (island.y < edgePad) pushY += (edgePad - island.y) * 0.06;
           else if (island.y > size - edgePad) pushY -= (island.y - (size - edgePad)) * 0.06;
 
+          if (nearestDist < Infinity && nearestEdgeGap > maxBridgeGap) {
+            const overflow = nearestEdgeGap - maxBridgeGap;
+            const attraction = clamp(overflow * 0.06, 0.08, 1.75);
+            pushX -= (nearestDx / nearestDist) * attraction;
+            pushY -= (nearestDy / nearestDist) * attraction;
+          }
+
           const centerPull = 0.0013;
           const nextX = island.x + pushX * 3.25 + (centerX - island.x) * centerPull;
           const nextY = island.y + pushY * 3.25 + (centerY - island.y) * centerPull;
@@ -6610,8 +7429,55 @@
       }
     }
 
+    function enforceIslandBridgeGap(limitTiles = MAX_ISLAND_BRIDGE_GAP_TILES, iterations = 14) {
+      if (islands.length <= 2) return;
+      const safeLimit = Math.max(6, Number(limitTiles) || 15);
+      for (let pass = 0; pass < iterations; pass += 1) {
+        let adjusted = false;
+        for (let i = 1; i < islands.length; i += 1) {
+          const island = islands[i];
+          let nearest = null;
+          let nearestDist = Infinity;
+          for (let j = 0; j < islands.length; j += 1) {
+            if (i === j) continue;
+            const other = islands[j];
+            const dx = island.x - other.x;
+            const dy = island.y - other.y;
+            const dist = Math.hypot(dx, dy) || 0.0001;
+            if (dist < nearestDist) {
+              nearestDist = dist;
+              nearest = { dx, dy, other };
+            }
+          }
+          if (!nearest || !nearest.other) continue;
+          const edgeGap = nearestDist - (island.radius + nearest.other.radius);
+          if (edgeGap <= safeLimit + 0.35) continue;
+          const shift = Math.min(4.2, edgeGap - safeLimit);
+          const edgePad = island.radius + 14;
+          const nextX = clamp(
+            island.x - (nearest.dx / nearestDist) * shift,
+            edgePad,
+            size - edgePad
+          );
+          const nextY = clamp(
+            island.y - (nearest.dy / nearestDist) * shift,
+            edgePad,
+            size - edgePad
+          );
+          if (Math.hypot(nextX - island.x, nextY - island.y) > 0.01) {
+            island.x = nextX;
+            island.y = nextY;
+            adjusted = true;
+          }
+        }
+        if (!adjusted) break;
+        relaxIslandLayout(1);
+      }
+    }
+
     ensureBiomeIslandCoverage();
     relaxIslandLayout(6);
+    enforceIslandBridgeGap();
 
     for (let y = 0; y < size; y += 1) {
       for (let x = 0; x < size; x += 1) {
@@ -7586,6 +8452,7 @@
       seed: normalizeSeedValue(seed ?? save.seed),
       worldSize: CONFIG.worldSize,
       worldLayoutVersion: WORLD_LAYOUT_VERSION,
+      islandLayout: null,
       player: sanitizedPlayer,
       timeOfDay: 0,
       gameWon: false,
@@ -7612,6 +8479,7 @@
       seed: surface.seed,
       worldSize: surface.size,
       worldLayoutVersion: WORLD_LAYOUT_VERSION,
+      islandLayout: serializeIslandLayout(surface),
       player: {
         x: state.player.x,
         y: state.player.y,
@@ -7775,11 +8643,13 @@
     if (!data) return null;
     const version = Number(data.version);
     data.version = Number.isFinite(version) ? version : 1;
+    const islandLayout = Array.isArray(data.islandLayout) ? data.islandLayout : null;
     if (data.version === SAVE_VERSION) {
       return {
         ...data,
         version: SAVE_VERSION,
         seed: normalizeSeedValue(data.seed),
+        islandLayout,
         monsters: Array.isArray(data.monsters) ? data.monsters : [],
         villagers: Array.isArray(data.villagers) ? data.villagers : [],
       };
@@ -7788,6 +8658,7 @@
       return {
         version: SAVE_VERSION,
         seed: normalizeSeedValue(data.seed),
+        islandLayout,
         player: {
           x: data.player?.x ?? 0,
           y: data.player?.y ?? 0,
@@ -7815,6 +8686,7 @@
       return {
         version: SAVE_VERSION,
         seed: normalizeSeedValue(data.seed),
+        islandLayout,
         player: {
           x: data.player?.x ?? 0,
           y: data.player?.y ?? 0,
@@ -7842,6 +8714,7 @@
       return {
         version: SAVE_VERSION,
         seed: normalizeSeedValue(data.seed),
+        islandLayout,
         player: {
           x: data.player?.x ?? 0,
           y: data.player?.y ?? 0,
@@ -7869,6 +8742,7 @@
       return {
         version: SAVE_VERSION,
         seed: normalizeSeedValue(data.seed),
+        islandLayout,
         player: {
           x: data.player?.x ?? 0,
           y: data.player?.y ?? 0,
@@ -7900,6 +8774,7 @@
     return {
       version: SAVE_VERSION,
       seed: normalizeSeedValue(data.seed),
+      islandLayout,
       player: {
         x: data.player?.x ?? 0,
         y: data.player?.y ?? 0,
@@ -9550,6 +10425,9 @@
         : sanitizeSaveForCurrentLayout(saved, targetSeed);
       const world = generateWorld(preparedSave.seed);
       normalizeSurfaceResources(world);
+      if (Array.isArray(preparedSave.islandLayout)) {
+        applySurfaceIslandLayout(world, preparedSave.islandLayout, { shiftSession: false });
+      }
       state.nextDropId = 1;
       applyResourceStates(world, preparedSave.resourceStates);
       applyRespawnTasks(world, preparedSave.respawnTasks);
@@ -12606,6 +13484,31 @@
       state.debugWorldMapVisible
         ? "World mini-map enabled"
         : "World mini-map disabled",
+      1.2
+    );
+    if (!state.debugWorldMapVisible) {
+      state.debugIslandDrag = null;
+    }
+  }
+
+  function toggleContinentalShift() {
+    if (!state.debugUnlocked) {
+      setPrompt("Debug is locked. Open Settings to unlock.", 1.2);
+      return;
+    }
+    if (netIsClientReady()) {
+      setPrompt("Host only", 1);
+      return;
+    }
+    state.debugContinentalShift = !state.debugContinentalShift;
+    if (!state.debugContinentalShift) {
+      state.debugIslandDrag = null;
+    }
+    updateContinentalShiftButton();
+    setPrompt(
+      state.debugContinentalShift
+        ? "Continental Shift enabled"
+        : "Continental Shift disabled",
       1.2
     );
   }
@@ -17755,6 +18658,162 @@
     };
   }
 
+  function isPointInRect(x, y, rx, ry, rw, rh) {
+    return x >= rx && x <= rx + rw && y >= ry && y <= ry + rh;
+  }
+
+  function getDebugWorldMiniMapPointerPosition(layout, screenX, screenY, clampToMap = false) {
+    if (!layout) return null;
+    const {
+      mapX,
+      mapY,
+      mapW,
+      mapH,
+      worldPixelSize,
+      world,
+    } = layout;
+    let px = screenX;
+    let py = screenY;
+    if (clampToMap) {
+      px = clamp(px, mapX, mapX + mapW);
+      py = clamp(py, mapY, mapY + mapH);
+    }
+    if (!isPointInRect(px, py, mapX, mapY, mapW, mapH)) return null;
+    const ratioX = clamp((px - mapX) / mapW, 0, 1);
+    const ratioY = clamp((py - mapY) / mapH, 0, 1);
+    const worldPixelX = ratioX * worldPixelSize;
+    const worldPixelY = ratioY * worldPixelSize;
+    const worldTx = (worldPixelX / CONFIG.tileSize) - 0.5;
+    const worldTy = (worldPixelY / CONFIG.tileSize) - 0.5;
+    return {
+      screenX: px,
+      screenY: py,
+      ratioX,
+      ratioY,
+      worldPixelX,
+      worldPixelY,
+      worldTx,
+      worldTy,
+      tileX: clamp(Math.floor(worldPixelX / CONFIG.tileSize), 0, world.size - 1),
+      tileY: clamp(Math.floor(worldPixelY / CONFIG.tileSize), 0, world.size - 1),
+    };
+  }
+
+  function getDebugWorldMiniMapIslandAtPointer(layout, screenX, screenY) {
+    if (!layout || !Array.isArray(layout.world?.islands)) return null;
+    const pointerPos = getDebugWorldMiniMapPointerPosition(layout, screenX, screenY, false);
+    if (!pointerPos) return null;
+    const { world, worldPixelSize, mapX, mapY, mapW, mapH } = layout;
+    let best = null;
+    let bestScore = Infinity;
+    for (let islandIndex = 0; islandIndex < world.islands.length; islandIndex += 1) {
+      const island = world.islands[islandIndex];
+      if (!island) continue;
+      const ix = mapX + (((island.x + 0.5) * CONFIG.tileSize) / worldPixelSize) * mapW;
+      const iy = mapY + (((island.y + 0.5) * CONFIG.tileSize) / worldPixelSize) * mapH;
+      const radius = Math.max(1.4, ((island.radius * CONFIG.tileSize) / worldPixelSize) * mapW);
+      const dist = Math.hypot(pointerPos.screenX - ix, pointerPos.screenY - iy);
+      const score = dist - radius;
+      if (score <= 9 && score < bestScore) {
+        bestScore = score;
+        best = { islandIndex, island };
+      }
+    }
+    if (!best) return null;
+    return {
+      islandIndex: best.islandIndex,
+      island: best.island,
+      pointerPos,
+    };
+  }
+
+  function updateDebugIslandDragPreview(screenX, screenY) {
+    const drag = state.debugIslandDrag;
+    if (!drag) return false;
+    const layout = getDebugWorldMiniMapLayout();
+    if (!layout || layout.world.seed !== drag.seed) return false;
+    const pointerPos = getDebugWorldMiniMapPointerPosition(layout, screenX, screenY, true);
+    if (!pointerPos) return false;
+    const targetX = pointerPos.worldTx - drag.offsetX;
+    const targetY = pointerPos.worldTy - drag.offsetY;
+    const clampedTarget = clampIslandCenterForDebugDrag(layout.world, drag.islandIndex, targetX, targetY);
+    drag.previewX = Math.round(clampedTarget.x);
+    drag.previewY = Math.round(clampedTarget.y);
+    return true;
+  }
+
+  function startDebugIslandDrag(event, layout) {
+    if (!state.debugUnlocked || !state.debugWorldMapVisible || !state.debugContinentalShift) return false;
+    if (!layout) return false;
+    if (netIsClientReady()) {
+      setPrompt("Host only", 1);
+      return true;
+    }
+    const target = getDebugWorldMiniMapIslandAtPointer(layout, event.clientX, event.clientY);
+    if (!target) {
+      setPrompt("Select an island to drag", 1);
+      return true;
+    }
+    state.debugIslandDrag = {
+      seed: layout.world.seed,
+      islandIndex: target.islandIndex,
+      pointerId: Number.isFinite(event.pointerId) ? event.pointerId : null,
+      offsetX: target.pointerPos.worldTx - target.island.x,
+      offsetY: target.pointerPos.worldTy - target.island.y,
+      previewX: target.island.x,
+      previewY: target.island.y,
+    };
+    updateDebugIslandDragPreview(event.clientX, event.clientY);
+    if (event.currentTarget && typeof event.currentTarget.setPointerCapture === "function") {
+      try {
+        event.currentTarget.setPointerCapture(event.pointerId);
+      } catch (err) {
+        // ignore pointer capture failures
+      }
+    }
+    setPrompt("Dragging island...", 0.9);
+    return true;
+  }
+
+  function commitDebugIslandDrag(event = null) {
+    const drag = state.debugIslandDrag;
+    if (!drag) return false;
+    if (
+      event
+      && drag.pointerId !== null
+      && Number.isFinite(event.pointerId)
+      && event.pointerId !== drag.pointerId
+    ) {
+      return false;
+    }
+    if (event) {
+      updateDebugIslandDragPreview(event.clientX, event.clientY);
+    }
+    state.debugIslandDrag = null;
+    if (netIsClientReady()) return true;
+    const world = state.surfaceWorld || state.world;
+    if (!world || world.seed !== drag.seed) return true;
+    const changed = moveSurfaceIslandForContinentalShift(
+      world,
+      drag.islandIndex,
+      drag.previewX,
+      drag.previewY
+    );
+    if (!changed) {
+      setPrompt("Island unchanged", 0.9);
+      return true;
+    }
+    if (!state.inCave) {
+      state.world = world;
+    }
+    markDirty();
+    setPrompt("Island shifted", 1.2);
+    if (net.isHost && net.connections.size > 0) {
+      broadcastNet(buildSnapshot());
+    }
+    return true;
+  }
+
   function drawDebugWorldMiniMapOverlay() {
     if (!state.debugUnlocked || !state.debugWorldMapVisible) return;
     const layout = getDebugWorldMiniMapLayout();
@@ -17815,14 +18874,26 @@
     ctx.lineWidth = 1;
     ctx.stroke();
 
+    const activeIslandDrag = state.debugIslandDrag && state.debugIslandDrag.seed === world.seed
+      ? state.debugIslandDrag
+      : null;
+
     if (Array.isArray(world.islands)) {
-      for (const island of world.islands) {
+      for (let islandIndex = 0; islandIndex < world.islands.length; islandIndex += 1) {
+        const island = world.islands[islandIndex];
         if (!island) continue;
-        const ix = mapX + (((island.x + 0.5) * CONFIG.tileSize) / worldPixelSize) * mapW;
-        const iy = mapY + (((island.y + 0.5) * CONFIG.tileSize) / worldPixelSize) * mapH;
+        const drawIslandX = (activeIslandDrag && activeIslandDrag.islandIndex === islandIndex)
+          ? activeIslandDrag.previewX
+          : island.x;
+        const drawIslandY = (activeIslandDrag && activeIslandDrag.islandIndex === islandIndex)
+          ? activeIslandDrag.previewY
+          : island.y;
+        const ix = mapX + (((drawIslandX + 0.5) * CONFIG.tileSize) / worldPixelSize) * mapW;
+        const iy = mapY + (((drawIslandY + 0.5) * CONFIG.tileSize) / worldPixelSize) * mapH;
         const radius = Math.max(1.4, ((island.radius * CONFIG.tileSize) / worldPixelSize) * mapW);
         const biomeLand = BIOMES[island.biomeId]?.land;
         const mushroom = isMushroomBiomeId(island.biomeId);
+        const draggingThisIsland = activeIslandDrag && activeIslandDrag.islandIndex === islandIndex;
         let landColor = "rgba(92, 156, 96, 0.92)";
         if (Array.isArray(biomeLand) && biomeLand.length >= 3) {
           landColor = `rgba(${biomeLand[0]}, ${biomeLand[1]}, ${biomeLand[2]}, 0.92)`;
@@ -17850,6 +18921,13 @@
           ctx.lineWidth = 1.4;
           ctx.beginPath();
           ctx.arc(ix, iy, radius + 1.4, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+        if (draggingThisIsland) {
+          ctx.strokeStyle = "rgba(255, 246, 180, 0.95)";
+          ctx.lineWidth = 1.8;
+          ctx.beginPath();
+          ctx.arc(ix, iy, radius + 2.8, 0, Math.PI * 2);
           ctx.stroke();
         }
       }
@@ -18956,10 +20034,54 @@
     pointer.x = event.clientX;
     pointer.y = event.clientY;
     pointer.active = true;
+    if (
+      state.debugIslandDrag
+      && (state.debugIslandDrag.pointerId === null || state.debugIslandDrag.pointerId === event.pointerId)
+    ) {
+      updateDebugIslandDragPreview(event.clientX, event.clientY);
+      event.preventDefault();
+    }
   }
 
   function handleCanvasLeave() {
     pointer.active = false;
+  }
+
+  function handleCanvasUp(event) {
+    if (
+      event.currentTarget
+      && typeof event.currentTarget.hasPointerCapture === "function"
+      && event.currentTarget.hasPointerCapture(event.pointerId)
+      && typeof event.currentTarget.releasePointerCapture === "function"
+    ) {
+      try {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      } catch (err) {
+        // ignore pointer capture release failures
+      }
+    }
+    if (commitDebugIslandDrag(event)) {
+      event.preventDefault();
+    }
+  }
+
+  function handleCanvasCancel(event) {
+    if (
+      event.currentTarget
+      && typeof event.currentTarget.hasPointerCapture === "function"
+      && event.currentTarget.hasPointerCapture(event.pointerId)
+      && typeof event.currentTarget.releasePointerCapture === "function"
+    ) {
+      try {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      } catch (err) {
+        // ignore pointer capture release failures
+      }
+    }
+    if (state.debugIslandDrag) {
+      state.debugIslandDrag = null;
+      event.preventDefault();
+    }
   }
 
   function shouldProcessMobileTapAction(event) {
@@ -19047,13 +20169,32 @@
     if (!state.debugUnlocked || !state.debugWorldMapVisible) return false;
     const layout = getDebugWorldMiniMapLayout();
     if (!layout) return false;
-    const { toggleX, toggleY, toggleW, toggleH } = layout;
+    const {
+      panelX,
+      panelY,
+      panelW,
+      panelH,
+      mapX,
+      mapY,
+      mapW,
+      mapH,
+      toggleX,
+      toggleY,
+      toggleW,
+      toggleH,
+    } = layout;
     const x = event.clientX;
     const y = event.clientY;
-    if (x < toggleX || x > toggleX + toggleW || y < toggleY || y > toggleY + toggleH) {
+    if (!isPointInRect(x, y, panelX, panelY, panelW, panelH)) {
       return false;
     }
-    toggleDebugAbandonedRobotMarker();
+    if (isPointInRect(x, y, toggleX, toggleY, toggleW, toggleH)) {
+      toggleDebugAbandonedRobotMarker();
+      return true;
+    }
+    if (isPointInRect(x, y, mapX, mapY, mapW, mapH) && state.debugContinentalShift) {
+      return startDebugIslandDrag(event, layout);
+    }
     return true;
   }
 
@@ -19167,6 +20308,8 @@
     canvas.addEventListener("pointermove", handleCanvasMove);
     canvas.addEventListener("pointerleave", handleCanvasLeave);
     canvas.addEventListener("pointerdown", handleCanvasDown);
+    canvas.addEventListener("pointerup", handleCanvasUp);
+    canvas.addEventListener("pointercancel", handleCanvasCancel);
 
     buildCategoryIcons.forEach((icon) => {
       applyItemVisual(icon, icon.dataset.icon, true);
@@ -19255,6 +20398,7 @@
     if (mosesBtn) mosesBtn.addEventListener("click", toggleDebugMoses);
     if (infiniteResourcesBtn) infiniteResourcesBtn.addEventListener("click", toggleInfiniteResources);
     if (debugWorldMapBtn) debugWorldMapBtn.addEventListener("click", toggleDebugWorldMap);
+    if (continentalShiftBtn) continentalShiftBtn.addEventListener("click", toggleContinentalShift);
     if (toggleRobotRecallBtn) {
       toggleRobotRecallBtn.addEventListener("click", () => {
         ensureAudioContext();
