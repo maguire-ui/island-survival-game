@@ -8856,6 +8856,50 @@
       );
   }
 
+  /** Ensures at most one robot is the designated wild/abandoned spawn. Call after loading structures from save. */
+  function ensureSingleWildSpawnRobot() {
+    if (!Array.isArray(state.structures)) return;
+    const robots = state.structures.filter(
+      (s) => s && !s.removed && s.type === "robot"
+    );
+    if (robots.length === 0) return;
+
+    const wildCount = robots.filter((s) => !!s.meta?.wildSpawn).length;
+
+    if (wildCount > 1) {
+      robots.sort((a, b) => (a.tx !== b.tx ? a.tx - b.tx : a.ty - b.ty));
+      const keep = robots[0];
+      for (let i = 1; i < robots.length; i += 1) {
+        if (robots[i].meta) robots[i].meta.wildSpawn = false;
+      }
+      if (!keep.meta) keep.meta = {};
+      keep.meta.wildSpawn = true;
+      return;
+    }
+
+    if (wildCount === 0) {
+      robots.sort((a, b) => (a.tx !== b.tx ? a.tx - b.tx : a.ty - b.ty));
+      const keep = robots[0];
+      if (!keep.meta) keep.meta = {};
+      keep.meta.wildSpawn = true;
+      const dropWorld = state.surfaceWorld || state.world;
+      for (let i = 1; i < robots.length; i += 1) {
+        const structure = robots[i];
+        if (dropWorld && structure.storage) {
+          const center = getStructureCenterWorld(structure);
+          structure.storage.forEach((slot, index) => {
+            if (!slot.id || !slot.qty) return;
+            const angle = (index / (structure.storage.length || 1)) * Math.PI * 2;
+            const offsetX = Math.cos(angle) * 10;
+            const offsetY = Math.sin(angle) * 10;
+            spawnDrop(slot.id, slot.qty, center.x + offsetX, center.y + offsetY, dropWorld);
+          });
+        }
+        removeStructure(structure);
+      }
+    }
+  }
+
   function ensureRareOuterWildRobot(world) {
     if (!world || !Array.isArray(world.islands) || world.islands.length < 2) return false;
     if (!Array.isArray(state.structures) || !state.structureGrid) return false;
@@ -9071,6 +9115,8 @@
           if (structure.type === "robot") structure.storage = sanitizeInventorySlots(structure.storage, ROBOT_STORAGE_SIZE);
         }
       }
+
+      ensureSingleWildSpawnRobot();
 
       const spawnTile = findSpawnTile(world);
       state.player = {
