@@ -211,6 +211,54 @@
         monster_flesh: { min: 2, max: 3, chance: 0.9 },
       },
     },
+    polar_bear: {
+      name: "Polar Bear",
+      color: "#dfe9f5",
+      hp: 18,
+      speed: 66,
+      damage: 16,
+      attackRange: 30,
+      attackCooldown: 1.05,
+      aggroRange: 280,
+      rangedRange: 0,
+      dayImmune: true,
+      drop: {
+        hide: { min: 2, max: 4, chance: 0.95 },
+        bone: { min: 1, max: 2, chance: 0.72 },
+      },
+    },
+    lion: {
+      name: "Lion",
+      color: "#c79359",
+      hp: 14,
+      speed: 76,
+      damage: 14,
+      attackRange: 29,
+      attackCooldown: 0.95,
+      aggroRange: 300,
+      rangedRange: 0,
+      dayImmune: true,
+      drop: {
+        hide: { min: 2, max: 3, chance: 0.9 },
+        bone: { min: 1, max: 2, chance: 0.6 },
+      },
+    },
+    wolf: {
+      name: "Wolf",
+      color: "#9ea6b7",
+      hp: 11,
+      speed: 84,
+      damage: 11,
+      attackRange: 27,
+      attackCooldown: 0.86,
+      aggroRange: 265,
+      rangedRange: 0,
+      dayImmune: true,
+      drop: {
+        hide: { min: 1, max: 2, chance: 0.8 },
+        bone: { min: 1, max: 2, chance: 0.5 },
+      },
+    },
   };
 
   const MONSTER_AUDIO_PROFILES = Object.freeze({
@@ -246,6 +294,30 @@
       idleRange: CONFIG.tileSize * 12.2,
       moveThreshold: 6,
     },
+    polar_bear: {
+      idleIntervalMin: 2.6,
+      idleIntervalMax: 4.8,
+      stepIntervalMin: 0.3,
+      stepIntervalMax: 0.54,
+      idleRange: CONFIG.tileSize * 13.2,
+      moveThreshold: 6,
+    },
+    lion: {
+      idleIntervalMin: 2.1,
+      idleIntervalMax: 4.2,
+      stepIntervalMin: 0.24,
+      stepIntervalMax: 0.45,
+      idleRange: CONFIG.tileSize * 13.8,
+      moveThreshold: 7,
+    },
+    wolf: {
+      idleIntervalMin: 1.9,
+      idleIntervalMax: 3.8,
+      stepIntervalMin: 0.2,
+      stepIntervalMax: 0.38,
+      idleRange: CONFIG.tileSize * 12.8,
+      moveThreshold: 7,
+    },
   });
 
   const NET_CONFIG = {
@@ -273,6 +345,7 @@
     treeStump: 30,
     treeSapling: 60,
     rock: 120,
+    ore: 180,
     grass: 45,
   };
 
@@ -314,7 +387,7 @@
   const SAVE_KEY_PREFIX = "island_survival_seed_save_v1:";
   const ACTIVE_SEED_KEY = "island_survival_active_seed_v1";
   const SAVE_VERSION = 5;
-  const WORLD_LAYOUT_VERSION = "2026-02-layout-v2";
+  const WORLD_LAYOUT_VERSION = "2026-02-layout-v3";
   const HOTBAR_SIZE = 4;
   const INVENTORY_SIZE = 8;
   const CHEST_SIZE = 8;
@@ -387,7 +460,7 @@
     large_house: { name: "Large House", color: "#7f5534", placeable: true, placeType: "large_house" },
     bed: { name: "Bed", color: "#d8cab4", placeable: true, placeType: "bed" },
     campfire: { name: "Campfire", color: "#d37a3a", placeable: true, placeType: "campfire" },
-    medicine: { name: "Poultice", color: "#7ec98a" },
+    medicine: { name: "POULTICE", color: "#7ec98a" },
     village_map: { name: "Village Map", color: "#d0c394" },
     cave_map: { name: "Cave Map", color: "#a5b4d8" },
     beacon_core: { name: "Beacon Core", color: "#9cd0ff" },
@@ -548,6 +621,14 @@
 
   const BUILD_RECIPES = [
     {
+      id: "stick_bundle",
+      icon: "stick",
+      name: "Stick Bundle",
+      description: "Whittle sticks by hand so early tool progression never deadlocks.",
+      cost: { wood: 1 },
+      output: { stick: 2 },
+    },
+    {
       id: "bridge",
       name: "Bridge",
       description: "Cross water to reach other islands.",
@@ -606,7 +687,7 @@
     },
     {
       id: "medicine",
-      name: "Poultice",
+      name: "POULTICE",
       description: "Fast emergency healing during fights.",
       cost: { raw_meat: 1, hide: 1, wood: 1 },
     },
@@ -845,6 +926,7 @@
   ]);
 
   const BUILD_RECIPE_CATEGORIES = Object.freeze({
+    stick_bundle: "navigation",
     bridge: "navigation",
     bridge_bundle: "navigation",
     village_path: "navigation",
@@ -940,6 +1022,7 @@
   const BIOMES = [
     {
       key: "temperate",
+      plains: true,
       land: [43, 122, 61],
       tree: "#2d8a4c",
       grassColor: "#79c66f",
@@ -1077,10 +1160,27 @@
       animalSpawnScale: 0.78,
       poisonMonsterChance: 0.62,
     },
+    {
+      key: "mushroom",
+      land: [126, 82, 134],
+      tree: "#d65c9f",
+      grassColor: "#b47ad6",
+      rock: "#7d6d8d",
+      ore: "#8e6db9",
+      stoneColor: "#c58ed6",
+      sand: [206, 170, 145],
+      treeRate: 0.062,
+      rockRate: 0.02,
+      grassRate: 0.04,
+      grassDropQty: 2,
+      oreRate: 0.006,
+      stoneRate: 0.00035,
+      animalSpawnScale: 1.08,
+    },
   ];
 
   const BIOME_PICK_WEIGHTS = [
-    0.24, // temperate
+    0.23, // temperate (plains)
     0.13, // jungle
     0.1,  // snow
     0.1,  // volcanic
@@ -1088,7 +1188,37 @@
     0.12, // redwood
     0.08, // ashlands
     0.09, // marsh
+    0.01, // mushroom (rarest)
   ];
+
+  const BIOME_KEYS = Object.freeze({
+    plains: "temperate",
+    jungle: "jungle",
+    snow: "snow",
+    mushroom: "mushroom",
+  });
+
+  const ABANDONED_ROBOT_OUTER_RING_RATIO = 0.16;
+  const ABANDONED_ROBOT_FARTHEST_PERCENT = 0.28;
+
+  const SURFACE_GUARDIAN_CONFIG = Object.freeze({
+    spawnInterval: 5.8,
+    maxTotal: 22,
+    maxPerIsland: 2,
+    minPlayerDistanceTiles: 4.5,
+  });
+
+  const AMBIENT_FISH_CONFIG = Object.freeze({
+    maxFish: 16,
+    spawnIntervalMin: 1.5,
+    spawnIntervalMax: 3.4,
+    lifeMin: 4.2,
+    lifeMax: 9.2,
+    speedMin: 14,
+    speedMax: 24,
+    sizeMin: 4.5,
+    sizeMax: 8.6,
+  });
 
   const TREE_TRUNK = "#7a5a2f";
 
@@ -1263,6 +1393,7 @@
     timeOfDay: 0,
     isNight: false,
     surfaceSpawnTimer: 0,
+    surfaceGuardianSpawnTimer: SURFACE_GUARDIAN_CONFIG.spawnInterval,
     gameWon: false,
     winTimer: 0,
     winSequencePlayed: false,
@@ -1286,6 +1417,8 @@
     debugShowAbandonedRobot: false,
     debugSpeedMultiplier: SETTINGS_DEFAULTS.debugSpeedMultiplier,
     debugWorldSpeedMultiplier: SETTINGS_DEFAULTS.debugWorldSpeedMultiplier,
+    ambientFish: [],
+    ambientFishSpawnTimer: 0,
   };
 
   let wasNearBench = false;
@@ -2249,7 +2382,9 @@
     }
 
     const animal = nearby[Math.floor(Math.random() * nearby.length)];
-    playSfx(animal.type === "goat" ? "animalBaa" : "animalMoo");
+    playSfx(getAnimalIdleSfx(animal.type), {
+      intensity: animal.type === "boar" ? 0.78 : 0.82,
+    });
     state.animalVocalTimer = 3.6 + Math.random() * 4.8;
   }
 
@@ -2753,6 +2888,15 @@
     if (monsterType === "marsh_stalker") {
       return { base: 134, upper: 214, step: 94, noise: 910 };
     }
+    if (monsterType === "polar_bear") {
+      return { base: 78, upper: 136, step: 70, noise: 360 };
+    }
+    if (monsterType === "lion") {
+      return { base: 102, upper: 178, step: 88, noise: 740 };
+    }
+    if (monsterType === "wolf") {
+      return { base: 120, upper: 208, step: 102, noise: 1120 };
+    }
     return { base: 112, upper: 194, step: 96, noise: 1280 };
   }
 
@@ -3153,7 +3297,7 @@
       return;
     }
 
-    if (kind === "animalBaa") {
+    if (kind === "animalBaa" || kind === "animalGoatIdle") {
       playSfxTone({
         wave: "triangle",
         freqStart: 330 + Math.random() * 70,
@@ -3165,7 +3309,7 @@
       return;
     }
 
-    if (kind === "animalMoo") {
+    if (kind === "animalMoo" || kind === "animalCowIdle") {
       playSfxTone({
         wave: "sine",
         freqStart: 170 + Math.random() * 35,
@@ -3173,6 +3317,58 @@
         duration: 0.3,
         attack: 0.03,
         peak: 0.013 * amp,
+      });
+      return;
+    }
+
+    if (kind === "animalBoarIdle") {
+      playSfxTone({
+        wave: "triangle",
+        freqStart: 148 + Math.random() * 20,
+        freqEnd: 88 + Math.random() * 16,
+        duration: 0.22,
+        attack: 0.018,
+        peak: 0.011 * amp,
+      });
+      playSfxNoise({
+        duration: 0.1,
+        peak: 0.0028 * amp,
+        filterType: "bandpass",
+        filterFreq: 780,
+        filterQ: 0.5,
+      });
+      return;
+    }
+
+    if (kind === "animalGoatHurt" || kind === "animalCowHurt" || kind === "animalBoarHurt") {
+      const pitch = kind === "animalBoarHurt" ? 0.82 : 1;
+      playSfxTone({
+        wave: "triangle",
+        freqStart: (250 + Math.random() * 35) * pitch,
+        freqEnd: (138 + Math.random() * 28) * pitch,
+        duration: 0.2,
+        attack: 0.01,
+        peak: 0.013 * amp,
+      });
+      return;
+    }
+
+    if (kind === "animalGoatDeath" || kind === "animalCowDeath" || kind === "animalBoarDeath") {
+      const pitch = kind === "animalBoarDeath" ? 0.78 : 0.92;
+      playSfxTone({
+        wave: "triangle",
+        freqStart: (172 + Math.random() * 22) * pitch,
+        freqEnd: (78 + Math.random() * 14) * pitch,
+        duration: 0.32,
+        attack: 0.02,
+        peak: 0.016 * amp,
+      });
+      playSfxNoise({
+        duration: 0.14,
+        peak: 0.0035 * amp,
+        filterType: "bandpass",
+        filterFreq: 620,
+        filterQ: 0.42,
       });
       return;
     }
@@ -3951,6 +4147,7 @@
         tx: cave.tx,
         ty: cave.ty,
         spawnedByPlayer: !!cave.spawnedByPlayer,
+        hostileBlocked: !!cave.hostileBlocked,
         world: serializeWorldState(cave.world),
       })) ?? [],
       structures: serializeStructuresList(),
@@ -4246,6 +4443,11 @@
       const existingById = world.caves.find((cave) => cave.id === entry.id);
       if (existingById) {
         if (entry.spawnedByPlayer) existingById.spawnedByPlayer = true;
+        if (typeof entry.hostileBlocked === "boolean") {
+          existingById.hostileBlocked = entry.hostileBlocked;
+        } else {
+          existingById.hostileBlocked = shouldBlockCaveHostilesForSurfaceTile(world, existingById.tx, existingById.ty);
+        }
         continue;
       }
       if (typeof entry.tx !== "number" || typeof entry.ty !== "number") continue;
@@ -4255,7 +4457,12 @@
       const idx = tileIndex(tx, ty, world.size);
       if (!world.tiles[idx]) continue;
       if (world.caves.some((cave) => cave.tx === tx && cave.ty === ty)) continue;
-      addSurfaceCave(world, tx, ty, entry.id, { spawnedByPlayer: !!entry.spawnedByPlayer });
+      addSurfaceCave(world, tx, ty, entry.id, {
+        spawnedByPlayer: !!entry.spawnedByPlayer,
+        hostileBlocked: typeof entry.hostileBlocked === "boolean"
+          ? entry.hostileBlocked
+          : shouldBlockCaveHostilesForSurfaceTile(world, tx, ty),
+      });
     }
   }
 
@@ -4276,6 +4483,8 @@
       state.activeHouse = null;
       state.housePlayer = null;
       state.returnPosition = null;
+      state.ambientFish = [];
+      state.ambientFishSpawnTimer = 0;
       state.structures = [];
       state.structureGrid = new Array(world.size * world.size).fill(null);
       state.spawnTile = findSpawnTile(world);
@@ -4321,6 +4530,9 @@
       for (const cave of world.caves) {
         const caveSnapshot = snapshot.caves.find((entry) => entry.id === cave.id);
         if (!caveSnapshot) continue;
+        cave.hostileBlocked = typeof caveSnapshot.hostileBlocked === "boolean"
+          ? caveSnapshot.hostileBlocked
+          : shouldBlockCaveHostilesForSurfaceTile(world, cave.tx, cave.ty);
         applyResourceStates(cave.world, caveSnapshot.world?.resourceStates ?? []);
         applyRespawnTasks(cave.world, caveSnapshot.world?.respawnTasks ?? []);
         applyDrops(cave.world, caveSnapshot.world?.drops ?? []);
@@ -4328,6 +4540,10 @@
         applyVillagers(cave.world, caveSnapshot.world?.villagers ?? []);
         cave.world.monsters = buildMonstersFromSnapshot(cave.world.monsters, caveSnapshot.world?.monsters, cave.world);
         cave.world.projectiles = buildProjectilesFromSnapshot(cave.world.projectiles, caveSnapshot.world?.projectiles);
+        if (isCaveHostilesBlocked(world, cave)) {
+          cave.world.monsters = [];
+          cave.world.projectiles = [];
+        }
       }
     }
 
@@ -4781,8 +4997,10 @@
     if (shouldPlayWorldSfx(world, animal.x, animal.y)) {
       playSfx("hit");
     }
+    playAnimalReactionSfx(world, animal, "hurt");
     if (animal.hp <= 0) {
       animal.hp = 0;
+      playAnimalReactionSfx(world, animal, "death");
       const drop = animal.drop || { raw_meat: 1 };
       for (const [itemId, qty] of Object.entries(drop)) {
         spawnDrop(itemId, qty, animal.x, animal.y, state.surfaceWorld || state.world);
@@ -5558,6 +5776,119 @@
     return getSurfaceBiomeAtTile(world, tx, ty);
   }
 
+  function isMushroomBiomeId(biomeId) {
+    const biome = BIOMES[biomeId];
+    return biome?.key === BIOME_KEYS.mushroom;
+  }
+
+  function isMushroomBiomeAtTile(world, tx, ty) {
+    const biomeId = getSurfaceBiomeIdAtTile(world, tx, ty);
+    return isMushroomBiomeId(biomeId);
+  }
+
+  function getIslandBiomeId(world, island) {
+    if (!world || !island) return 0;
+    if (Number.isInteger(island.biomeId) && island.biomeId >= 0 && island.biomeId < BIOMES.length) {
+      return island.biomeId;
+    }
+    return getSurfaceBiomeIdAtTile(world, Math.floor(island.x), Math.floor(island.y));
+  }
+
+  function getIslandForTile(world, tx, ty) {
+    if (!world || !Array.isArray(world.islands) || !Number.isFinite(tx) || !Number.isFinite(ty)) return null;
+    const px = tx + 0.5;
+    const py = ty + 0.5;
+    let best = null;
+    let bestDelta = Infinity;
+    for (const island of world.islands) {
+      if (!island) continue;
+      const delta = Math.hypot(px - island.x, py - island.y) - island.radius;
+      if (delta <= 0 && delta < bestDelta) {
+        best = island;
+        bestDelta = delta;
+      }
+    }
+    return best;
+  }
+
+  function isSpawnIsland(world, island) {
+    if (!world || !island) return false;
+    if (island.starter) return true;
+    if (state.spawnTile && Number.isFinite(state.spawnTile.x) && Number.isFinite(state.spawnTile.y)) {
+      const spawnIsland = getIslandForTile(world, state.spawnTile.x, state.spawnTile.y);
+      if (spawnIsland === island) return true;
+    }
+    return false;
+  }
+
+  function isPlainsBiomeId(biomeId) {
+    const biome = BIOMES[biomeId];
+    return biome?.key === BIOME_KEYS.plains || !!biome?.plains;
+  }
+
+  function getGuardianTypeForBiomeId(biomeId, island = null) {
+    if (isMushroomBiomeId(biomeId)) return null;
+    const biome = BIOMES[biomeId];
+    if (!biome) return null;
+    if (biome.key === BIOME_KEYS.snow) return "polar_bear";
+    if (biome.key === BIOME_KEYS.jungle) return "lion";
+    if (isPlainsBiomeId(biomeId)) {
+      if (island?.starter) return null;
+      return "wolf";
+    }
+    return null;
+  }
+
+  function isGuardianMonsterType(type) {
+    return type === "polar_bear" || type === "lion" || type === "wolf";
+  }
+
+  function isDayImmuneMonster(monster) {
+    const variant = getMonsterVariant(monster?.type);
+    return !!variant?.dayImmune;
+  }
+
+  function isIslandInOuterRing(world, island) {
+    if (!world || !island) return false;
+    const ringWidth = Math.max(6, world.size * ABANDONED_ROBOT_OUTER_RING_RATIO);
+    const edgeDist = Math.min(island.x, island.y, world.size - island.x, world.size - island.y);
+    return edgeDist <= ringWidth;
+  }
+
+  function getOutermostIslandsForWildRobot(world) {
+    if (!world || !Array.isArray(world.islands)) return [];
+    const candidates = world.islands.filter((island) => (
+      island
+      && !isSpawnIsland(world, island)
+      && Number.isFinite(island.x)
+      && Number.isFinite(island.y)
+      && Number.isFinite(island.radius)
+      && island.radius >= 4.5
+    ));
+    if (candidates.length === 0) return [];
+    const centerX = world.size * 0.5;
+    const centerY = world.size * 0.5;
+    const ranked = candidates
+      .map((island) => {
+        const dist = Math.hypot(island.x - centerX, island.y - centerY);
+        return { island, dist };
+      })
+      .sort((a, b) => b.dist - a.dist);
+    const farthestCount = Math.max(1, Math.ceil(ranked.length * ABANDONED_ROBOT_FARTHEST_PERCENT));
+    const farthestSet = new Set(ranked.slice(0, farthestCount).map((entry) => entry.island));
+    const selected = ranked
+      .filter((entry) => farthestSet.has(entry.island) || isIslandInOuterRing(world, entry.island))
+      .sort((a, b) => (
+        b.dist - a.dist
+        || b.island.radius - a.island.radius
+        || a.island.x - b.island.x
+        || a.island.y - b.island.y
+      ))
+      .map((entry) => entry.island);
+    if (selected.length > 0) return selected;
+    return ranked.map((entry) => entry.island);
+  }
+
   function getBiomeTreeMaxHp(biome) {
     const maxHp = Number(biome?.treeMaxHp);
     if (!Number.isFinite(maxHp)) return 4;
@@ -5627,10 +5958,11 @@
     return pickMonsterType(rng);
   }
 
-  function generateCaveWorld(seed, caveId) {
+  function generateCaveWorld(seed, caveId, options = null) {
     const size = CAVE_SIZE;
     const caveSeed = seed + caveId * 7919;
     const rng = makeRng(caveSeed);
+    const spawnHostiles = options?.spawnHostiles !== false;
     const tiles = new Array(size * size).fill(0);
     const shades = new Array(size * size).fill(1);
     const resources = [];
@@ -5871,6 +6203,95 @@
       }
     }
 
+    function getCaveOreHp(oreKind) {
+      if (oreKind === "coal") return 4;
+      if (oreKind === "iron_ore") return 5;
+      if (oreKind === "gold_ore") return 5;
+      if (oreKind === "emerald") return 6;
+      if (oreKind === "diamond") return 7;
+      return 5;
+    }
+
+    function getCaveOreMinDepth(oreKind) {
+      if (oreKind === "gold_ore") return 0.2;
+      if (oreKind === "emerald") return 0.35;
+      if (oreKind === "diamond") return 0.5;
+      return 0;
+    }
+
+    function getCaveDepthAtY(ty) {
+      return 1 - ty / (size - 1);
+    }
+
+    function hasCaveOreKind(oreKind) {
+      return resources.some(
+        (res) => res && !res.removed && res.type === "ore" && (res.oreKind || "iron_ore") === oreKind
+      );
+    }
+
+    function canPlaceGuaranteedOreAt(tx, ty, oreKind, mode = "empty") {
+      if (!inBounds(tx, ty, size)) return false;
+      const idx = tileIndex(tx, ty, size);
+      if (!tiles[idx]) return false;
+      if (Math.hypot(tx - entrance.tx, ty - entrance.ty) < 4.5) return false;
+      if (getCaveDepthAtY(ty) < getCaveOreMinDepth(oreKind)) return false;
+
+      const existingId = resourceGrid[idx];
+      if (existingId === -1 || existingId == null) return true;
+      if (mode === "empty") return false;
+
+      const existing = resources[existingId];
+      if (!existing || existing.removed) return true;
+      if (mode === "preferred") {
+        return existing.type === "rock"
+          || (existing.type === "ore" && existing.oreKind === "coal");
+      }
+      return true;
+    }
+
+    function spawnGuaranteedOreAt(tx, ty, oreKind) {
+      const idx = tileIndex(tx, ty, size);
+      const hp = getCaveOreHp(oreKind);
+      const existingId = resourceGrid[idx];
+      if (existingId !== -1 && existingId != null) {
+        const existing = resources[existingId];
+        if (existing && !existing.removed) {
+          existing.type = "ore";
+          existing.oreKind = oreKind;
+          existing.maxHp = hp;
+          existing.hp = hp;
+          existing.stage = "alive";
+          existing.respawnTimer = 0;
+          existing.hitTimer = 0;
+          existing.removed = false;
+          resourceGrid[idx] = existing.id;
+          return true;
+        }
+      }
+      addResource("ore", tx, ty, hp, { oreKind });
+      return true;
+    }
+
+    function ensureGuaranteedCaveOre(oreKind, salt) {
+      if (hasCaveOreKind(oreKind)) return false;
+      const scans = ["empty", "preferred"];
+      const maxAttempts = (size - 2) * (size - 2) * 2;
+      for (const mode of scans) {
+        for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+          const x = 1 + Math.floor(rand2d(attempt + 13, salt + 71, caveSeed + 9103) * (size - 2));
+          const y = 1 + Math.floor(rand2d(salt + 29, attempt + 41, caveSeed + 11779) * (size - 2));
+          if (!canPlaceGuaranteedOreAt(x, y, oreKind, mode)) continue;
+          return spawnGuaranteedOreAt(x, y, oreKind);
+        }
+      }
+      return false;
+    }
+
+    const guaranteedOreKinds = ["iron_ore", "gold_ore", "emerald", "diamond"];
+    for (let i = 0; i < guaranteedOreKinds.length; i += 1) {
+      ensureGuaranteedCaveOre(guaranteedOreKinds[i], 131 + i * 97);
+    }
+
     for (const chamber of chambers.slice(0, 4)) {
       landmarks.push({
         x: (chamber.x + 0.5) * CONFIG.tileSize,
@@ -5881,7 +6302,7 @@
 
     const monsters = [];
     let nextMonsterId = 1;
-    const monsterCount = 2 + Math.floor(rng() * 3);
+    const monsterCount = spawnHostiles ? (2 + Math.floor(rng() * 3)) : 0;
     for (let i = 0; i < monsterCount; i += 1) {
       for (let attempt = 0; attempt < 50; attempt += 1) {
         const tx = 2 + Math.floor(rng() * (size - 4));
@@ -6451,12 +6872,14 @@
     function addCaveAt(tx, ty, allowOccupied = false) {
       if (!canUseCaveTile(tx, ty, allowOccupied)) return false;
       if (allowOccupied) clearResourceAt(tx, ty);
+      const hostileBlocked = isMushroomBiomeAtTile({ biomeGrid, size }, tx, ty);
       caves.push({
         id: caves.length,
         tx,
         ty,
         spawnedByPlayer: false,
-        world: generateCaveWorld(seed, caves.length),
+        hostileBlocked,
+        world: generateCaveWorld(seed, caves.length, { spawnHostiles: !hostileBlocked }),
       });
       return true;
     }
@@ -7170,6 +7593,7 @@
       respawnTasks: [],
       structures: [],
       drops: [],
+      monsters: [],
       animals: [],
       villagers: [],
       caves: [],
@@ -7222,6 +7646,20 @@
         y: drop.y,
         ttl: Number.isFinite(drop.ttl) ? drop.ttl : DROP_DESPAWN.lifetime,
       })),
+      monsters: (surface.monsters ?? []).map((monster) => ({
+        id: monster.id,
+        type: monster.type ?? "crawler",
+        x: monster.x,
+        y: monster.y,
+        hp: monster.hp,
+        maxHp: monster.maxHp,
+        attackTimer: Math.max(0, Number(monster.attackTimer) || 0),
+        dayBurning: !!monster.dayBurning,
+        burnTimer: Math.max(0, Number(monster.burnTimer) || 0),
+        burnDuration: Math.max(0, Number(monster.burnDuration) || 0),
+        poisonDuration: Math.max(0, Number(monster.poisonDuration) || 0),
+        poisonDps: Math.max(0, Number(monster.poisonDps) || 0),
+      })),
       animals: (surface.animals ?? []).map((animal) => ({
         id: animal.id,
         type: animal.type,
@@ -7247,6 +7685,7 @@
         tx: cave.tx,
         ty: cave.ty,
         spawnedByPlayer: !!cave.spawnedByPlayer,
+        hostileBlocked: !!cave.hostileBlocked,
         resourceStates: cave.world.resources.map((res) => serializeResource(res)),
         respawnTasks: cave.world.respawnTasks ?? [],
         drops: (cave.world.drops ?? []).map((drop) => ({
@@ -7256,6 +7695,20 @@
           x: drop.x,
           y: drop.y,
           ttl: Number.isFinite(drop.ttl) ? drop.ttl : DROP_DESPAWN.lifetime,
+        })),
+        monsters: (cave.world.monsters ?? []).map((monster) => ({
+          id: monster.id,
+          type: monster.type ?? "crawler",
+          x: monster.x,
+          y: monster.y,
+          hp: monster.hp,
+          maxHp: monster.maxHp,
+          attackTimer: Math.max(0, Number(monster.attackTimer) || 0),
+          dayBurning: !!monster.dayBurning,
+          burnTimer: Math.max(0, Number(monster.burnTimer) || 0),
+          burnDuration: Math.max(0, Number(monster.burnDuration) || 0),
+          poisonDuration: Math.max(0, Number(monster.poisonDuration) || 0),
+          poisonDps: Math.max(0, Number(monster.poisonDps) || 0),
         })),
       })) ?? [],
     };
@@ -7327,6 +7780,7 @@
         ...data,
         version: SAVE_VERSION,
         seed: normalizeSeedValue(data.seed),
+        monsters: Array.isArray(data.monsters) ? data.monsters : [],
         villagers: Array.isArray(data.villagers) ? data.villagers : [],
       };
     }
@@ -7351,6 +7805,7 @@
         respawnTasks: [],
         structures: [],
         drops: Array.isArray(data.drops) ? data.drops : [],
+        monsters: Array.isArray(data.monsters) ? data.monsters : [],
         animals: Array.isArray(data.animals) ? data.animals : [],
         villagers: [],
         caves: [],
@@ -7377,6 +7832,7 @@
         respawnTasks: [],
         structures: Array.isArray(data.structures) ? data.structures : [],
         drops: Array.isArray(data.drops) ? data.drops : [],
+        monsters: Array.isArray(data.monsters) ? data.monsters : [],
         animals: Array.isArray(data.animals) ? data.animals : [],
         villagers: [],
         caves: [],
@@ -7403,6 +7859,7 @@
         respawnTasks: Array.isArray(data.respawnTasks) ? data.respawnTasks : [],
         structures: Array.isArray(data.structures) ? data.structures : [],
         drops: Array.isArray(data.drops) ? data.drops : [],
+        monsters: Array.isArray(data.monsters) ? data.monsters : [],
         animals: Array.isArray(data.animals) ? data.animals : [],
         villagers: [],
         caves: Array.isArray(data.caves) ? data.caves : [],
@@ -7434,6 +7891,7 @@
             }))
           : [],
         drops: Array.isArray(data.drops) ? data.drops : [],
+        monsters: Array.isArray(data.monsters) ? data.monsters : [],
         animals: Array.isArray(data.animals) ? data.animals : [],
         villagers: [],
         caves: Array.isArray(data.caves) ? data.caves : [],
@@ -7466,6 +7924,7 @@
           }))
         : [],
       drops: Array.isArray(data.drops) ? data.drops : [],
+      monsters: Array.isArray(data.monsters) ? data.monsters : [],
       animals: Array.isArray(data.animals) ? data.animals : [],
       villagers: Array.isArray(data.villagers) ? data.villagers : [],
       caves: Array.isArray(data.caves) ? data.caves : [],
@@ -7514,6 +7973,7 @@
 
   function getRespawnDelayForTaskType(type) {
     if (type === "grass") return RESPAWN.grass;
+    if (type === "ore") return RESPAWN.ore;
     if (type === "biomeStone") return getBiomeStoneRespawnDelay();
     return RESPAWN.rock;
   }
@@ -7714,7 +8174,8 @@
     world.animals = Array.isArray(animals)
       ? animals
         .map((animal) => {
-          const type = animal.type === "goat" ? "goat" : "boar";
+          const cfg = getAnimalTypeConfig(animal?.type);
+          const type = cfg.type;
           const sourceX = Number.isFinite(animal?.x) ? animal.x : 0;
           const sourceY = Number.isFinite(animal?.y) ? animal.y : 0;
           const pos = clampEntityPositionToLand(world, sourceX, sourceY, 22);
@@ -7726,11 +8187,11 @@
             type,
             x: pos.x,
             y: pos.y,
-            hp: typeof animal.hp === "number" ? animal.hp : (type === "goat" ? 4 : 5),
-            maxHp: typeof animal.maxHp === "number" ? animal.maxHp : (type === "goat" ? 4 : 5),
-            speed: typeof animal.speed === "number" ? animal.speed : (type === "goat" ? 48 : 42),
-            color: animal.color || (type === "goat" ? "#d2cab8" : "#9f8160"),
-            drop: type === "goat" ? { raw_meat: 1, hide: 1 } : { raw_meat: 2, hide: 1 },
+            hp: typeof animal.hp === "number" ? animal.hp : cfg.hp,
+            maxHp: typeof animal.maxHp === "number" ? animal.maxHp : cfg.hp,
+            speed: typeof animal.speed === "number" ? animal.speed : cfg.speed,
+            color: animal.color || cfg.color,
+            drop: cfg.drop,
             hitTimer: 0,
             fleeTimer: 0,
             wanderTimer: 0,
@@ -8833,6 +9294,7 @@
     });
     const robot = ensureRobotMeta(structure);
     if (!robot) return false;
+    robot.discovered = false;
     robot.mode = null;
     robot.manualStop = false;
     robot.state = "idle";
@@ -8856,94 +9318,138 @@
       );
   }
 
-  /** Ensures at most one robot is the designated wild/abandoned spawn. Call after loading structures from save. */
-  function ensureSingleWildSpawnRobot() {
-    if (!Array.isArray(state.structures)) return;
-    const robots = state.structures.filter(
-      (s) => s && !s.removed && s.type === "robot"
-    );
-    if (robots.length === 0) return;
-
-    const wildCount = robots.filter((s) => !!s.meta?.wildSpawn).length;
-
-    if (wildCount > 1) {
-      robots.sort((a, b) => (a.tx !== b.tx ? a.tx - b.tx : a.ty - b.ty));
-      const keep = robots[0];
-      for (let i = 1; i < robots.length; i += 1) {
-        if (robots[i].meta) robots[i].meta.wildSpawn = false;
-      }
-      if (!keep.meta) keep.meta = {};
-      keep.meta.wildSpawn = true;
-      return;
-    }
-
-    if (wildCount === 0) {
-      robots.sort((a, b) => (a.tx !== b.tx ? a.tx - b.tx : a.ty - b.ty));
-      const keep = robots[0];
-      if (!keep.meta) keep.meta = {};
-      keep.meta.wildSpawn = true;
-      const dropWorld = state.surfaceWorld || state.world;
-      for (let i = 1; i < robots.length; i += 1) {
-        const structure = robots[i];
-        if (dropWorld && structure.storage) {
-          const center = getStructureCenterWorld(structure);
-          structure.storage.forEach((slot, index) => {
-            if (!slot.id || !slot.qty) return;
-            const angle = (index / (structure.storage.length || 1)) * Math.PI * 2;
-            const offsetX = Math.cos(angle) * 10;
-            const offsetY = Math.sin(angle) * 10;
-            spawnDrop(slot.id, slot.qty, center.x + offsetX, center.y + offsetY, dropWorld);
-          });
-        }
-        removeStructure(structure);
-      }
-    }
+  function getWildSpawnRobots() {
+    if (!Array.isArray(state.structures)) return [];
+    return state.structures.filter((structure) => (
+      structure
+      && !structure.removed
+      && structure.type === "robot"
+      && !!structure.meta?.wildSpawn
+    ));
   }
 
-  function ensureRareOuterWildRobot(world) {
+  function isWildRobotPlacementValid(world, structure, outerCandidateSet = null) {
+    if (!world || !structure || structure.removed || structure.type !== "robot") return false;
+    if (!Number.isInteger(structure.tx) || !Number.isInteger(structure.ty)) return false;
+    if (!inBounds(structure.tx, structure.ty, world.size)) return false;
+    const idx = tileIndex(structure.tx, structure.ty, world.size);
+    if (world.tiles[idx] !== 1 || world.beachGrid?.[idx]) return false;
+    if (getCaveAt(world, structure.tx, structure.ty)) return false;
+    const island = getIslandForTile(world, structure.tx, structure.ty);
+    if (!island || isSpawnIsland(world, island)) return false;
+    if (!outerCandidateSet || outerCandidateSet.size === 0) return true;
+    return outerCandidateSet.has(island);
+  }
+
+  function findWildRobotTileOnIsland(world, island, seedInt, salt = 0) {
+    if (!world || !island) return null;
+    const islandSeed = (
+      (Math.floor(island.x * 131) << 1)
+      ^ (Math.floor(island.y * 97) << 3)
+      ^ (Math.floor(island.radius * 100) << 5)
+      ^ seedInt
+      ^ (salt * 911)
+    );
+    for (let attempt = 0; attempt < 88; attempt += 1) {
+      const angle = rand2d(attempt + 17, islandSeed + 47, seedInt + 13091) * Math.PI * 2;
+      const radius = island.radius * (0.14 + rand2d(islandSeed + 101, attempt + 79, seedInt + 19411) * 0.68);
+      const tx = Math.floor(island.x + Math.cos(angle) * radius);
+      const ty = Math.floor(island.y + Math.sin(angle) * radius);
+      if (!canPlaceWildRobotTile(world, tx, ty)) continue;
+      return { tx, ty };
+    }
+    const searchRadius = Math.max(3, Math.ceil(island.radius));
+    const cx = Math.floor(island.x);
+    const cy = Math.floor(island.y);
+    for (let ring = 0; ring <= searchRadius; ring += 1) {
+      for (let dy = -ring; dy <= ring; dy += 1) {
+        for (let dx = -ring; dx <= ring; dx += 1) {
+          const tx = cx + dx;
+          const ty = cy + dy;
+          if (!inBounds(tx, ty, world.size)) continue;
+          if (Math.hypot((tx + 0.5) - island.x, (ty + 0.5) - island.y) > island.radius * 0.95) continue;
+          if (!canPlaceWildRobotTile(world, tx, ty)) continue;
+          return { tx, ty };
+        }
+      }
+    }
+    return null;
+  }
+
+  function spawnGuaranteedOuterWildRobot(world) {
     if (!world || !Array.isArray(world.islands) || world.islands.length < 2) return false;
     if (!Array.isArray(state.structures) || !state.structureGrid) return false;
-    if (hasWildSpawnRobot()) return false;
-
     const seedInt = Number.isFinite(world.seedInt) ? world.seedInt : seedToInt(String(world.seed || "island-1"));
-    const spawnRoll = rand2d(73, 411, seedInt + 19421);
-    if (spawnRoll >= 0.02) return false;
-
-    const centerX = world.size * 0.5;
-    const centerY = world.size * 0.5;
-    const outerIslands = world.islands
-      .filter((island) => island && !island.starter && island.radius >= 6.5)
-      .map((island) => ({
-        island,
-        outerScore: Math.hypot(island.x - centerX, island.y - centerY) + island.radius * 0.45,
-      }))
-      .sort((a, b) => b.outerScore - a.outerScore)
-      .slice(0, 14);
-    if (outerIslands.length === 0) return false;
-
-    const rng = makeRng(seedInt ^ 0x51f2ac9d);
-    for (const entry of outerIslands) {
-      const island = entry.island;
-      for (let attempt = 0; attempt < 42; attempt += 1) {
-        const angle = rng() * Math.PI * 2;
-        const radius = island.radius * (0.12 + rng() * 0.52);
-        const tx = Math.floor(island.x + Math.cos(angle) * radius);
-        const ty = Math.floor(island.y + Math.sin(angle) * radius);
-        if (!spawnWildRobotAt(world, tx, ty)) continue;
-        return true;
+    const outerIslands = getOutermostIslandsForWildRobot(world);
+    if (outerIslands.length > 0) {
+      const startIndex = Math.floor(rand2d(811, 97, seedInt + 9391) * outerIslands.length);
+      for (let i = 0; i < outerIslands.length; i += 1) {
+        const island = outerIslands[(startIndex + i) % outerIslands.length];
+        const tile = findWildRobotTileOnIsland(world, island, seedInt, i);
+        if (!tile) continue;
+        if (spawnWildRobotAt(world, tile.tx, tile.ty)) return true;
       }
-      for (let ring = 0.08; ring <= 0.56; ring += 0.08) {
-        const radius = island.radius * ring;
-        for (let i = 0; i < 24; i += 1) {
-          const angle = (i / 24) * Math.PI * 2 + ring * 5.3;
-          const tx = Math.floor(island.x + Math.cos(angle) * radius);
-          const ty = Math.floor(island.y + Math.sin(angle) * radius);
-          if (!spawnWildRobotAt(world, tx, ty)) continue;
-          return true;
+    }
+
+    const ringWidth = Math.max(6, world.size * ABANDONED_ROBOT_OUTER_RING_RATIO);
+    const outerSet = new Set(outerIslands);
+    for (let pass = 0; pass < 2; pass += 1) {
+      for (let y = 1; y < world.size - 1; y += 1) {
+        for (let x = 1; x < world.size - 1; x += 1) {
+          if (!canPlaceWildRobotTile(world, x, y)) continue;
+          const island = getIslandForTile(world, x, y);
+          if (!island || isSpawnIsland(world, island)) continue;
+          if (outerSet.size > 0 && !outerSet.has(island)) continue;
+          const edgeDist = Math.min(x, y, world.size - x, world.size - y);
+          if (pass === 0 && edgeDist > ringWidth) continue;
+          if (spawnWildRobotAt(world, x, y)) return true;
         }
       }
     }
     return false;
+  }
+
+  /** Ensures exactly one designated abandoned robot exists, and that it lives on an outer island. */
+  function ensureSingleWildSpawnRobot(world = state.surfaceWorld || state.world) {
+    if (!world || !Array.isArray(state.structures)) return false;
+    const outerCandidateSet = new Set(getOutermostIslandsForWildRobot(world));
+    const wildRobots = getWildSpawnRobots()
+      .slice()
+      .sort((a, b) => (a.tx - b.tx) || (a.ty - b.ty) || ((a.id || 0) - (b.id || 0)));
+    let changed = false;
+    let keep = null;
+
+    for (const structure of wildRobots) {
+      if (!keep) {
+        keep = structure;
+        continue;
+      }
+      if (!structure.meta) structure.meta = {};
+      if (structure.meta.wildSpawn) {
+        structure.meta.wildSpawn = false;
+        changed = true;
+      }
+    }
+
+    if (keep && !isWildRobotPlacementValid(world, keep, outerCandidateSet)) {
+      if (!keep.meta) keep.meta = {};
+      if (keep.meta.wildSpawn) {
+        keep.meta.wildSpawn = false;
+        changed = true;
+      }
+      keep = null;
+    }
+
+    if (!keep) {
+      const spawned = spawnGuaranteedOuterWildRobot(world);
+      changed = changed || spawned;
+    }
+
+    return changed;
+  }
+
+  function ensureGuaranteedOuterWildRobot(world) {
+    return ensureSingleWildSpawnRobot(world);
   }
 
   function startNewGame(seedStr) {
@@ -8976,6 +9482,7 @@
     state.isNight = false;
     state.checkpointTimer = 0;
     state.surfaceSpawnTimer = MONSTER.spawnInterval;
+    state.surfaceGuardianSpawnTimer = SURFACE_GUARDIAN_CONFIG.spawnInterval;
     state.gameWon = false;
     state.winSequencePlayed = false;
     state.winTimer = 0;
@@ -9011,11 +9518,13 @@
     state.targetResource = null;
     state.activeStation = null;
     state.activeChest = null;
+    state.ambientFish = [];
+    state.ambientFishSpawnTimer = 0;
 
     const benchSpot = findBenchSpot(world, spawn);
     addStructure("bench", benchSpot.tx, benchSpot.ty, { meta: { spawnBench: true } });
     seedSurfaceVillages(world);
-    ensureRareOuterWildRobot(world);
+    ensureGuaranteedOuterWildRobot(world);
 
     state.dirty = true;
     saveStatus.textContent = "Saving...";
@@ -9045,10 +9554,13 @@
       applyResourceStates(world, preparedSave.resourceStates);
       applyRespawnTasks(world, preparedSave.respawnTasks);
       applyDrops(world, preparedSave.drops);
+      const savedSurfaceMonsters = Array.isArray(preparedSave.monsters)
+        ? preparedSave.monsters
+        : world.monsters;
+      world.monsters = buildMonstersFromSnapshot(world.monsters, savedSurfaceMonsters, world);
+      world.nextMonsterId = world.monsters.reduce((max, monster) => Math.max(max, (monster.id || 0) + 1), 1);
       applyAnimals(world, preparedSave.animals);
       applyVillagers(world, preparedSave.villagers);
-      world.monsters = world.monsters || [];
-      world.nextMonsterId = world.nextMonsterId || 1;
       world.projectiles = [];
       world.nextProjectileId = 1;
       world.animals = world.animals || [];
@@ -9064,18 +9576,30 @@
       if (Array.isArray(world.caves)) {
         for (const cave of world.caves) {
           const savedCave = preparedSave.caves?.find((entry) => entry.id === cave.id);
+          cave.hostileBlocked = savedCave && typeof savedCave.hostileBlocked === "boolean"
+            ? !!savedCave.hostileBlocked
+            : shouldBlockCaveHostilesForSurfaceTile(world, cave.tx, cave.ty);
           if (savedCave) {
             applyResourceStates(cave.world, savedCave.resourceStates);
             applyRespawnTasks(cave.world, savedCave.respawnTasks);
             applyDrops(cave.world, savedCave.drops);
+            const savedCaveMonsters = Array.isArray(savedCave.monsters)
+              ? savedCave.monsters
+              : cave.world.monsters;
+            cave.world.monsters = buildMonstersFromSnapshot(cave.world.monsters, savedCaveMonsters, cave.world);
+            cave.world.nextMonsterId = cave.world.monsters.reduce((max, monster) => Math.max(max, (monster.id || 0) + 1), 1);
           } else {
             cave.world.drops = cave.world.drops || [];
             cave.world.respawnTasks = cave.world.respawnTasks || [];
+            cave.world.monsters = cave.world.monsters || [];
+            cave.world.nextMonsterId = cave.world.nextMonsterId || 1;
           }
-          cave.world.monsters = cave.world.monsters || [];
-          cave.world.nextMonsterId = cave.world.nextMonsterId || 1;
           cave.world.projectiles = [];
           cave.world.nextProjectileId = 1;
+          if (cave.hostileBlocked) {
+            cave.world.monsters = [];
+            cave.world.projectiles = [];
+          }
           cave.world.villagers = cave.world.villagers || [];
           cave.world.nextVillagerId = cave.world.nextVillagerId || 1;
         }
@@ -9115,9 +9639,6 @@
           if (structure.type === "robot") structure.storage = sanitizeInventorySlots(structure.storage, ROBOT_STORAGE_SIZE);
         }
       }
-
-      ensureSingleWildSpawnRobot();
-
       const spawnTile = findSpawnTile(world);
       state.player = {
         x: preparedSave.player?.x ?? (spawnTile.x + 0.5) * CONFIG.tileSize,
@@ -9142,6 +9663,8 @@
       state.activeHouse = null;
       state.housePlayer = null;
       state.spawnTile = spawnTile;
+      state.ambientFish = [];
+      state.ambientFishSpawnTimer = 0;
       state.timeOfDay = typeof preparedSave.timeOfDay === "number" ? preparedSave.timeOfDay : 0;
       state.checkpointTimer = 0;
       state.animalVocalTimer = 2.4 + Math.random() * 1.8;
@@ -9151,6 +9674,7 @@
       state.winPlayerPos = state.player ? { x: state.player.x, y: state.player.y } : null;
       state.isNight = state.timeOfDay >= CONFIG.dayLength;
       state.surfaceSpawnTimer = MONSTER.spawnInterval;
+      state.surfaceGuardianSpawnTimer = SURFACE_GUARDIAN_CONFIG.spawnInterval;
       state.inCave = !!preparedSave.player?.inCave;
       state.activeCave = null;
       state.returnPosition = preparedSave.player?.returnPosition ?? null;
@@ -9196,7 +9720,7 @@
 
       const villagesAdded = ensureSurfaceVillagePresence(world);
       const villagersAdded = ensureVillageVillagers(world);
-      const wildRobotAdded = ensureRareOuterWildRobot(world);
+      const wildRobotAdded = ensureGuaranteedOuterWildRobot(world);
 
       state.targetResource = null;
       state.activeStation = null;
@@ -9864,10 +10388,24 @@
     return false;
   }
 
+  function shouldBlockCaveHostilesForSurfaceTile(world, tx, ty) {
+    return isMushroomBiomeAtTile(world, tx, ty);
+  }
+
+  function isCaveHostilesBlocked(surfaceWorld, cave) {
+    if (!surfaceWorld || !cave) return false;
+    if (typeof cave.hostileBlocked === "boolean") return cave.hostileBlocked;
+    cave.hostileBlocked = shouldBlockCaveHostilesForSurfaceTile(surfaceWorld, cave.tx, cave.ty);
+    return cave.hostileBlocked;
+  }
+
   function addSurfaceCave(world, tx, ty, preferredId = null, options = null) {
     if (!world) return null;
     if (!Array.isArray(world.caves)) world.caves = [];
     const spawnedByPlayer = !!options?.spawnedByPlayer;
+    const hostileBlocked = typeof options?.hostileBlocked === "boolean"
+      ? options.hostileBlocked
+      : shouldBlockCaveHostilesForSurfaceTile(world, tx, ty);
     const seedInt = world.seedInt ?? seedToInt(world.seed || "island");
     const usedIds = new Set(world.caves.map((entry) => entry.id));
     let id = typeof preferredId === "number" ? preferredId : 0;
@@ -9881,7 +10419,8 @@
       tx,
       ty,
       spawnedByPlayer,
-      world: generateCaveWorld(seedInt, id),
+      hostileBlocked,
+      world: generateCaveWorld(seedInt, id, { spawnHostiles: !hostileBlocked }),
     };
     world.caves.push(cave);
     return cave;
@@ -10339,11 +10878,18 @@
         const idx = tileIndex(resource.tx, resource.ty, world.size);
         world.resourceGrid[idx] = -1;
         if (!Array.isArray(world.respawnTasks)) world.respawnTasks = [];
-        if (resource.type === "rock" || resource.type === "grass" || resource.type === "biomeStone") {
-          const respawnType = resource.type === "biomeStone" ? "biomeStone" : resource.type;
+        if (
+          resource.type === "rock"
+          || resource.type === "grass"
+          || resource.type === "biomeStone"
+          || resource.type === "ore"
+        ) {
+          const respawnType = resource.type === "biomeStone"
+            ? "biomeStone"
+            : (resource.type === "ore" ? "ore" : resource.type);
           const respawnDelay = respawnType === "biomeStone"
             ? getBiomeStoneRespawnDelay()
-            : (respawnType === "grass" ? RESPAWN.grass : RESPAWN.rock);
+            : (respawnType === "grass" ? RESPAWN.grass : (respawnType === "ore" ? RESPAWN.ore : RESPAWN.rock));
           const exists = world.respawnTasks.some((task) => task?.type === respawnType && task.id === resource.id);
           if (!exists) {
             world.respawnTasks.push({
@@ -10938,6 +11484,17 @@
     if (!structure) return;
     if (structure.type === "robot") {
       ensureRobotMeta(structure);
+      if (structure.meta?.wildSpawn) {
+        if (netIsClientReady()) {
+          setPrompt("Abandoned robot surveyed", 1.1);
+        } else {
+          const discovered = setRobotDiscovered(structure, true);
+          if (discovered) {
+            setPrompt("Abandoned robot surveyed", 1.1);
+            markDirty();
+          }
+        }
+      }
       if (netIsClientReady()) {
         sendRobotCommand(structure, "ping");
       } else {
@@ -12362,6 +12919,19 @@
           markDirty();
         }
       }
+      if (res.removed && res.type === "ore") {
+        const hasTask = world.respawnTasks.some((task) => task?.type === "ore" && task.id === res.id);
+        if (!hasTask) {
+          world.respawnTasks.push({
+            type: "ore",
+            id: res.id,
+            tx: res.tx,
+            ty: res.ty,
+            timer: RESPAWN.ore,
+          });
+          markDirty();
+        }
+      }
       if (res.removed) continue;
     }
 
@@ -12731,15 +13301,83 @@
     }
   }
 
+  function normalizeAnimalType(type) {
+    if (type === "goat" || type === "boar" || type === "green_cow") return type;
+    return "boar";
+  }
+
+  function getAnimalTypeConfig(type) {
+    const normalizedType = normalizeAnimalType(type);
+    if (normalizedType === "goat") {
+      return {
+        type: normalizedType,
+        hp: 4,
+        speed: 48,
+        color: "#d2cab8",
+        drop: { raw_meat: 1, hide: 1 },
+      };
+    }
+    if (normalizedType === "green_cow") {
+      return {
+        type: normalizedType,
+        hp: 7,
+        speed: 40,
+        color: "#6db56f",
+        drop: { medicine: 2, hide: 1 },
+      };
+    }
+    return {
+      type: "boar",
+      hp: 5,
+      speed: 42,
+      color: "#9f8160",
+      drop: { raw_meat: 2, hide: 1 },
+    };
+  }
+
+  function getAnimalIdleSfx(type) {
+    const normalizedType = normalizeAnimalType(type);
+    if (normalizedType === "goat") return "animalGoatIdle";
+    if (normalizedType === "boar") return "animalBoarIdle";
+    return "animalCowIdle";
+  }
+
+  function getAnimalHurtSfx(type) {
+    const normalizedType = normalizeAnimalType(type);
+    if (normalizedType === "goat") return "animalGoatHurt";
+    if (normalizedType === "boar") return "animalBoarHurt";
+    return "animalCowHurt";
+  }
+
+  function getAnimalDeathSfx(type) {
+    const normalizedType = normalizeAnimalType(type);
+    if (normalizedType === "goat") return "animalGoatDeath";
+    if (normalizedType === "boar") return "animalBoarDeath";
+    return "animalCowDeath";
+  }
+
+  function playAnimalReactionSfx(world, animal, event = "hurt") {
+    if (!animal) return;
+    const kind = event === "death"
+      ? getAnimalDeathSfx(animal.type)
+      : getAnimalHurtSfx(animal.type);
+    if (!kind) return;
+    if (world && Number.isFinite(animal.x) && Number.isFinite(animal.y)) {
+      if (!shouldPlayWorldSfx(world, animal.x, animal.y)) return;
+      const dist = Math.hypot((animal.x ?? 0) - (state.player?.x ?? 0), (animal.y ?? 0) - (state.player?.y ?? 0));
+      playSfx(kind, { intensity: event === "death" ? 0.9 : 0.72, distance: dist });
+      return;
+    }
+    playSfx(kind, { intensity: event === "death" ? 0.9 : 0.72 });
+  }
+
   function spawnAnimal(world, tx, ty, type = "boar") {
     if (!world.animals) world.animals = [];
     if (!world.nextAnimalId) world.nextAnimalId = 1;
-    const cfg = type === "goat"
-      ? { hp: 4, speed: 48, color: "#d2cab8", drop: { raw_meat: 1, hide: 1 } }
-      : { hp: 5, speed: 42, color: "#9f8160", drop: { raw_meat: 2, hide: 1 } };
+    const cfg = getAnimalTypeConfig(type);
     world.animals.push({
       id: world.nextAnimalId++,
-      type,
+      type: cfg.type,
       x: (tx + 0.5) * CONFIG.tileSize,
       y: (ty + 0.5) * CONFIG.tileSize,
       hp: cfg.hp,
@@ -12797,6 +13435,12 @@
     return true;
   }
 
+  function pickSurfaceAnimalType(world, tx, ty, rng = Math.random) {
+    const biomeId = getSurfaceBiomeIdAtTile(world, tx, ty);
+    if (isMushroomBiomeId(biomeId)) return "green_cow";
+    return rng() < 0.4 ? "goat" : "boar";
+  }
+
   function seedSurfaceAnimals(world, desired = 20) {
     if (!world) return;
     if (!world.animals) world.animals = [];
@@ -12814,7 +13458,7 @@
         return Math.hypot(ax - tx, ay - ty) < 5;
       });
       if (tooClose) continue;
-      spawnAnimal(world, tx, ty, Math.random() < 0.4 ? "goat" : "boar");
+      spawnAnimal(world, tx, ty, pickSurfaceAnimalType(world, tx, ty));
     }
   }
 
@@ -12822,6 +13466,7 @@
     const biomeId = Number.isInteger(island?.biomeId)
       ? island.biomeId
       : getSurfaceBiomeIdAtTile(world, tx, ty);
+    if (isMushroomBiomeId(biomeId)) return null;
     const biome = BIOMES[biomeId] || BIOMES[0];
     let type = pickMonsterTypeForBiome(biome, Math.random, state.isNight);
     if (forcePoison && state.isNight && biome.key === "marsh") type = "marsh_stalker";
@@ -12839,11 +13484,16 @@
     return options;
   }
 
-  function canSpawnMonsterAt(world, tx, ty, isCave) {
+  function shouldBlockSurfaceHostilesAtTile(world, tx, ty) {
+    return isMushroomBiomeAtTile(world, tx, ty);
+  }
+
+  function canSpawnMonsterAt(world, tx, ty, isCave, options = null) {
     if (!inBounds(tx, ty, world.size)) return false;
     const idx = tileIndex(tx, ty, world.size);
     if (!world.tiles[idx]) return false;
     if (!isCave) {
+      if (!options?.allowMushroom && shouldBlockSurfaceHostilesAtTile(world, tx, ty)) return false;
       if (getStructureAt(tx, ty)) return false;
       if (getCaveAt(world, tx, ty)) return false;
     }
@@ -12862,7 +13512,9 @@
       const tx = Math.floor((baseX + Math.cos(angle) * dist) / CONFIG.tileSize);
       const ty = Math.floor((baseY + Math.sin(angle) * dist) / CONFIG.tileSize);
       if (!canSpawnMonsterAt(world, tx, ty, false)) continue;
-      spawnMonster(world, tx, ty, buildSurfaceMonsterSpawnOptions(world, tx, ty, null));
+      const spawnOptions = buildSurfaceMonsterSpawnOptions(world, tx, ty, null);
+      if (!spawnOptions) continue;
+      spawnMonster(world, tx, ty, spawnOptions);
       break;
     }
   }
@@ -12898,6 +13550,7 @@
 
   function spawnSurfaceMonsterOnIsland(world, island, players) {
     if (!world || !island) return false;
+    if (isMushroomBiomeId(getIslandBiomeId(world, island))) return false;
     const cx = island.x;
     const cy = island.y;
     const maxRadius = Math.max(4, Math.floor(island.radius * 0.82));
@@ -12918,10 +13571,115 @@
         (player) => Math.hypot(player.x - wx, player.y - wy) < (MONSTER.spawnMinTiles * CONFIG.tileSize * 0.55)
       );
       if (tooClose) continue;
-      spawnMonster(world, tx, ty, buildSurfaceMonsterSpawnOptions(world, tx, ty, island, forcePoison));
+      const spawnOptions = buildSurfaceMonsterSpawnOptions(world, tx, ty, island, forcePoison);
+      if (!spawnOptions) continue;
+      spawnMonster(world, tx, ty, spawnOptions);
       return true;
     }
     return false;
+  }
+
+  function countSurfaceGuardians(world) {
+    if (!world || !Array.isArray(world.monsters)) return 0;
+    return world.monsters.reduce((count, monster) => (
+      count + Number(monster && monster.hp > 0 && isGuardianMonsterType(monster.type))
+    ), 0);
+  }
+
+  function countGuardiansOnIsland(world, island) {
+    if (!world || !island || !Array.isArray(world.monsters)) return 0;
+    const centerX = (island.x + 0.5) * CONFIG.tileSize;
+    const centerY = (island.y + 0.5) * CONFIG.tileSize;
+    const searchRadius = Math.max(CONFIG.tileSize * 3.5, island.radius * CONFIG.tileSize * 1.12);
+    return world.monsters.reduce((count, monster) => (
+      count + Number(
+        monster
+          && monster.hp > 0
+          && isGuardianMonsterType(monster.type)
+          && Math.hypot(monster.x - centerX, monster.y - centerY) <= searchRadius
+      )
+    ), 0);
+  }
+
+  function pickGuardianSpawnTileOnIsland(world, island, players) {
+    if (!world || !island) return null;
+    const cx = island.x;
+    const cy = island.y;
+    const maxRadius = Math.max(4, Math.floor(island.radius * 0.82));
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      const angle = Math.random() * Math.PI * 2;
+      const dist = (0.15 + Math.random() * 0.8) * maxRadius;
+      const tx = Math.floor(cx + Math.cos(angle) * dist);
+      const ty = Math.floor(cy + Math.sin(angle) * dist);
+      if (!canSpawnMonsterAt(world, tx, ty, false)) continue;
+      const wx = (tx + 0.5) * CONFIG.tileSize;
+      const wy = (ty + 0.5) * CONFIG.tileSize;
+      const tooCloseToPlayer = players.some(
+        (player) => Math.hypot(player.x - wx, player.y - wy) < (SURFACE_GUARDIAN_CONFIG.minPlayerDistanceTiles * CONFIG.tileSize)
+      );
+      if (tooCloseToPlayer) continue;
+      return { tx, ty };
+    }
+    return null;
+  }
+
+  function spawnSurfaceGuardianOnIsland(world, island, players) {
+    if (!world || !island) return false;
+    const biomeId = getIslandBiomeId(world, island);
+    const guardianType = getGuardianTypeForBiomeId(biomeId, island);
+    if (!guardianType) return false;
+    // Explicit design rule: plains wolves never spawn on the player spawn island.
+    if (guardianType === "wolf" && isSpawnIsland(world, island)) return false;
+    if (countGuardiansOnIsland(world, island) >= SURFACE_GUARDIAN_CONFIG.maxPerIsland) return false;
+    const tile = pickGuardianSpawnTileOnIsland(world, island, players);
+    if (!tile) return false;
+    spawnMonster(world, tile.tx, tile.ty, { type: guardianType });
+    return true;
+  }
+
+  function despawnSurfaceHostilesOnMushroom(world) {
+    if (!world || !Array.isArray(world.monsters)) return 0;
+    let removed = 0;
+    for (let i = world.monsters.length - 1; i >= 0; i -= 1) {
+      const monster = world.monsters[i];
+      if (!monster || monster.hp <= 0) continue;
+      const tx = Math.floor(monster.x / CONFIG.tileSize);
+      const ty = Math.floor(monster.y / CONFIG.tileSize);
+      if (!shouldBlockSurfaceHostilesAtTile(world, tx, ty)) continue;
+      world.monsters.splice(i, 1);
+      removed += 1;
+    }
+    return removed;
+  }
+
+  function spawnSurfaceGuardiansForActiveIslands(world, players) {
+    if (!world || !Array.isArray(players) || players.length === 0) return;
+    const activeIslands = getSurfaceActiveIslands(world, players);
+    if (activeIslands.length === 0) return;
+    if (countSurfaceGuardians(world) >= SURFACE_GUARDIAN_CONFIG.maxTotal) return;
+
+    const targetIslands = activeIslands.filter((island) => {
+      if (!island || isSpawnIsland(world, island)) return false;
+      const biomeId = getIslandBiomeId(world, island);
+      const guardianType = getGuardianTypeForBiomeId(biomeId, island);
+      if (!guardianType) return false;
+      if (guardianType === "wolf" && isSpawnIsland(world, island)) return false;
+      return true;
+    });
+    if (targetIslands.length === 0) return;
+
+    const budget = Math.max(1, Math.min(3, Math.ceil(targetIslands.length * 0.3)));
+    const startIndex = Math.floor(Math.random() * targetIslands.length);
+    let spawned = 0;
+
+    for (let i = 0; i < targetIslands.length; i += 1) {
+      if (spawned >= budget) break;
+      if (countSurfaceGuardians(world) >= SURFACE_GUARDIAN_CONFIG.maxTotal) break;
+      const island = targetIslands[(startIndex + i) % targetIslands.length];
+      if (spawnSurfaceGuardianOnIsland(world, island, players)) {
+        spawned += 1;
+      }
+    }
   }
 
   function spawnSurfaceMonstersForActiveIslands(world, players) {
@@ -12934,14 +13692,20 @@
     }
 
     const dynamicMax = Math.max(MONSTER.surfaceMax, activeIslands.length * 5);
-    if (world.monsters.length >= dynamicMax) return;
+    const nonGuardianCount = (world.monsters || []).reduce((count, monster) => (
+      count + Number(monster && monster.hp > 0 && !isGuardianMonsterType(monster.type))
+    ), 0);
+    if (nonGuardianCount >= dynamicMax) return;
     const spawnBudget = Math.max(2, Math.min(8, Math.ceil(activeIslands.length * 0.75)));
     const startIndex = Math.floor(Math.random() * activeIslands.length);
     let spawned = 0;
 
     for (let i = 0; i < activeIslands.length; i += 1) {
       if (spawned >= spawnBudget) break;
-      if (world.monsters.length >= dynamicMax) break;
+      const currentNonGuardianCount = (world.monsters || []).reduce((count, monster) => (
+        count + Number(monster && monster.hp > 0 && !isGuardianMonsterType(monster.type))
+      ), 0);
+      if (currentNonGuardianCount >= dynamicMax) break;
       const island = activeIslands[(startIndex + i) % activeIslands.length];
       const shouldTry = activeIslands.length === 1 || Math.random() < 0.7;
       if (!shouldTry) continue;
@@ -13060,8 +13824,10 @@
     targetAnimal.hitTimer = 0.2;
     targetAnimal.fleeTimer = 2.4;
     playSfx("hit");
+    playAnimalReactionSfx(state.surfaceWorld || combatWorld, targetAnimal, "hurt");
     if (targetAnimal.hp <= 0) {
       targetAnimal.hp = 0;
+      playAnimalReactionSfx(state.surfaceWorld || combatWorld, targetAnimal, "death");
       const drop = targetAnimal.drop || { raw_meat: 1 };
       for (const [itemId, qty] of Object.entries(drop)) {
         spawnDrop(itemId, qty, targetAnimal.x, targetAnimal.y, state.surfaceWorld || combatWorld);
@@ -13285,6 +14051,12 @@
 
   function igniteMonsterForDay(monster) {
     if (!monster) return;
+    if (isDayImmuneMonster(monster)) {
+      monster.dayBurning = false;
+      monster.burnTimer = 0;
+      monster.burnDuration = 0;
+      return;
+    }
     if (monster.dayBurning && (monster.burnTimer ?? 0) > 0) return;
     const duration = MONSTER_DAY_BURN.durationMin
       + Math.random() * (MONSTER_DAY_BURN.durationMax - MONSTER_DAY_BURN.durationMin);
@@ -13368,6 +14140,13 @@
 
       const nextX = prevX + (projectile.vx || 0) * dt;
       const nextY = prevY + (projectile.vy || 0) * dt;
+      if (
+        isSurface
+        && shouldBlockSurfaceHostilesAtTile(world, Math.floor(nextX / CONFIG.tileSize), Math.floor(nextY / CONFIG.tileSize))
+      ) {
+        world.projectiles.splice(i, 1);
+        continue;
+      }
       if (!isWalkableAtWorld(world, nextX, nextY)) {
         if (canHearProjectile) {
           playSfx("monsterAttackMiss", {
@@ -13527,6 +14306,7 @@
     if (!world.nextProjectileId) world.nextProjectileId = 1;
 
     if (isSurface) {
+      despawnSurfaceHostilesOnMushroom(world);
       if (players.length === 0) {
         // No surface players active: clear transient arrows so they do not freeze mid-flight.
         world.projectiles = [];
@@ -13538,8 +14318,13 @@
           spawnSurfaceMonstersForActiveIslands(world, players);
           state.surfaceSpawnTimer = MONSTER.spawnInterval;
         }
-      } else {
+      } else if (Array.isArray(world.monsters) && world.monsters.length > 0) {
         igniteSurfaceMonstersForDay(world);
+      }
+      state.surfaceGuardianSpawnTimer -= dt;
+      if (state.surfaceGuardianSpawnTimer <= 0) {
+        spawnSurfaceGuardiansForActiveIslands(world, players);
+        state.surfaceGuardianSpawnTimer = SURFACE_GUARDIAN_CONFIG.spawnInterval;
       }
     }
 
@@ -13561,8 +14346,9 @@
 
       const { target, targetDist } = getNearestMonsterTarget(monster, players, isSurface);
       const poisonPayload = getMonsterPoisonPayload(monster);
+      const dayImmune = isDayImmuneMonster(monster);
 
-      if (isSurface && !state.isNight) {
+      if (isSurface && !state.isNight && !dayImmune) {
         igniteMonsterForDay(monster);
         monster.burnTimer = Math.max(0, (monster.burnTimer ?? 0) - dt);
         const aggroRange = monster.aggroRange ?? MONSTER.aggroRange;
@@ -13640,6 +14426,12 @@
           world.monsters.splice(i, 1);
         }
         continue;
+      }
+
+      if (isSurface && !state.isNight && dayImmune) {
+        monster.dayBurning = false;
+        monster.burnTimer = 0;
+        monster.burnDuration = 0;
       }
 
       if (isSurface && targetDist > Math.max(viewWidth, viewHeight) + MONSTER.aggroRange) {
@@ -13742,6 +14534,15 @@
 
     if (Array.isArray(surface.caves)) {
       for (const cave of surface.caves) {
+        if (isCaveHostilesBlocked(surface, cave)) {
+          if (Array.isArray(cave.world?.monsters) && cave.world.monsters.length > 0) {
+            cave.world.monsters = [];
+          }
+          if (Array.isArray(cave.world?.projectiles) && cave.world.projectiles.length > 0) {
+            cave.world.projectiles = [];
+          }
+          continue;
+        }
         const cavePlayers = getPlayersForWorld(cave.world);
         if (cavePlayers.length > 0) {
           updateMonstersInWorld(cave.world, dt, cavePlayers, false);
@@ -13765,7 +14566,7 @@
           if (!canSpawnAnimalAt(world, tx, ty)) continue;
           const spawnScale = getSurfaceAnimalSpawnScale(world, tx, ty);
           if (spawnScale <= 0 || Math.random() > spawnScale) continue;
-          spawnAnimal(world, tx, ty, Math.random() < 0.4 ? "goat" : "boar");
+          spawnAnimal(world, tx, ty, pickSurfaceAnimalType(world, tx, ty));
           break;
         }
       }
@@ -13815,6 +14616,114 @@
       }
       animal.renderX = animal.x;
       animal.renderY = animal.y;
+    }
+  }
+
+  function getAmbientFishSpawnDelay() {
+    return AMBIENT_FISH_CONFIG.spawnIntervalMin
+      + Math.random() * (AMBIENT_FISH_CONFIG.spawnIntervalMax - AMBIENT_FISH_CONFIG.spawnIntervalMin);
+  }
+
+  function canSpawnAmbientFishAt(world, x, y) {
+    if (!world || !Number.isFinite(x) || !Number.isFinite(y)) return false;
+    const tx = Math.floor(x / CONFIG.tileSize);
+    const ty = Math.floor(y / CONFIG.tileSize);
+    if (!inBounds(tx, ty, world.size)) return false;
+    const idx = tileIndex(tx, ty, world.size);
+    return world.tiles[idx] === 0;
+  }
+
+  function spawnAmbientFishNearCamera(world) {
+    if (!world || state.ambientFish.length >= AMBIENT_FISH_CONFIG.maxFish) return;
+    const camera = getCamera();
+    const minX = camera.x - CONFIG.tileSize * 2;
+    const minY = camera.y - CONFIG.tileSize * 2;
+    const maxX = camera.x + viewWidth + CONFIG.tileSize * 2;
+    const maxY = camera.y + viewHeight + CONFIG.tileSize * 2;
+
+    for (let attempt = 0; attempt < 14; attempt += 1) {
+      const x = minX + Math.random() * (maxX - minX);
+      const y = minY + Math.random() * (maxY - minY);
+      if (!canSpawnAmbientFishAt(world, x, y)) continue;
+
+      const speed = AMBIENT_FISH_CONFIG.speedMin
+        + Math.random() * (AMBIENT_FISH_CONFIG.speedMax - AMBIENT_FISH_CONFIG.speedMin);
+      const angle = Math.random() * Math.PI * 2;
+      const life = AMBIENT_FISH_CONFIG.lifeMin
+        + Math.random() * (AMBIENT_FISH_CONFIG.lifeMax - AMBIENT_FISH_CONFIG.lifeMin);
+      state.ambientFish.push({
+        x,
+        y,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed,
+        turnSpeed: (Math.random() < 0.5 ? -1 : 1) * (0.6 + Math.random() * 1.4),
+        life,
+        maxLife: life,
+        size: AMBIENT_FISH_CONFIG.sizeMin
+          + Math.random() * (AMBIENT_FISH_CONFIG.sizeMax - AMBIENT_FISH_CONFIG.sizeMin),
+        phase: Math.random() * Math.PI * 2,
+      });
+      break;
+    }
+  }
+
+  function updateAmbientFish(dt) {
+    if (state.inCave || state.player?.inHut) {
+      if (state.ambientFish.length > 0) state.ambientFish = [];
+      state.ambientFishSpawnTimer = 0;
+      return;
+    }
+    const world = state.surfaceWorld || state.world;
+    if (!world || world !== state.surfaceWorld) {
+      state.ambientFish = [];
+      state.ambientFishSpawnTimer = 0;
+      return;
+    }
+
+    state.ambientFishSpawnTimer -= dt;
+    if (state.ambientFishSpawnTimer <= 0) {
+      state.ambientFishSpawnTimer = getAmbientFishSpawnDelay();
+      if (Math.random() < 0.45) {
+        spawnAmbientFishNearCamera(world);
+      }
+    }
+
+    const camera = getCamera();
+    const minX = camera.x - CONFIG.tileSize * 5;
+    const minY = camera.y - CONFIG.tileSize * 5;
+    const maxX = camera.x + viewWidth + CONFIG.tileSize * 5;
+    const maxY = camera.y + viewHeight + CONFIG.tileSize * 5;
+
+    for (let i = state.ambientFish.length - 1; i >= 0; i -= 1) {
+      const fish = state.ambientFish[i];
+      if (!fish) {
+        state.ambientFish.splice(i, 1);
+        continue;
+      }
+      fish.life -= dt;
+      if (fish.life <= 0) {
+        state.ambientFish.splice(i, 1);
+        continue;
+      }
+      fish.phase += dt * fish.turnSpeed;
+      const speed = Math.hypot(fish.vx, fish.vy) || AMBIENT_FISH_CONFIG.speedMin;
+      const dir = Math.atan2(fish.vy, fish.vx) + Math.sin(fish.phase) * 0.12 * dt * 60;
+      fish.vx = Math.cos(dir) * speed;
+      fish.vy = Math.sin(dir) * speed;
+      fish.x += fish.vx * dt;
+      fish.y += fish.vy * dt;
+
+      if (!canSpawnAmbientFishAt(world, fish.x, fish.y)) {
+        state.ambientFish.splice(i, 1);
+        continue;
+      }
+      if (fish.x < minX || fish.y < minY || fish.x > maxX || fish.y > maxY) {
+        state.ambientFish.splice(i, 1);
+      }
+    }
+
+    if (state.ambientFish.length > AMBIENT_FISH_CONFIG.maxFish) {
+      state.ambientFish.length = AMBIENT_FISH_CONFIG.maxFish;
     }
   }
 
@@ -15150,7 +16059,11 @@
       } else if (state.activeStation) {
         setPrompt("Station open");
       } else if (state.nearStation) {
-        setPrompt(`Press E to use ${STRUCTURE_DEFS[state.nearStation.type]?.name}`);
+        if (state.nearStation.type === "robot" && state.nearStation.meta?.wildSpawn) {
+          setPrompt("Press E to inspect abandoned robot");
+        } else {
+          setPrompt(`Press E to use ${STRUCTURE_DEFS[state.nearStation.type]?.name}`);
+        }
       } else if (state.nearDock) {
         setPrompt("Press E to set dock checkpoint");
       } else if (state.nearBed && state.isNight) {
@@ -15277,6 +16190,7 @@
     while (worldDtRemaining > 0.0001) {
       const worldStep = Math.min(worldDtRemaining, 0.05);
       updateDayNight(worldStep);
+      updateAmbientFish(worldStep);
       updateResources(worldStep);
       updateMonsters(worldStep);
       updateAnimals(worldStep);
@@ -15407,6 +16321,19 @@
         ctx.fillStyle = "rgba(127, 182, 154, 0.16)";
         ctx.fillRect(x + 5, y + 6, 2, 9);
         ctx.fillRect(x + 9, y + 5, 2, 10);
+      }
+    } else if (biome.key === "mushroom") {
+      if (detail < 0.36) {
+        ctx.fillStyle = "rgba(228, 186, 244, 0.18)";
+        ctx.beginPath();
+        ctx.arc(x + 7, y + 8, 3, 0, Math.PI * 2);
+        ctx.arc(x + 12, y + 13, 2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      if (detail > 0.72) {
+        ctx.fillStyle = "rgba(114, 58, 132, 0.2)";
+        ctx.fillRect(x + 4, y + 6, 2, 7);
+        ctx.fillRect(x + 10, y + 5, 2, 8);
       }
     } else if (detail < 0.2) {
       ctx.fillStyle = "rgba(182, 215, 146, 0.15)";
@@ -15609,6 +16536,97 @@
       ctx.arc(screen.x - 3, screen.y - 2, 1.7, 0, Math.PI * 2);
       ctx.arc(screen.x + 3, screen.y - 2, 1.7, 0, Math.PI * 2);
       ctx.fill();
+    } else if (type === "polar_bear") {
+      ctx.fillStyle = tintColor(baseColor, -0.08);
+      ctx.beginPath();
+      ctx.ellipse(screen.x - 1, screen.y + 1, 13, 9.5, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = baseColor;
+      ctx.beginPath();
+      ctx.arc(screen.x + 9, screen.y - 2, 6.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#f7fcff";
+      ctx.beginPath();
+      ctx.arc(screen.x - 4, screen.y - 4, 5, 0, Math.PI * 2);
+      ctx.arc(screen.x + 2, screen.y - 5, 4.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#2a313b";
+      ctx.beginPath();
+      ctx.arc(screen.x + 11, screen.y - 3, 1.4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#dce6f1";
+      ctx.fillRect(screen.x - 7, screen.y + 6, 3, 6);
+      ctx.fillRect(screen.x + 1, screen.y + 6, 3, 6);
+      ctx.strokeStyle = "rgba(27, 32, 40, 0.48)";
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.moveTo(screen.x + 13, screen.y + 1);
+      ctx.lineTo(screen.x + 16, screen.y + 3);
+      ctx.stroke();
+    } else if (type === "lion") {
+      ctx.fillStyle = tintColor(baseColor, -0.16);
+      ctx.beginPath();
+      ctx.ellipse(screen.x - 2, screen.y + 1, 12.5, 8.5, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#8f5f2f";
+      ctx.beginPath();
+      ctx.arc(screen.x + 8, screen.y - 2, 7.4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = baseColor;
+      ctx.beginPath();
+      ctx.arc(screen.x + 8.5, screen.y - 2, 4.8, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#ffe0aa";
+      ctx.beginPath();
+      ctx.arc(screen.x + 11, screen.y - 2.5, 1.6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#2e2216";
+      ctx.beginPath();
+      ctx.arc(screen.x + 10.2, screen.y - 3.6, 1.1, 0, Math.PI * 2);
+      ctx.arc(screen.x + 12.2, screen.y - 2.9, 1.1, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "#6f4321";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(screen.x - 12, screen.y + 1);
+      ctx.quadraticCurveTo(screen.x - 17, screen.y + 0, screen.x - 17, screen.y + 6);
+      ctx.stroke();
+      ctx.fillStyle = tintColor(baseColor, -0.24);
+      ctx.fillRect(screen.x - 8, screen.y + 6, 3, 5);
+      ctx.fillRect(screen.x + 0, screen.y + 6, 3, 5);
+    } else if (type === "wolf") {
+      ctx.fillStyle = tintColor(baseColor, -0.14);
+      ctx.beginPath();
+      ctx.ellipse(screen.x - 1, screen.y + 2, 11.5, 7.2, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = baseColor;
+      ctx.beginPath();
+      ctx.arc(screen.x + 8.5, screen.y - 1.6, 5.2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = tintColor(baseColor, -0.34);
+      ctx.beginPath();
+      ctx.moveTo(screen.x + 6, screen.y - 6);
+      ctx.lineTo(screen.x + 7.5, screen.y - 10);
+      ctx.lineTo(screen.x + 9.2, screen.y - 6);
+      ctx.closePath();
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(screen.x + 10, screen.y - 5.7);
+      ctx.lineTo(screen.x + 11.2, screen.y - 10);
+      ctx.lineTo(screen.x + 13.2, screen.y - 5.9);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = "#d84f4f";
+      ctx.beginPath();
+      ctx.arc(screen.x + 9, screen.y - 2.4, 1.2, 0, Math.PI * 2);
+      ctx.arc(screen.x + 11.6, screen.y - 2.1, 1.2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = tintColor(baseColor, -0.42);
+      ctx.lineWidth = 1.3;
+      ctx.beginPath();
+      ctx.moveTo(screen.x - 10, screen.y + 1);
+      ctx.lineTo(screen.x - 15, screen.y - 1);
+      ctx.stroke();
     } else if (type === "brute") {
       ctx.fillStyle = baseColor;
       ctx.beginPath();
@@ -15759,6 +16777,45 @@
     ctx.restore();
   }
 
+  function drawAmbientFish(camera) {
+    if (!Array.isArray(state.ambientFish) || state.ambientFish.length === 0) return;
+    for (const fish of state.ambientFish) {
+      if (!fish || fish.life <= 0 || fish.maxLife <= 0) continue;
+      const alphaLife = clamp(fish.life / fish.maxLife, 0, 1);
+      const alpha = alphaLife * 0.38;
+      if (alpha <= 0.01) continue;
+      const screen = worldToScreen(fish.x, fish.y, camera);
+      if (
+        screen.x < -20
+        || screen.y < -20
+        || screen.x > viewWidth + 20
+        || screen.y > viewHeight + 20
+      ) {
+        continue;
+      }
+      const dir = Math.atan2(fish.vy || 0, fish.vx || 1);
+      const size = fish.size || 6;
+      const bodyLen = size;
+      const bodyWidth = size * 0.38;
+
+      ctx.save();
+      ctx.translate(screen.x, screen.y);
+      ctx.rotate(dir);
+      ctx.fillStyle = `rgba(186, 223, 244, ${alpha})`;
+      ctx.beginPath();
+      ctx.ellipse(0, 0, bodyLen, bodyWidth, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = `rgba(138, 186, 216, ${alpha * 0.92})`;
+      ctx.beginPath();
+      ctx.moveTo(-bodyLen, 0);
+      ctx.lineTo(-bodyLen - bodyWidth * 1.6, bodyWidth * 0.9);
+      ctx.lineTo(-bodyLen - bodyWidth * 1.6, -bodyWidth * 0.9);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+
   function drawAnimal(animal, camera) {
     const drawX = animal.renderX ?? animal.x;
     const drawY = animal.renderY ?? animal.y;
@@ -15771,22 +16828,76 @@
     ) {
       return;
     }
+    const type = normalizeAnimalType(animal.type);
+    const bodyColor = animal.color || "#9f8160";
+    const isGreenCow = type === "green_cow";
+    const bodyW = isGreenCow ? 13 : 11;
+    const bodyH = isGreenCow ? 9 : 8;
+    const headR = isGreenCow ? 5.6 : 5;
     ctx.fillStyle = "rgba(0,0,0,0.2)";
     ctx.beginPath();
-    ctx.ellipse(screen.x, screen.y + 9, 10, 4, 0, 0, Math.PI * 2);
+    ctx.ellipse(screen.x, screen.y + 9, isGreenCow ? 12 : 10, 4, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    ctx.fillStyle = animal.color || "#9f8160";
+    ctx.fillStyle = bodyColor;
     ctx.beginPath();
-    ctx.ellipse(screen.x, screen.y, 11, 8, 0, 0, Math.PI * 2);
+    ctx.ellipse(screen.x, screen.y, bodyW, bodyH, 0, 0, Math.PI * 2);
     ctx.fill();
-    ctx.fillStyle = tintColor(animal.color || "#9f8160", -0.2);
+    ctx.fillStyle = tintColor(bodyColor, -0.2);
     ctx.beginPath();
-    ctx.arc(screen.x + 8, screen.y - 2, 5, 0, Math.PI * 2);
+    ctx.arc(screen.x + 8, screen.y - 2, headR, 0, Math.PI * 2);
     ctx.fill();
+
+    if (type === "boar") {
+      ctx.fillStyle = tintColor(bodyColor, -0.32);
+      ctx.fillRect(screen.x - 7, screen.y + 4, 2, 6);
+      ctx.fillRect(screen.x + 2, screen.y + 4, 2, 6);
+      ctx.fillStyle = "#e9d8bf";
+      ctx.beginPath();
+      ctx.moveTo(screen.x + 11, screen.y - 1);
+      ctx.lineTo(screen.x + 14, screen.y + 0.5);
+      ctx.lineTo(screen.x + 11, screen.y + 2);
+      ctx.closePath();
+      ctx.fill();
+    } else if (type === "goat") {
+      ctx.fillStyle = "#c8bca5";
+      ctx.beginPath();
+      ctx.moveTo(screen.x + 8, screen.y - 6);
+      ctx.lineTo(screen.x + 10, screen.y - 10);
+      ctx.lineTo(screen.x + 11, screen.y - 5);
+      ctx.closePath();
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(screen.x + 4, screen.y - 6);
+      ctx.lineTo(screen.x + 5, screen.y - 10);
+      ctx.lineTo(screen.x + 7, screen.y - 5);
+      ctx.closePath();
+      ctx.fill();
+    } else if (isGreenCow) {
+      ctx.fillStyle = "rgba(95, 52, 116, 0.34)";
+      ctx.beginPath();
+      ctx.ellipse(screen.x - 3, screen.y - 1, 4, 2.6, 0.2, 0, Math.PI * 2);
+      ctx.ellipse(screen.x + 4, screen.y + 2, 3, 2.1, -0.25, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#e4f4dd";
+      ctx.beginPath();
+      ctx.arc(screen.x + 9, screen.y - 3, 1.3, 0, Math.PI * 2);
+      ctx.arc(screen.x + 7, screen.y - 1, 1.1, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#cf5fa9";
+      ctx.beginPath();
+      ctx.ellipse(screen.x + 2, screen.y - 10, 6.2, 2.8, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "rgba(252, 239, 255, 0.8)";
+      ctx.beginPath();
+      ctx.arc(screen.x + 0.5, screen.y - 10, 0.9, 0, Math.PI * 2);
+      ctx.arc(screen.x + 3.4, screen.y - 9.5, 0.8, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
     ctx.fillStyle = "#2b2118";
     ctx.beginPath();
-    ctx.arc(screen.x + 10, screen.y - 3, 1.5, 0, Math.PI * 2);
+    ctx.arc(screen.x + 10, screen.y - 3, isGreenCow ? 1.7 : 1.5, 0, Math.PI * 2);
     ctx.fill();
     if (animal.hitTimer > 0) {
       ctx.strokeStyle = "rgba(255,255,255,0.65)";
@@ -16711,14 +17822,29 @@
         const iy = mapY + (((island.y + 0.5) * CONFIG.tileSize) / worldPixelSize) * mapH;
         const radius = Math.max(1.4, ((island.radius * CONFIG.tileSize) / worldPixelSize) * mapW);
         const biomeLand = BIOMES[island.biomeId]?.land;
+        const mushroom = isMushroomBiomeId(island.biomeId);
         let landColor = "rgba(92, 156, 96, 0.92)";
         if (Array.isArray(biomeLand) && biomeLand.length >= 3) {
           landColor = `rgba(${biomeLand[0]}, ${biomeLand[1]}, ${biomeLand[2]}, 0.92)`;
+        }
+        if (mushroom) {
+          landColor = "rgba(162, 97, 176, 0.96)";
         }
         ctx.fillStyle = landColor;
         ctx.beginPath();
         ctx.arc(ix, iy, radius, 0, Math.PI * 2);
         ctx.fill();
+        if (mushroom) {
+          ctx.strokeStyle = "rgba(244, 193, 255, 0.98)";
+          ctx.lineWidth = 1.6;
+          ctx.beginPath();
+          ctx.arc(ix, iy, radius + 1.8, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.fillStyle = "rgba(244, 229, 255, 0.95)";
+          ctx.beginPath();
+          ctx.arc(ix, iy, Math.max(1.2, radius * 0.2), 0, Math.PI * 2);
+          ctx.fill();
+        }
         if (island.starter) {
           ctx.strokeStyle = "rgba(246, 232, 153, 0.95)";
           ctx.lineWidth = 1.4;
@@ -16879,6 +18005,7 @@
       waterGradient.addColorStop(1, "#1c4f7a");
       ctx.fillStyle = waterGradient;
       ctx.fillRect(0, 0, viewWidth, viewHeight);
+      drawAmbientFish(camera);
     }
 
     const startX = Math.max(0, Math.floor(camera.x / CONFIG.tileSize) - 1);
@@ -17189,6 +18316,31 @@
             ctx.beginPath();
             ctx.ellipse(screen.x, screen.y - 2, 12, 8, 0, 0, Math.PI * 2);
             ctx.fill();
+          } else if (biome.key === "mushroom") {
+            ctx.fillStyle = tintColor(TREE_TRUNK, -0.06);
+            ctx.fillRect(screen.x - 3, screen.y + 6, 6, 15);
+            ctx.fillStyle = tintColor(TREE_TRUNK, 0.22);
+            ctx.fillRect(screen.x - 2, screen.y + 6, 2, 15);
+            ctx.fillStyle = "#d861a6";
+            ctx.beginPath();
+            ctx.ellipse(screen.x - 6, screen.y - 5, 8, 6, -0.22, Math.PI, 0, false);
+            ctx.ellipse(screen.x + 6, screen.y - 6, 8, 6, 0.22, Math.PI, 0, false);
+            ctx.fill();
+            ctx.fillStyle = "#b44cc8";
+            ctx.beginPath();
+            ctx.ellipse(screen.x, screen.y - 9, 10, 7, 0, Math.PI, 0, false);
+            ctx.fill();
+            ctx.fillStyle = "rgba(255, 235, 247, 0.78)";
+            ctx.beginPath();
+            ctx.arc(screen.x - 4, screen.y - 7, 1.6, 0, Math.PI * 2);
+            ctx.arc(screen.x + 1, screen.y - 10, 1.4, 0, Math.PI * 2);
+            ctx.arc(screen.x + 6, screen.y - 7, 1.2, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = "rgba(88, 45, 98, 0.72)";
+            ctx.lineWidth = 1.2;
+            ctx.beginPath();
+            ctx.ellipse(screen.x, screen.y - 2, 13, 9, 0, 0, Math.PI * 2);
+            ctx.stroke();
           } else {
             ctx.fillStyle = leafDark;
             ctx.beginPath();
@@ -17346,6 +18498,26 @@
           ctx.fillStyle = "rgba(143, 211, 174, 0.2)";
           ctx.beginPath();
           ctx.ellipse(screen.x + 1, screen.y + 5, 5, 2.5, 0, 0, Math.PI * 2);
+          ctx.fill();
+        } else if (biome.key === "mushroom") {
+          ctx.fillStyle = "rgba(226, 151, 232, 0.22)";
+          ctx.beginPath();
+          ctx.ellipse(screen.x, screen.y + 8, 7, 2.4, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = "rgba(106, 56, 124, 0.76)";
+          ctx.lineWidth = 1.7;
+          ctx.beginPath();
+          ctx.moveTo(screen.x - 5, screen.y + 10);
+          ctx.quadraticCurveTo(screen.x - 5, screen.y + 2, screen.x - 1, screen.y - 4);
+          ctx.moveTo(screen.x + 1, screen.y + 10);
+          ctx.quadraticCurveTo(screen.x + 1, screen.y + 1, screen.x + 2, screen.y - 5);
+          ctx.moveTo(screen.x + 5, screen.y + 10);
+          ctx.quadraticCurveTo(screen.x + 6, screen.y + 2, screen.x + 4, screen.y - 2);
+          ctx.stroke();
+          ctx.fillStyle = "rgba(246, 228, 255, 0.55)";
+          ctx.beginPath();
+          ctx.arc(screen.x - 1, screen.y + 2, 1.5, 0, Math.PI * 2);
+          ctx.arc(screen.x + 3, screen.y + 4, 1.1, 0, Math.PI * 2);
           ctx.fill();
         } else {
           ctx.strokeStyle = tintColor(grassColor, -0.15);
