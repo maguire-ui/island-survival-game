@@ -5535,19 +5535,25 @@
         if (monster.dayBurning && (monster.burnTimer ?? 0) > 0) {
           monster.burnTimer = Math.max(0, monster.burnTimer - dt);
         }
-        smoothRemoteEntityRender(monster, dt, NET_CONFIG.monsterSmooth, CONFIG.tileSize * 2.1);
+        if (!Number.isFinite(monster.x) || !Number.isFinite(monster.y)) continue;
+        monster.renderX = monster.x;
+        monster.renderY = monster.y;
       }
     }
 
     if (!net.isHost && state.world?.animals) {
       for (const animal of state.world.animals) {
-        smoothRemoteEntityRender(animal, dt, NET_CONFIG.animalSmooth, CONFIG.tileSize * 1.8);
+        if (!Number.isFinite(animal.x) || !Number.isFinite(animal.y)) continue;
+        animal.renderX = animal.x;
+        animal.renderY = animal.y;
       }
     }
 
     if (!net.isHost && state.world?.villagers) {
       for (const villager of state.world.villagers) {
-        smoothRemoteEntityRender(villager, dt, NET_CONFIG.villagerSmooth, CONFIG.tileSize * 1.8);
+        if (!Number.isFinite(villager.x) || !Number.isFinite(villager.y)) continue;
+        villager.renderX = villager.x;
+        villager.renderY = villager.y;
       }
     }
 
@@ -5574,12 +5580,9 @@
 
     if (!net.isHost && state.world?.projectiles) {
       for (const projectile of state.world.projectiles) {
-        smoothRemoteEntityRender(
-          projectile,
-          dt,
-          NET_CONFIG.monsterSmooth + 2,
-          CONFIG.tileSize * 1.35
-        );
+        if (!Number.isFinite(projectile.x) || !Number.isFinite(projectile.y)) continue;
+        projectile.renderX = projectile.x;
+        projectile.renderY = projectile.y;
       }
     }
   }
@@ -6670,6 +6673,10 @@
           state.returnPosition.y = returnPos.y;
         }
       }
+    }
+
+    if (shiftSession && !netIsClient() && Array.isArray(world.animals)) {
+      ensureMushroomIslandGreenCows(world, 32);
     }
 
     return true;
@@ -14372,13 +14379,72 @@
     return rng() < 0.4 ? "goat" : "boar";
   }
 
+  function pickAnimalSpawnTileOnIsland(world, island, options = {}) {
+    if (!world || !island) return null;
+    const attempts = Math.max(1, Math.floor(Number(options.attempts) || 20));
+    const radiusScale = clamp(Number(options.radiusScale) || 0.82, 0.15, 1);
+    const minRadiusScale = clamp(Number(options.minRadiusScale) || 0.12, 0, 0.95);
+    const minSpacing = Math.max(0, Number(options.minSpacingTiles) || 0);
+    const requireMushroomTile = !!options.requireMushroomTile;
+    const enforceIslandOwnership = !!options.enforceIslandOwnership;
+    const maxRadius = Math.max(2, Math.floor((Number(island.radius) || 6) * radiusScale));
+    const minRadius = Math.max(0, Math.floor(maxRadius * minRadiusScale));
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      const angle = Math.random() * Math.PI * 2;
+      const dist = minRadius + Math.random() * Math.max(1, maxRadius - minRadius);
+      const tx = Math.floor(island.x + Math.cos(angle) * dist);
+      const ty = Math.floor(island.y + Math.sin(angle) * dist);
+      if (!inBounds(tx, ty, world.size)) continue;
+      if (!canSpawnAnimalAt(world, tx, ty)) continue;
+      if (requireMushroomTile && !isMushroomBiomeAtTile(world, tx, ty)) continue;
+      if (enforceIslandOwnership && getIslandForTile(world, tx, ty) !== island) continue;
+      if (minSpacing > 0) {
+        const tooClose = world.animals.some((animal) => {
+          if (!animal || animal.hp <= 0) return false;
+          const ax = Math.floor(animal.x / CONFIG.tileSize);
+          const ay = Math.floor(animal.y / CONFIG.tileSize);
+          return Math.hypot(ax - tx, ay - ty) < minSpacing;
+        });
+        if (tooClose) continue;
+      }
+      return { tx, ty };
+    }
+    return null;
+  }
+
+  function spawnSurfaceAnimalFromIslands(world, minSpacingTiles = 5) {
+    if (!world || !Array.isArray(world.islands) || world.islands.length === 0) return false;
+    const islandAttempts = Math.max(6, Math.min(26, world.islands.length * 2));
+    for (let attempt = 0; attempt < islandAttempts; attempt += 1) {
+      const island = world.islands[Math.floor(Math.random() * world.islands.length)];
+      if (!island) continue;
+      const tile = pickAnimalSpawnTileOnIsland(world, island, {
+        attempts: 10,
+        radiusScale: 0.84,
+        minRadiusScale: 0.08,
+        minSpacingTiles,
+        enforceIslandOwnership: true,
+      });
+      if (!tile) continue;
+      const spawnScale = getSurfaceAnimalSpawnScale(world, tile.tx, tile.ty);
+      if (spawnScale <= 0 || Math.random() > spawnScale) continue;
+      spawnAnimal(world, tile.tx, tile.ty, pickSurfaceAnimalType(world, tile.tx, tile.ty));
+      return true;
+    }
+    return false;
+  }
+
   function isAnimalOnIsland(world, animal, island) {
     if (!world || !animal || !island) return false;
     if (!Number.isFinite(animal.x) || !Number.isFinite(animal.y)) return false;
     const tx = Math.floor(animal.x / CONFIG.tileSize);
     const ty = Math.floor(animal.y / CONFIG.tileSize);
     if (!inBounds(tx, ty, world.size)) return false;
-    return getIslandForTile(world, tx, ty) === island;
+    if (getIslandForTile(world, tx, ty) === island) return true;
+    const px = animal.x / CONFIG.tileSize;
+    const py = animal.y / CONFIG.tileSize;
+    const radiusPad = Math.max(2, (Number(island.radius) || 0) * 0.9);
+    return Math.hypot(px - island.x, py - island.y) <= radiusPad;
   }
 
   function countGreenCowsOnIsland(world, island) {
@@ -14393,28 +14459,25 @@
 
   function spawnGreenCowOnMushroomIsland(world, island) {
     if (!world || !island) return false;
-    const maxRadius = Math.max(3, Math.floor((Number(island.radius) || 6) * 0.82));
-    const minSpacing = MUSHROOM_GREEN_COW_CONFIG.minSpacingTiles;
-    for (let attempt = 0; attempt < MUSHROOM_GREEN_COW_CONFIG.ensureAttemptsPerCow; attempt += 1) {
-      const angle = Math.random() * Math.PI * 2;
-      const dist = (0.12 + Math.random() * 0.84) * maxRadius;
-      const tx = Math.floor(island.x + Math.cos(angle) * dist);
-      const ty = Math.floor(island.y + Math.sin(angle) * dist);
-      if (!inBounds(tx, ty, world.size)) continue;
-      if (!isMushroomBiomeAtTile(world, tx, ty)) continue;
-      if (getIslandForTile(world, tx, ty) !== island) continue;
-      if (!canSpawnAnimalAt(world, tx, ty)) continue;
-      const tooClose = world.animals.some((animal) => {
-        if (!animal || animal.hp <= 0) return false;
-        const ax = Math.floor(animal.x / CONFIG.tileSize);
-        const ay = Math.floor(animal.y / CONFIG.tileSize);
-        return Math.hypot(ax - tx, ay - ty) < minSpacing;
-      });
-      if (tooClose) continue;
-      spawnAnimal(world, tx, ty, "green_cow");
-      return true;
-    }
-    return false;
+    const strictTile = pickAnimalSpawnTileOnIsland(world, island, {
+      attempts: MUSHROOM_GREEN_COW_CONFIG.ensureAttemptsPerCow,
+      radiusScale: 0.84,
+      minRadiusScale: 0.12,
+      minSpacingTiles: MUSHROOM_GREEN_COW_CONFIG.minSpacingTiles,
+      requireMushroomTile: true,
+      enforceIslandOwnership: true,
+    });
+    const relaxedTile = strictTile || pickAnimalSpawnTileOnIsland(world, island, {
+      attempts: Math.max(12, Math.floor(MUSHROOM_GREEN_COW_CONFIG.ensureAttemptsPerCow * 0.7)),
+      radiusScale: 0.84,
+      minRadiusScale: 0.1,
+      minSpacingTiles: MUSHROOM_GREEN_COW_CONFIG.minSpacingTiles,
+      requireMushroomTile: false,
+      enforceIslandOwnership: false,
+    });
+    if (!relaxedTile) return false;
+    spawnAnimal(world, relaxedTile.tx, relaxedTile.ty, "green_cow");
+    return true;
   }
 
   function ensureMushroomIslandGreenCows(world, maxAnimals = Infinity) {
@@ -14443,18 +14506,7 @@
     let attempts = 0;
     while (world.animals.length < desired && attempts < desired * 50) {
       attempts += 1;
-      const tx = Math.floor(Math.random() * world.size);
-      const ty = Math.floor(Math.random() * world.size);
-      if (!canSpawnAnimalAt(world, tx, ty)) continue;
-      const spawnScale = getSurfaceAnimalSpawnScale(world, tx, ty);
-      if (spawnScale <= 0 || Math.random() > spawnScale) continue;
-      const tooClose = world.animals.some((animal) => {
-        const ax = Math.floor(animal.x / CONFIG.tileSize);
-        const ay = Math.floor(animal.y / CONFIG.tileSize);
-        return Math.hypot(ax - tx, ay - ty) < 5;
-      });
-      if (tooClose) continue;
-      spawnAnimal(world, tx, ty, pickSurfaceAnimalType(world, tx, ty));
+      if (!spawnSurfaceAnimalFromIslands(world, 5)) continue;
     }
   }
 
@@ -15619,27 +15671,40 @@
       world.animalSpawnTimer = 5 + Math.random() * 4;
       const greenCowAdded = ensureMushroomIslandGreenCows(world, maxAnimals);
       if (world.animals.length < maxAnimals) {
-        for (let attempt = 0; attempt < 16; attempt += 1) {
-          const tx = Math.floor(Math.random() * world.size);
-          const ty = Math.floor(Math.random() * world.size);
-          if (!canSpawnAnimalAt(world, tx, ty)) continue;
-          const spawnScale = getSurfaceAnimalSpawnScale(world, tx, ty);
-          if (spawnScale <= 0 || Math.random() > spawnScale) continue;
-          spawnAnimal(world, tx, ty, pickSurfaceAnimalType(world, tx, ty));
-          break;
-        }
+        spawnSurfaceAnimalFromIslands(world, 5);
       }
       if (greenCowAdded > 0) {
         markDirty();
       }
     }
 
+    let correctedAnimalPlacement = false;
     for (let i = world.animals.length - 1; i >= 0; i -= 1) {
       const animal = world.animals[i];
+      if (!animal || !Number.isFinite(animal.x) || !Number.isFinite(animal.y)) {
+        world.animals.splice(i, 1);
+        continue;
+      }
       if (animal.hitTimer > 0) animal.hitTimer -= dt;
       if (animal.hp <= 0) {
         world.animals.splice(i, 1);
         continue;
+      }
+      const currentTx = Math.floor(animal.x / CONFIG.tileSize);
+      const currentTy = Math.floor(animal.y / CONFIG.tileSize);
+      const onLandTile = inBounds(currentTx, currentTy, world.size)
+        && world.tiles[tileIndex(currentTx, currentTy, world.size)] === 1
+        && !world.beachGrid?.[tileIndex(currentTx, currentTy, world.size)];
+      if (!onLandTile) {
+        const clamped = clampEntityPositionToLand(world, animal.x, animal.y, 30);
+        if (!clamped) {
+          world.animals.splice(i, 1);
+          correctedAnimalPlacement = true;
+          continue;
+        }
+        animal.x = clamped.x;
+        animal.y = clamped.y;
+        correctedAnimalPlacement = true;
       }
       if (animal.fleeTimer > 0) animal.fleeTimer -= dt;
 
@@ -15678,6 +15743,9 @@
       }
       animal.renderX = animal.x;
       animal.renderY = animal.y;
+    }
+    if (correctedAnimalPlacement) {
+      markDirty();
     }
   }
 
