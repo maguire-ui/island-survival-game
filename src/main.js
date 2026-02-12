@@ -16003,15 +16003,11 @@
     const animalType = typeof options.animalType === "string" ? options.animalType : null;
     const maxRadius = Math.max(2, Math.floor((Number(island.radius) || 6) * radiusScale));
     const minRadius = Math.max(0, Math.floor(maxRadius * minRadiusScale));
-    for (let attempt = 0; attempt < attempts; attempt += 1) {
-      const angle = Math.random() * Math.PI * 2;
-      const dist = minRadius + Math.random() * Math.max(1, maxRadius - minRadius);
-      const tx = Math.floor(island.x + Math.cos(angle) * dist);
-      const ty = Math.floor(island.y + Math.sin(angle) * dist);
-      if (!inBounds(tx, ty, world.size)) continue;
-      if (!canSpawnAnimalAt(world, tx, ty, animalType)) continue;
-      if (requireMushroomTile && !isMushroomBiomeAtTile(world, tx, ty)) continue;
-      if (enforceIslandOwnership && getIslandForTile(world, tx, ty) !== island) continue;
+    const canUseTile = (tx, ty) => {
+      if (!inBounds(tx, ty, world.size)) return false;
+      if (!canSpawnAnimalAt(world, tx, ty, animalType)) return false;
+      if (requireMushroomTile && !isMushroomBiomeAtTile(world, tx, ty)) return false;
+      if (enforceIslandOwnership && getIslandForTile(world, tx, ty) !== island) return false;
       if (minSpacing > 0) {
         const tooClose = world.animals.some((animal) => {
           if (!animal || animal.hp <= 0) return false;
@@ -16019,9 +16015,33 @@
           const ay = Math.floor(animal.y / CONFIG.tileSize);
           return Math.hypot(ax - tx, ay - ty) < minSpacing;
         });
-        if (tooClose) continue;
+        if (tooClose) return false;
       }
-      return { tx, ty };
+      return true;
+    };
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      const angle = Math.random() * Math.PI * 2;
+      const dist = minRadius + Math.random() * Math.max(1, maxRadius - minRadius);
+      const tx = Math.floor(island.x + Math.cos(angle) * dist);
+      const ty = Math.floor(island.y + Math.sin(angle) * dist);
+      if (canUseTile(tx, ty)) return { tx, ty };
+    }
+
+    // Deterministic fallback for dense/merged islands where random sampling misses valid spots.
+    const fallbackRadius = Math.max(maxRadius, Math.floor((Number(island.radius) || 6) * 1.05));
+    const candidates = [];
+    for (let dy = -fallbackRadius; dy <= fallbackRadius; dy += 1) {
+      for (let dx = -fallbackRadius; dx <= fallbackRadius; dx += 1) {
+        const tx = Math.floor(island.x + dx);
+        const ty = Math.floor(island.y + dy);
+        const dist = Math.hypot((tx + 0.5) - island.x, (ty + 0.5) - island.y);
+        if (dist < minRadius || dist > fallbackRadius) continue;
+        if (!canUseTile(tx, ty)) continue;
+        candidates.push({ tx, ty });
+      }
+    }
+    if (candidates.length > 0) {
+      return candidates[Math.floor(Math.random() * candidates.length)];
     }
     return null;
   }
@@ -16136,7 +16156,7 @@
     return added;
   }
 
-  function ensureActiveIslandHarvestAnimals(world, islands, minCountPerIsland = 1, maxAnimals = Infinity) {
+  function ensureActiveIslandHarvestAnimals(world, islands, minCountPerIsland = 2, maxAnimals = Infinity) {
     if (!world || !Array.isArray(world.animals) || !Array.isArray(islands) || islands.length === 0) return 0;
     const hardCap = Number.isFinite(maxAnimals) ? maxAnimals : Infinity;
     const baseTarget = Math.max(1, Math.floor(minCountPerIsland) || 1);
@@ -16144,7 +16164,7 @@
     for (const island of islands) {
       if (!island) continue;
       if (isMushroomBiomeId(getIslandBiomeId(world, island))) continue;
-      const target = Math.max(baseTarget, isSpawnIsland(world, island) ? 2 : 1);
+      const target = Math.max(baseTarget, isSpawnIsland(world, island) ? 3 : 2);
       const existing = countHarvestAnimalsOnIsland(world, island);
       const missing = Math.max(0, target - existing);
       for (let i = 0; i < missing; i += 1) {
@@ -17399,7 +17419,7 @@
     if (world.animalSpawnTimer <= 0) {
       world.animalSpawnTimer = 5 + Math.random() * 4;
       const activeIslands = getSurfaceActiveIslands(world, players);
-      const activeIslandHarvestAdded = ensureActiveIslandHarvestAnimals(world, activeIslands, 1, maxAnimals);
+      const activeIslandHarvestAdded = ensureActiveIslandHarvestAnimals(world, activeIslands, 2, maxAnimals);
       const spawnIslandHarvestAdded = ensureSpawnIslandHarvestAnimals(world, state.spawnTile, 4, maxAnimals);
       const greenCowAdded = ensureMushroomIslandGreenCows(world, maxAnimals);
       let passiveSpawned = false;
