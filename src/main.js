@@ -109,6 +109,8 @@
     attackCooldown: 1.1,
     aggroRange: 180,
   };
+  const PLAYER_ATTACK_REACH = MONSTER.attackRange + 16;
+  const PLAYER_ATTACK_FALLBACK_REACH = PLAYER_ATTACK_REACH - 4;
 
   const TOUCH_STICK_MAX_DIST = 40;
 
@@ -1244,8 +1246,8 @@
     maxPassengers: 5,
     minSpawnDistanceFromSpawnTiles: 24,
     maxSpawnDistanceFromSpawnTiles: 190,
-    speedMax: 136,
-    accel: 190,
+    speedMax: 272,
+    accel: 380,
     drag: 0.91,
     turnSpeed: 2.2,
     remoteInputTimeout: 0.35,
@@ -4165,6 +4167,7 @@
       Array.isArray(previous) ? previous.map((monster) => [monster.id, monster]) : []
     );
     if (!Array.isArray(snapshotMonsters)) return [];
+    const preserveHostCoordinates = netIsClient();
     const seenIds = new Set();
     const built = snapshotMonsters.map((monster) => {
       if (!Number.isInteger(monster?.id)) return null;
@@ -4174,11 +4177,15 @@
       const variant = getMonsterVariant(type);
       const sourceX = Number.isFinite(monster?.x) ? monster.x : (Number.isFinite(prev?.x) ? prev.x : prev?.renderX);
       const sourceY = Number.isFinite(monster?.y) ? monster.y : (Number.isFinite(prev?.y) ? prev.y : prev?.renderY);
-      const validPos = world
-        ? clampEntityPositionToWalkable(world, sourceX, sourceY, world === state.surfaceWorld ? 24 : 16)
-        : (Number.isFinite(sourceX) && Number.isFinite(sourceY)
+      const validPos = preserveHostCoordinates
+        ? (Number.isFinite(sourceX) && Number.isFinite(sourceY)
             ? { x: sourceX, y: sourceY }
-            : null);
+            : null)
+        : (world
+            ? clampEntityPositionToWalkable(world, sourceX, sourceY, world === state.surfaceWorld ? 24 : 16)
+            : (Number.isFinite(sourceX) && Number.isFinite(sourceY)
+                ? { x: sourceX, y: sourceY }
+                : null));
       if (!validPos) return null;
       const burnTimer = Math.max(
         0,
@@ -4232,8 +4239,8 @@
           ) || 0
         ),
         dir: { x: 0, y: 0 },
-        renderX: prev?.renderX ?? validPos.x,
-        renderY: prev?.renderY ?? validPos.y,
+        renderX: preserveHostCoordinates ? validPos.x : (prev?.renderX ?? validPos.x),
+        renderY: preserveHostCoordinates ? validPos.y : (prev?.renderY ?? validPos.y),
       };
     }).filter(Boolean);
     if (world) {
@@ -5239,7 +5246,7 @@
     const aimDist = Math.hypot(aimXRaw - sourceX, aimYRaw - sourceY);
     const aimX = aimDist > CONFIG.tileSize * 6 ? sourceX : aimXRaw;
     const aimY = aimDist > CONFIG.tileSize * 6 ? sourceY : aimYRaw;
-    const maxReach = MONSTER.attackRange + 12;
+    const maxReach = PLAYER_ATTACK_REACH;
     const targetKind = message.targetKind === "monster" || message.targetKind === "animal"
       ? message.targetKind
       : null;
@@ -6340,6 +6347,24 @@
     return type === "polar_bear" || type === "lion" || type === "wolf";
   }
 
+  function isGuardianMonsterAllowedAtTile(world, monster, tx, ty) {
+    if (!world || !monster || !Number.isFinite(tx) || !Number.isFinite(ty)) return false;
+    if (!inBounds(tx, ty, world.size)) return false;
+    if (!isGuardianMonsterType(monster.type)) return true;
+    const biomeId = getSurfaceBiomeIdAtTile(world, tx, ty);
+    const biome = BIOMES[biomeId];
+    if (!biome) return false;
+    if (monster.type === "polar_bear") return biome.key === BIOME_KEYS.snow;
+    if (monster.type === "lion") return biome.key === BIOME_KEYS.jungle;
+    if (monster.type === "wolf") {
+      if (!isPlainsBiomeId(biomeId)) return false;
+      const island = getIslandForTile(world, tx, ty);
+      if (island && isSpawnIsland(world, island)) return false;
+      return true;
+    }
+    return false;
+  }
+
   function isDayImmuneMonster(monster) {
     const variant = getMonsterVariant(monster?.type);
     return !!variant?.dayImmune;
@@ -6957,12 +6982,19 @@
     if (Array.isArray(world.animals)) {
       world.animals = world.animals.map((animal) => {
         if (!animal || !Number.isFinite(animal.x) || !Number.isFinite(animal.y)) return null;
+        const type = normalizeAnimalType(animal.type);
         const clampedPos = clampEntityPositionToLand(world, animal.x, animal.y, 22);
         if (!clampedPos) return null;
+        animal.type = type;
         animal.x = clampedPos.x;
         animal.y = clampedPos.y;
-        if (Number.isFinite(animal.renderX)) animal.renderX = clampedPos.x;
-        if (Number.isFinite(animal.renderY)) animal.renderY = clampedPos.y;
+        const tx = Math.floor(animal.x / CONFIG.tileSize);
+        const ty = Math.floor(animal.y / CONFIG.tileSize);
+        if (!isAnimalTypeAllowedAtTile(world, type, tx, ty)) {
+          if (!relocateAnimalToAllowedBiome(world, animal, 38)) return null;
+        }
+        if (Number.isFinite(animal.renderX)) animal.renderX = animal.x;
+        if (Number.isFinite(animal.renderY)) animal.renderY = animal.y;
         return animal;
       }).filter(Boolean);
       world.nextAnimalId = world.animals.reduce((max, animal) => Math.max(max, (animal.id || 0) + 1), 1);
@@ -9507,6 +9539,7 @@
     const prevAnimals = new Map(
       Array.isArray(world.animals) ? world.animals.map((animal) => [animal.id, animal]) : []
     );
+    const preserveHostCoordinates = netIsClient();
     let autoId = Number.isInteger(world.nextAnimalId) && world.nextAnimalId > 0
       ? world.nextAnimalId
       : 1;
@@ -9515,17 +9548,34 @@
         .map((animal) => {
           const cfg = getAnimalTypeConfig(animal?.type);
           const type = cfg.type;
-          const sourceX = Number.isFinite(animal?.x) ? animal.x : 0;
-          const sourceY = Number.isFinite(animal?.y) ? animal.y : 0;
-          const pos = clampEntityPositionToLand(world, sourceX, sourceY, 22);
-          if (!pos) return null;
+          const sourceX = Number(animal?.x);
+          const sourceY = Number(animal?.y);
+          if (!Number.isFinite(sourceX) || !Number.isFinite(sourceY)) return null;
+          let finalPos = { x: sourceX, y: sourceY };
+          if (!preserveHostCoordinates) {
+            const pos = clampEntityPositionToLand(world, sourceX, sourceY, 22);
+            if (!pos) return null;
+            finalPos = pos;
+            const tx = Math.floor(pos.x / CONFIG.tileSize);
+            const ty = Math.floor(pos.y / CONFIG.tileSize);
+            if (!isAnimalTypeAllowedAtTile(world, type, tx, ty)) {
+              const tile = findNearestAnimalTileForType(world, type, tx, ty, 36);
+              if (!tile) return null;
+              finalPos = {
+                tx: tile.tx,
+                ty: tile.ty,
+                x: (tile.tx + 0.5) * CONFIG.tileSize,
+                y: (tile.ty + 0.5) * CONFIG.tileSize,
+              };
+            }
+          }
           const id = typeof animal.id === "number" ? animal.id : autoId++;
           const prev = prevAnimals.get(id);
           return {
             id,
             type,
-            x: pos.x,
-            y: pos.y,
+            x: finalPos.x,
+            y: finalPos.y,
             hp: typeof animal.hp === "number" ? animal.hp : cfg.hp,
             maxHp: typeof animal.maxHp === "number" ? animal.maxHp : cfg.hp,
             speed: typeof animal.speed === "number" ? animal.speed : cfg.speed,
@@ -9535,8 +9585,8 @@
             fleeTimer: 0,
             wanderTimer: 0,
             dir: { x: 0, y: 0 },
-            renderX: prev?.renderX ?? pos.x,
-            renderY: prev?.renderY ?? pos.y,
+            renderX: preserveHostCoordinates ? finalPos.x : (prev?.renderX ?? finalPos.x),
+            renderY: preserveHostCoordinates ? finalPos.y : (prev?.renderY ?? finalPos.y),
           };
         })
         .filter(Boolean)
@@ -9548,6 +9598,7 @@
     const prevVillagers = new Map(
       Array.isArray(world.villagers) ? world.villagers.map((villager) => [villager.id, villager]) : []
     );
+    const preserveHostCoordinates = netIsClient();
     let autoId = Number.isInteger(world.nextVillagerId) && world.nextVillagerId > 0
       ? world.nextVillagerId
       : 1;
@@ -9555,12 +9606,17 @@
       ? villagers
         .map((villager) => {
           const baseId = typeof villager?.id === "number" ? villager.id : autoId++;
-          const sourceX = Number.isFinite(villager?.x) ? villager.x : 0;
-          const sourceY = Number.isFinite(villager?.y) ? villager.y : 0;
-          const pos = clampEntityPositionToLand(world, sourceX, sourceY, 24);
-          if (!pos) return null;
-          const x = pos.x;
-          const y = pos.y;
+          const sourceX = Number(villager?.x);
+          const sourceY = Number(villager?.y);
+          if (!Number.isFinite(sourceX) || !Number.isFinite(sourceY)) return null;
+          let x = sourceX;
+          let y = sourceY;
+          if (!preserveHostCoordinates) {
+            const pos = clampEntityPositionToLand(world, sourceX, sourceY, 24);
+            if (!pos) return null;
+            x = pos.x;
+            y = pos.y;
+          }
           const prev = prevVillagers.get(baseId);
           const speed = clamp(
             Number(villager?.speed) || ((VILLAGER_CONFIG.speedMin + VILLAGER_CONFIG.speedMax) * 0.5),
@@ -9583,8 +9639,8 @@
             wanderRadius,
             wanderTimer: 0,
             dir: { x: 0, y: 0 },
-            renderX: prev?.renderX ?? x,
-            renderY: prev?.renderY ?? y,
+            renderX: preserveHostCoordinates ? x : (prev?.renderX ?? x),
+            renderY: preserveHostCoordinates ? y : (prev?.renderY ?? y),
           };
         })
         .filter(Boolean)
@@ -10079,6 +10135,23 @@
     if (wrapped > Math.PI) wrapped -= Math.PI * 2;
     if (wrapped < -Math.PI) wrapped += Math.PI * 2;
     return wrapped;
+  }
+
+  function mapWorldInputToShipControls(input, shipAngle) {
+    const worldX = clamp(Number(input?.x) || 0, -1, 1);
+    const worldY = clamp(Number(input?.y) || 0, -1, 1);
+    if (Math.abs(worldX) < 0.001 && Math.abs(worldY) < 0.001) {
+      return { turn: 0, throttle: 0 };
+    }
+
+    const forwardX = Math.cos(shipAngle);
+    const forwardY = Math.sin(shipAngle);
+    const rightX = -forwardY;
+    const rightY = forwardX;
+    const throttle = clamp(worldX * forwardX + worldY * forwardY, -1, 1);
+    const turn = clamp(worldX * rightX + worldY * rightY, -1, 1);
+
+    return { turn, throttle };
   }
 
   function getAbandonedShipSeatOffsets() {
@@ -11505,8 +11578,9 @@
       }
 
       const input = ship.repaired ? getDriverInputForShip(structure, ship) : { x: 0, y: 0 };
-      const turn = clamp(input.x, -1, 1);
-      const throttle = clamp(-input.y, -1, 1);
+      const controls = mapWorldInputToShipControls(input, ship.angle);
+      const turn = controls.turn;
+      const throttle = controls.throttle;
       if (Math.abs(turn) > 0.001) {
         const turnScalar = 0.45 + Math.abs(throttle) * 0.55;
         ship.angle = normalizeAngleRadians(ship.angle + turn * ABANDONED_SHIP_CONFIG.turnSpeed * turnScalar * dt);
@@ -15812,30 +15886,87 @@
     });
   }
 
-  function canSpawnAnimalAt(world, tx, ty) {
+  function isAnimalTypeAllowedAtTile(world, type, tx, ty) {
+    if (!world || !Number.isFinite(tx) || !Number.isFinite(ty)) return false;
+    const normalizedType = normalizeAnimalType(type);
+    if (!inBounds(tx, ty, world.size)) return false;
+    const biomeId = getSurfaceBiomeIdAtTile(world, tx, ty);
+    if (normalizedType === "green_cow") return isMushroomBiomeId(biomeId);
+    if (normalizedType === "goat" || normalizedType === "boar") return !isMushroomBiomeId(biomeId);
+    return true;
+  }
+
+  function canSpawnAnimalAt(world, tx, ty, type = null) {
     if (!inBounds(tx, ty, world.size)) return false;
     const idx = tileIndex(tx, ty, world.size);
     if (!world.tiles[idx]) return false;
-    if (world.beachGrid?.[idx]) return false;
-    if (Array.isArray(world.resourceGrid) && world.resourceGrid[idx] !== -1) return false;
+    const resourceAtTile = getResourceAt(world, tx, ty);
+    if (resourceAtTile && resourceAtTile.type !== "grass") return false;
     if (world === (state.surfaceWorld || state.world) && getStructureAt(tx, ty)) return false;
+    if (type && !isAnimalTypeAllowedAtTile(world, type, tx, ty)) return false;
     const walkableNeighbors =
       Number(isWalkableTileInWorld(world, tx + 1, ty))
       + Number(isWalkableTileInWorld(world, tx - 1, ty))
       + Number(isWalkableTileInWorld(world, tx, ty + 1))
       + Number(isWalkableTileInWorld(world, tx, ty - 1));
-    return walkableNeighbors >= 3;
+    return walkableNeighbors >= 2;
   }
 
-  function canMoveAnimalTo(world, tx, ty) {
+  function canMoveAnimalTo(world, tx, ty, type = null) {
     if (!inBounds(tx, ty, world.size)) return false;
     const idx = tileIndex(tx, ty, world.size);
     if (!world.tiles[idx]) return false;
-    if (world.beachGrid?.[idx]) return false;
+    if (type && !isAnimalTypeAllowedAtTile(world, type, tx, ty)) return false;
     if (world === (state.surfaceWorld || state.world)) {
       if (getStructureAt(tx, ty)) return false;
       if (getCaveAt(world, tx, ty)) return false;
     }
+    return true;
+  }
+
+  function canRelocateAnimalTo(world, tx, ty, type) {
+    if (!canMoveAnimalTo(world, tx, ty, type)) return false;
+    const resourceAtTile = getResourceAt(world, tx, ty);
+    if (resourceAtTile && resourceAtTile.type !== "grass") return false;
+    return true;
+  }
+
+  function findNearestAnimalTileForType(world, type, startTx, startTy, maxRadius = 34) {
+    if (!world || !Number.isFinite(startTx) || !Number.isFinite(startTy)) return null;
+    const baseTx = clamp(Math.floor(startTx), 0, world.size - 1);
+    const baseTy = clamp(Math.floor(startTy), 0, world.size - 1);
+    if (canRelocateAnimalTo(world, baseTx, baseTy, type)) {
+      return { tx: baseTx, ty: baseTy };
+    }
+    for (let radius = 1; radius <= maxRadius; radius += 1) {
+      for (let dy = -radius; dy <= radius; dy += 1) {
+        for (let dx = -radius; dx <= radius; dx += 1) {
+          if (Math.max(Math.abs(dx), Math.abs(dy)) !== radius) continue;
+          const tx = baseTx + dx;
+          const ty = baseTy + dy;
+          if (!inBounds(tx, ty, world.size)) continue;
+          if (!canRelocateAnimalTo(world, tx, ty, type)) continue;
+          return { tx, ty };
+        }
+      }
+    }
+    return null;
+  }
+
+  function relocateAnimalToAllowedBiome(world, animal, maxRadius = 34) {
+    if (!world || !animal || !Number.isFinite(animal.x) || !Number.isFinite(animal.y)) return false;
+    const type = normalizeAnimalType(animal.type);
+    const currentTx = Math.floor(animal.x / CONFIG.tileSize);
+    const currentTy = Math.floor(animal.y / CONFIG.tileSize);
+    const tile = findNearestAnimalTileForType(world, type, currentTx, currentTy, maxRadius);
+    if (!tile) return false;
+    const nextX = (tile.tx + 0.5) * CONFIG.tileSize;
+    const nextY = (tile.ty + 0.5) * CONFIG.tileSize;
+    animal.type = type;
+    animal.x = nextX;
+    animal.y = nextY;
+    if (Number.isFinite(animal.renderX)) animal.renderX = nextX;
+    if (Number.isFinite(animal.renderY)) animal.renderY = nextY;
     return true;
   }
 
@@ -15869,6 +16000,7 @@
     const minSpacing = Math.max(0, Number(options.minSpacingTiles) || 0);
     const requireMushroomTile = !!options.requireMushroomTile;
     const enforceIslandOwnership = !!options.enforceIslandOwnership;
+    const animalType = typeof options.animalType === "string" ? options.animalType : null;
     const maxRadius = Math.max(2, Math.floor((Number(island.radius) || 6) * radiusScale));
     const minRadius = Math.max(0, Math.floor(maxRadius * minRadiusScale));
     for (let attempt = 0; attempt < attempts; attempt += 1) {
@@ -15877,7 +16009,7 @@
       const tx = Math.floor(island.x + Math.cos(angle) * dist);
       const ty = Math.floor(island.y + Math.sin(angle) * dist);
       if (!inBounds(tx, ty, world.size)) continue;
-      if (!canSpawnAnimalAt(world, tx, ty)) continue;
+      if (!canSpawnAnimalAt(world, tx, ty, animalType)) continue;
       if (requireMushroomTile && !isMushroomBiomeAtTile(world, tx, ty)) continue;
       if (enforceIslandOwnership && getIslandForTile(world, tx, ty) !== island) continue;
       if (minSpacing > 0) {
@@ -15900,6 +16032,7 @@
       ? options.islands.filter(Boolean)
       : world.islands;
     if (!preferredIslands.length) return false;
+    const forcedType = typeof options?.forceType === "string" ? normalizeAnimalType(options.forceType) : null;
     const islandAttempts = Math.max(8, Math.min(36, preferredIslands.length * 3));
     for (let attempt = 0; attempt < islandAttempts; attempt += 1) {
       const island = preferredIslands[Math.floor(Math.random() * preferredIslands.length)];
@@ -15910,6 +16043,7 @@
         minRadiusScale: 0.08,
         minSpacingTiles,
         enforceIslandOwnership: true,
+        animalType: forcedType,
       });
       // Fallback lets passive animals continue to spawn even when debug island merges
       // make strict island ownership ambiguous.
@@ -15919,12 +16053,13 @@
         minRadiusScale: 0.06,
         minSpacingTiles,
         enforceIslandOwnership: false,
+        animalType: forcedType,
       });
       if (!tile) continue;
       const spawnScale = getSurfaceAnimalSpawnScale(world, tile.tx, tile.ty);
       if (spawnScale <= 0 || Math.random() > spawnScale) continue;
-      const forcedType = typeof options?.forceType === "string" ? normalizeAnimalType(options.forceType) : null;
       const animalType = forcedType || pickSurfaceAnimalType(world, tile.tx, tile.ty);
+      if (!canSpawnAnimalAt(world, tile.tx, tile.ty, animalType)) continue;
       spawnAnimal(world, tile.tx, tile.ty, animalType);
       return true;
     }
@@ -15957,12 +16092,14 @@
 
   function spawnHarvestAnimalOnIsland(world, island, minSpacingTiles = 2.75) {
     if (!world || !island) return false;
+    const harvestType = pickHarvestAnimalType();
     const strictTile = pickAnimalSpawnTileOnIsland(world, island, {
       attempts: 20,
       radiusScale: 0.86,
       minRadiusScale: 0.1,
       minSpacingTiles,
       enforceIslandOwnership: true,
+      animalType: harvestType,
     });
     const relaxedTile = strictTile || pickAnimalSpawnTileOnIsland(world, island, {
       attempts: 16,
@@ -15970,9 +16107,11 @@
       minRadiusScale: 0.08,
       minSpacingTiles,
       enforceIslandOwnership: false,
+      animalType: harvestType,
     });
     if (!relaxedTile) return false;
-    spawnAnimal(world, relaxedTile.tx, relaxedTile.ty, pickHarvestAnimalType());
+    if (!canSpawnAnimalAt(world, relaxedTile.tx, relaxedTile.ty, harvestType)) return false;
+    spawnAnimal(world, relaxedTile.tx, relaxedTile.ty, harvestType);
     return true;
   }
 
@@ -15997,6 +16136,26 @@
     return added;
   }
 
+  function ensureActiveIslandHarvestAnimals(world, islands, minCountPerIsland = 1, maxAnimals = Infinity) {
+    if (!world || !Array.isArray(world.animals) || !Array.isArray(islands) || islands.length === 0) return 0;
+    const hardCap = Number.isFinite(maxAnimals) ? maxAnimals : Infinity;
+    const baseTarget = Math.max(1, Math.floor(minCountPerIsland) || 1);
+    let added = 0;
+    for (const island of islands) {
+      if (!island) continue;
+      if (isMushroomBiomeId(getIslandBiomeId(world, island))) continue;
+      const target = Math.max(baseTarget, isSpawnIsland(world, island) ? 2 : 1);
+      const existing = countHarvestAnimalsOnIsland(world, island);
+      const missing = Math.max(0, target - existing);
+      for (let i = 0; i < missing; i += 1) {
+        if (world.animals.length >= hardCap) return added;
+        if (!spawnHarvestAnimalOnIsland(world, island, 2.6)) break;
+        added += 1;
+      }
+    }
+    return added;
+  }
+
   function countGreenCowsOnIsland(world, island) {
     if (!world || !island || !Array.isArray(world.animals)) return 0;
     let count = 0;
@@ -16016,16 +16175,19 @@
       minSpacingTiles: MUSHROOM_GREEN_COW_CONFIG.minSpacingTiles,
       requireMushroomTile: true,
       enforceIslandOwnership: true,
+      animalType: "green_cow",
     });
     const relaxedTile = strictTile || pickAnimalSpawnTileOnIsland(world, island, {
       attempts: Math.max(12, Math.floor(MUSHROOM_GREEN_COW_CONFIG.ensureAttemptsPerCow * 0.7)),
       radiusScale: 0.84,
       minRadiusScale: 0.1,
       minSpacingTiles: MUSHROOM_GREEN_COW_CONFIG.minSpacingTiles,
-      requireMushroomTile: false,
+      requireMushroomTile: true,
       enforceIslandOwnership: false,
+      animalType: "green_cow",
     });
     if (!relaxedTile) return false;
+    if (!canSpawnAnimalAt(world, relaxedTile.tx, relaxedTile.ty, "green_cow")) return false;
     spawnAnimal(world, relaxedTile.tx, relaxedTile.ty, "green_cow");
     return true;
   }
@@ -16389,22 +16551,22 @@
     let targetMonster = findNearestMonsterAt(
       combatWorld,
       searchOrigin,
-      MONSTER.attackRange + 12,
+      PLAYER_ATTACK_REACH,
       preferRenderTargets
     );
     let targetAnimal = targetMonster
       ? null
-      : findNearestAnimalAt(combatWorld, searchOrigin, MONSTER.attackRange + 12, preferRenderTargets);
+      : findNearestAnimalAt(combatWorld, searchOrigin, PLAYER_ATTACK_REACH, preferRenderTargets);
     if (targetMonster) {
       const targetPos = getEntityWorldPosition(targetMonster, preferRenderTargets);
       const distToPlayer = targetPos
         ? Math.hypot(targetPos.x - state.player.x, targetPos.y - state.player.y)
         : Infinity;
-      if (distToPlayer > MONSTER.attackRange + 12) {
+      if (distToPlayer > PLAYER_ATTACK_REACH) {
         targetMonster = findNearestMonsterAt(
           combatWorld,
           state.player,
-          MONSTER.attackRange + 8,
+          PLAYER_ATTACK_FALLBACK_REACH,
           preferRenderTargets
         );
       }
@@ -16414,11 +16576,11 @@
       const distToPlayer = targetPos
         ? Math.hypot(targetPos.x - state.player.x, targetPos.y - state.player.y)
         : Infinity;
-      if (distToPlayer > MONSTER.attackRange + 12) {
+      if (distToPlayer > PLAYER_ATTACK_REACH) {
         targetAnimal = findNearestAnimalAt(
           combatWorld,
           state.player,
-          MONSTER.attackRange + 8,
+          PLAYER_ATTACK_FALLBACK_REACH,
           preferRenderTargets
         );
       }
@@ -17010,6 +17172,16 @@
         continue;
       }
 
+      if (isSurface && isGuardianMonsterType(monster.type)) {
+        const tx = Math.floor(monster.x / CONFIG.tileSize);
+        const ty = Math.floor(monster.y / CONFIG.tileSize);
+        if (!isGuardianMonsterAllowedAtTile(world, monster, tx, ty)) {
+          world.monsters.splice(i, 1);
+          markDirty();
+          continue;
+        }
+      }
+
       const { target, targetDist } = getNearestMonsterTarget(monster, players, isSurface);
       const poisonPayload = getMonsterPoisonPayload(monster);
       const dayImmune = isDayImmuneMonster(monster);
@@ -17226,11 +17398,12 @@
     world.animalSpawnTimer -= dt;
     if (world.animalSpawnTimer <= 0) {
       world.animalSpawnTimer = 5 + Math.random() * 4;
+      const activeIslands = getSurfaceActiveIslands(world, players);
+      const activeIslandHarvestAdded = ensureActiveIslandHarvestAnimals(world, activeIslands, 1, maxAnimals);
       const spawnIslandHarvestAdded = ensureSpawnIslandHarvestAnimals(world, state.spawnTile, 4, maxAnimals);
       const greenCowAdded = ensureMushroomIslandGreenCows(world, maxAnimals);
       let passiveSpawned = false;
       if (world.animals.length < maxAnimals) {
-        const activeIslands = getSurfaceActiveIslands(world, players);
         const spawnedNearPlayers = activeIslands.length > 0
           && spawnSurfaceAnimalFromIslands(world, 4.6, { islands: activeIslands });
         passiveSpawned = !!spawnedNearPlayers;
@@ -17238,7 +17411,7 @@
           passiveSpawned = spawnSurfaceAnimalFromIslands(world, 5);
         }
       }
-      if (greenCowAdded > 0 || spawnIslandHarvestAdded > 0 || passiveSpawned) {
+      if (greenCowAdded > 0 || spawnIslandHarvestAdded > 0 || activeIslandHarvestAdded > 0 || passiveSpawned) {
         markDirty();
       }
     }
@@ -17258,8 +17431,7 @@
       const currentTx = Math.floor(animal.x / CONFIG.tileSize);
       const currentTy = Math.floor(animal.y / CONFIG.tileSize);
       const onLandTile = inBounds(currentTx, currentTy, world.size)
-        && world.tiles[tileIndex(currentTx, currentTy, world.size)] === 1
-        && !world.beachGrid?.[tileIndex(currentTx, currentTy, world.size)];
+        && world.tiles[tileIndex(currentTx, currentTy, world.size)] === 1;
       if (!onLandTile) {
         const clamped = clampEntityPositionToLand(world, animal.x, animal.y, 30);
         if (!clamped) {
@@ -17269,6 +17441,16 @@
         }
         animal.x = clamped.x;
         animal.y = clamped.y;
+        correctedAnimalPlacement = true;
+      }
+      const biomeTx = Math.floor(animal.x / CONFIG.tileSize);
+      const biomeTy = Math.floor(animal.y / CONFIG.tileSize);
+      if (!isAnimalTypeAllowedAtTile(world, animal.type, biomeTx, biomeTy)) {
+        if (!relocateAnimalToAllowedBiome(world, animal, 36)) {
+          world.animals.splice(i, 1);
+          correctedAnimalPlacement = true;
+          continue;
+        }
         correctedAnimalPlacement = true;
       }
       if (animal.fleeTimer > 0) animal.fleeTimer -= dt;
@@ -17298,7 +17480,7 @@
       const nextY = animal.y + dirY * step;
       const tx = Math.floor(nextX / CONFIG.tileSize);
       const ty = Math.floor(nextY / CONFIG.tileSize);
-      if (canMoveAnimalTo(world, tx, ty)) {
+      if (canMoveAnimalTo(world, tx, ty, animal.type)) {
         animal.x = nextX;
         animal.y = nextY;
       } else {
@@ -18756,10 +18938,10 @@
     state.targetResource = inHouse ? null : findNearestResource(combatWorld, state.player);
     state.targetMonster = inHouse
       ? null
-      : findNearestMonster(combatWorld, state.player, MONSTER.attackRange + 12, preferRenderTargets);
+      : findNearestMonster(combatWorld, state.player, PLAYER_ATTACK_REACH, preferRenderTargets);
     state.targetAnimal = inHouse
       ? null
-      : findNearestAnimalAt(combatWorld, state.player, MONSTER.attackRange + 12, preferRenderTargets);
+      : findNearestAnimalAt(combatWorld, state.player, PLAYER_ATTACK_REACH, preferRenderTargets);
     const resourceGate = state.targetResource ? canHarvestResource(state.targetResource) : { ok: true, reason: "" };
     const swordUnlocked = canDamageMonsters(state.player);
     const localShipSeat = getShipSeatInfoForPlayer(getLocalShipPlayerId());
@@ -22276,7 +22458,7 @@
     const targetY = Number.isFinite(selected.targetY) ? selected.targetY : target.y;
 
     setPlayerFacingToward(targetX, targetY);
-    const maxRange = selected.kind === "resource" ? CONFIG.interactRange : MONSTER.attackRange + 8;
+    const maxRange = selected.kind === "resource" ? CONFIG.interactRange : PLAYER_ATTACK_REACH;
     const distToPlayer = Math.hypot(targetX - state.player.x, targetY - state.player.y);
     if (distToPlayer > maxRange) {
       setPrompt("Move closer", 0.65);
