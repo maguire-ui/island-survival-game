@@ -459,6 +459,27 @@ html, body {
   width: 300px;
 }
 
+#shipRepairPanel {
+  right: 20px;
+  bottom: 260px;
+  width: 320px;
+}
+
+#shipRepairStatus {
+  margin-bottom: 8px;
+}
+
+.ship-repair-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.ship-repair-actions .action-btn {
+  margin-top: 0;
+}
+
 #debugPanel {
   left: 20px;
   top: 96px;
@@ -1282,6 +1303,13 @@ button:focus-visible {
   }
 
   #chestPanel {
+    left: 50%;
+    right: auto;
+    transform: translateX(-50%);
+    bottom: calc(236px + env(safe-area-inset-bottom));
+  }
+
+  #shipRepairPanel {
     left: 50%;
     right: auto;
     transform: translateX(-50%);

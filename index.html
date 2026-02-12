@@ -7,7 +7,7 @@
     content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no, viewport-fit=cover"
   />
   <title>Island Survival Game</title>
-  <link rel="stylesheet" href="styles.css?v=20260210-19" />
+  <link rel="stylesheet" href="styles.css?v=20260212-1" />
 </head>
 <body>
   <canvas id="game"></canvas>
@@ -115,6 +115,16 @@
       <button id="destroyChest" class="action-btn danger-btn">Destroy Chest</button>
     </div>
 
+    <div id="shipRepairPanel" class="panel hidden">
+      <div id="shipRepairTitle" class="panel-title">Abandoned Ship</div>
+      <div id="shipRepairStatus" class="panel-hint">Restore this vessel with materials to unlock travel.</div>
+      <div id="shipRepairCost" class="recipe-cost"></div>
+      <div class="ship-repair-actions">
+        <button id="shipRepairBtn" class="action-btn" type="button">Repair Ship</button>
+        <button id="shipRepairClose" class="action-btn secondary-btn" type="button">Close</button>
+      </div>
+    </div>
+
     <div id="hotbar" class="slot-row"></div>
 
     <div id="inventory" class="panel hidden">
@@ -130,6 +140,7 @@
       <button id="giveRobotBtn" class="action-btn">Give Robot</button>
       <button id="spawnCaveBtn" class="action-btn">Spawn Cave Here</button>
       <button id="spawnVillageBtn" class="action-btn">Spawn Village Here</button>
+      <button id="debugPlaceBoatBtn" class="action-btn">Place Boat (Repaired): Off</button>
       <div class="panel-section-title">Time & Simulation</div>
       <button id="forceDayBtn" class="action-btn">Set Day</button>
       <button id="forceNightBtn" class="action-btn">Set Night</button>
@@ -214,6 +225,6 @@
   </div>
 
   <script src="https://unpkg.com/peerjs@1.5.5/dist/peerjs.min.js"></script>
-  <script src="src/main.js?v=20260210-46"></script>
+  <script src="src/main.js?v=20260212-2"></script>
 </body>
 </html>

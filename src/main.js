@@ -26,6 +26,12 @@
   const chestPanelHint = document.getElementById("chestPanelHint");
   const chestSlotsEl = document.getElementById("chestSlots");
   const destroyChestBtn = document.getElementById("destroyChest");
+  const shipRepairPanel = document.getElementById("shipRepairPanel");
+  const shipRepairTitle = document.getElementById("shipRepairTitle");
+  const shipRepairStatus = document.getElementById("shipRepairStatus");
+  const shipRepairCost = document.getElementById("shipRepairCost");
+  const shipRepairBtn = document.getElementById("shipRepairBtn");
+  const shipRepairCloseBtn = document.getElementById("shipRepairClose");
   const endScreen = document.getElementById("endScreen");
   const newRunBtn = document.getElementById("newRunBtn");
   const startScreen = document.getElementById("startScreen");
@@ -67,6 +73,7 @@
   const giveRobotBtn = document.getElementById("giveRobotBtn");
   const spawnCaveBtn = document.getElementById("spawnCaveBtn");
   const spawnVillageBtn = document.getElementById("spawnVillageBtn");
+  const debugPlaceBoatBtn = document.getElementById("debugPlaceBoatBtn");
   const forceDayBtn = document.getElementById("forceDayBtn");
   const forceNightBtn = document.getElementById("forceNightBtn");
   const mosesBtn = document.getElementById("mosesBtn");
@@ -429,6 +436,8 @@
     return acc;
   }, {});
 
+  const DEBUG_REPAIRED_BOAT_ITEM_ID = "debug_repaired_boat";
+
   const ITEMS = {
     wood: { name: "Wood", color: "#c89b5f" },
     stone: { name: "Stone", color: "#a1a4b2" },
@@ -471,6 +480,13 @@
     kiln: { name: "Kiln", color: "#b37d5c", placeable: true, placeType: "kiln" },
     chest: { name: "Chest", color: "#a8794a", placeable: true, placeType: "chest" },
     robot: { name: "Robot", color: "#7aa1c6", placeable: true, placeType: "robot" },
+    [DEBUG_REPAIRED_BOAT_ITEM_ID]: {
+      name: "Boat (Repaired)",
+      color: "#8f6f4f",
+      placeable: true,
+      placeType: "abandoned_ship",
+      debugOnly: true,
+    },
   };
 
   const ITEM_VISUALS = {
@@ -539,6 +555,16 @@
     { id: "campfire", min: 1, max: 1, weight: 5 },
   ];
 
+  const SHIPWRECK_LOOT_TABLE = [
+    { id: "wood", min: 6, max: 18, weight: 28 },
+    { id: "bridge", min: 2, max: 6, weight: 22 },
+    { id: "stick", min: 5, max: 14, weight: 20 },
+    { id: "cooked_meat", min: 1, max: 4, weight: 16 },
+    { id: "plank", min: 3, max: 8, weight: 14 },
+    { id: "medicine", min: 1, max: 2, weight: 10 },
+    { id: "hide", min: 1, max: 3, weight: 8 },
+  ];
+
   const ORE_LEVELS = Object.freeze({
     coal: 3,
     iron_ore: 2,
@@ -602,6 +628,8 @@
     village_path: { name: "Village Path", color: "#b59b6a", blocking: false, walkable: true },
     bridge: { name: "Bridge", color: "#c7b37a", blocking: false, walkable: true },
     dock: { name: "Dock", color: "#c3a76b", blocking: false, walkable: true },
+    shipwreck: { name: "Shipwreck", color: "#9c7a4b", blocking: false, walkable: true, storage: true },
+    abandoned_ship: { name: "Abandoned Ship", color: "#83694a", blocking: false, walkable: true },
     wall: { name: "Wall", color: "#6b4b2c", blocking: true, walkable: false },
     brick_floor: { name: "Brick Floor", color: "#b46a4d", blocking: false, walkable: true },
     brick_wall: { name: "Brick Wall", color: "#a95f45", blocking: true, walkable: false },
@@ -1202,6 +1230,32 @@
   const ABANDONED_ROBOT_OUTER_RING_RATIO = 0.16;
   const ABANDONED_ROBOT_FARTHEST_PERCENT = 0.28;
   const MAX_ISLAND_BRIDGE_GAP_TILES = 15;
+  const SHIPWRECK_STORAGE_SIZE = CHEST_SIZE;
+  const SHIPWRECK_CONFIG = Object.freeze({
+    minPerWorld: 3,
+    maxPerWorld: 6,
+    minPairGapTiles: 5,
+    maxPairGapTiles: 30,
+    minSpacingTiles: 18,
+    pairAttempts: 96,
+  });
+  const ABANDONED_SHIP_CONFIG = Object.freeze({
+    footprint: { w: 4, h: 2 },
+    maxPassengers: 5,
+    minSpawnDistanceFromSpawnTiles: 24,
+    maxSpawnDistanceFromSpawnTiles: 190,
+    speedMax: 136,
+    accel: 190,
+    drag: 0.91,
+    turnSpeed: 2.2,
+    remoteInputTimeout: 0.35,
+    repairCost: Object.freeze({
+      wood: MAX_STACK * 2,
+      stick: MAX_STACK,
+      hide: 26,
+      plank: 18,
+    }),
+  });
 
   const SURFACE_GUARDIAN_CONFIG = Object.freeze({
     spawnInterval: 5.8,
@@ -1424,11 +1478,17 @@
     debugWorldMapVisible: false,
     debugShowAbandonedRobot: false,
     debugContinentalShift: false,
+    debugPlaceRepairedBoat: false,
+    debugBoatPlacePending: false,
     debugIslandDrag: null,
     debugSpeedMultiplier: SETTINGS_DEFAULTS.debugSpeedMultiplier,
     debugWorldSpeedMultiplier: SETTINGS_DEFAULTS.debugWorldSpeedMultiplier,
     ambientFish: [],
     ambientFishSpawnTimer: 0,
+    nearShip: null,
+    activeShipRepair: null,
+    shipActionPending: false,
+    shipControlSendTimer: 0,
   };
 
   let wasNearBench = false;
@@ -1744,6 +1804,8 @@
       state.debugWorldMapVisible = false;
       state.debugShowAbandonedRobot = false;
       state.debugContinentalShift = false;
+      state.debugPlaceRepairedBoat = false;
+      state.debugBoatPlacePending = false;
       state.debugIslandDrag = null;
       state.debugSpeedMultiplier = 1;
       state.debugWorldSpeedMultiplier = 1;
@@ -1758,6 +1820,7 @@
     updateInfiniteResourcesButton();
     updateDebugWorldMapButton();
     updateContinentalShiftButton();
+    updateDebugPlaceBoatButton();
     updateDebugSpeedUI();
     updateDebugWorldSpeedUI();
     if (persist) saveUserSettings();
@@ -1800,6 +1863,20 @@
       ? "Continental Shift: On"
       : "Continental Shift: Off";
     continentalShiftBtn.setAttribute("aria-pressed", enabled ? "true" : "false");
+  }
+
+  function isDebugBoatPlacementActive() {
+    return !!state.debugUnlocked && !!state.debugPlaceRepairedBoat;
+  }
+
+  function updateDebugPlaceBoatButton() {
+    if (!debugPlaceBoatBtn) return;
+    const enabled = isDebugBoatPlacementActive();
+    debugPlaceBoatBtn.disabled = !state.debugUnlocked;
+    debugPlaceBoatBtn.textContent = enabled
+      ? "Place Boat (Repaired): On"
+      : "Place Boat (Repaired): Off";
+    debugPlaceBoatBtn.setAttribute("aria-pressed", enabled ? "true" : "false");
   }
 
   function ensureAudioContext() {
@@ -3735,6 +3812,12 @@
       if (net.isHost) {
         net.connections.delete(conn.peer);
         net.players.delete(conn.peer);
+        const shipChanged = removePlayerFromAllShips(conn.peer);
+        if (shipChanged) {
+          markDirty();
+          const motion = buildMotionUpdate();
+          if (motion) broadcastNet(motion);
+        }
         broadcastNet({ type: "playerLeft", id: conn.peer }, conn.peer);
       } else {
         updateMpStatus("MP: Disconnected");
@@ -3822,6 +3905,21 @@
         break;
       case "robotCommand":
         if (net.isHost) handleRobotCommand(conn, message);
+        break;
+      case "shipAction":
+        if (net.isHost) handleShipAction(conn, message);
+        break;
+      case "shipControl":
+        if (net.isHost) handleShipControl(conn, message);
+        break;
+      case "shipRepairCommit":
+        if (!net.isHost) handleShipRepairCommit(message);
+        break;
+      case "debugBoatPlace":
+        if (net.isHost) handleDebugBoatPlace(conn, message);
+        break;
+      case "debugBoatPlaceResult":
+        if (!net.isHost) handleDebugBoatPlaceResult(message);
         break;
       case "benchRobotControl":
         if (net.isHost) handleBenchRobotControl(conn, message);
@@ -4010,6 +4108,29 @@
         },
       };
       if (structure.meta?.wildSpawn) meta.wildSpawn = true;
+      return meta;
+    }
+    if (structure.type === "abandoned_ship") {
+      const ship = ensureAbandonedShipMeta(structure);
+      if (!ship) return null;
+      const meta = {
+        ship: {
+          x: ship.x,
+          y: ship.y,
+          angle: ship.angle,
+          vx: ship.vx,
+          vy: ship.vy,
+          repaired: !!ship.repaired,
+          damage: ship.damage,
+          driverId: ship.driverId,
+          seats: Array.isArray(ship.seats) ? ship.seats.slice(0, ABANDONED_SHIP_CONFIG.maxPassengers) : [],
+          driverInputX: ship.driverInputX,
+          driverInputY: ship.driverInputY,
+          controlAge: ship.controlAge,
+        },
+      };
+      if (structure.meta?.seeded) meta.seeded = true;
+      if (structure.meta?.debugPlaced) meta.debugPlaced = true;
       return meta;
     }
     if (!structure.meta) return null;
@@ -4256,6 +4377,30 @@
     return robots;
   }
 
+  function serializeShipMotion() {
+    if (!Array.isArray(state.structures)) return [];
+    const ships = [];
+    for (const structure of state.structures) {
+      if (!structure || structure.removed || structure.type !== "abandoned_ship") continue;
+      const ship = ensureAbandonedShipMeta(structure);
+      if (!ship) continue;
+      ships.push({
+        tx: structure.tx,
+        ty: structure.ty,
+        x: ship.x,
+        y: ship.y,
+        angle: ship.angle,
+        vx: ship.vx,
+        vy: ship.vy,
+        repaired: !!ship.repaired,
+        damage: ship.damage,
+        driverId: ship.driverId,
+        seats: Array.isArray(ship.seats) ? ship.seats.slice(0, ABANDONED_SHIP_CONFIG.maxPassengers) : [],
+      });
+    }
+    return ships;
+  }
+
   function buildMotionUpdate() {
     const surface = state.surfaceWorld || state.world;
     if (!surface) return null;
@@ -4270,6 +4415,7 @@
           world: serializeWorldMotion(cave.world),
         })),
       robots: serializeRobotMotion(),
+      ships: serializeShipMotion(),
     };
   }
 
@@ -4315,6 +4461,69 @@
     }
   }
 
+  function findAbandonedShipStructureForMotion(entry) {
+    if (!entry || !Array.isArray(state.structures)) return null;
+    if (Number.isInteger(entry.tx) && Number.isInteger(entry.ty)) {
+      const atTile = getStructureAt(entry.tx, entry.ty);
+      if (atTile && !atTile.removed && atTile.type === "abandoned_ship") {
+        return atTile;
+      }
+    }
+    let best = null;
+    let bestDist = Infinity;
+    for (const structure of state.structures) {
+      if (!structure || structure.removed || structure.type !== "abandoned_ship") continue;
+      const ship = ensureAbandonedShipMeta(structure);
+      if (!ship) continue;
+      const dx = (Number(entry.x) || ship.x) - ship.x;
+      const dy = (Number(entry.y) || ship.y) - ship.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist < bestDist) {
+        best = structure;
+        bestDist = dist;
+      }
+    }
+    return best;
+  }
+
+  function applyShipMotion(ships) {
+    if (!Array.isArray(ships)) return;
+    for (const entry of ships) {
+      const structure = findAbandonedShipStructureForMotion(entry);
+      if (!structure) continue;
+      const ship = ensureAbandonedShipMeta(structure);
+      if (!ship) continue;
+      if (Number.isFinite(entry.x)) ship.x = entry.x;
+      if (Number.isFinite(entry.y)) ship.y = entry.y;
+      if (Number.isFinite(entry.angle)) ship.angle = normalizeAngleRadians(entry.angle);
+      if (Number.isFinite(entry.vx)) ship.vx = entry.vx;
+      if (Number.isFinite(entry.vy)) ship.vy = entry.vy;
+      if (typeof entry.repaired === "boolean") ship.repaired = entry.repaired;
+      if (Number.isFinite(entry.damage)) ship.damage = clamp(entry.damage, 0, 100);
+      ship.driverId = typeof entry.driverId === "string" && entry.driverId.length > 0
+        ? entry.driverId
+        : null;
+      if (Array.isArray(entry.seats)) {
+        ship.seats = Array.from(
+          { length: ABANDONED_SHIP_CONFIG.maxPassengers },
+          (_, index) => {
+            const value = entry.seats[index];
+            return typeof value === "string" && value.length > 0 ? value : null;
+          }
+        );
+      }
+      if (ship.driverId && !ship.seats.includes(ship.driverId)) ship.driverId = null;
+      const incomingTx = Number.isInteger(entry.tx) ? entry.tx : structure.tx;
+      const incomingTy = Number.isInteger(entry.ty) ? entry.ty : structure.ty;
+      if (incomingTx !== structure.tx || incomingTy !== structure.ty) {
+        setStructureFootprintInGrid(structure, false);
+        structure.tx = incomingTx;
+        structure.ty = incomingTy;
+        setStructureFootprintInGrid(structure, true);
+      }
+    }
+  }
+
   function applyNetworkMotion(message) {
     if (!message || !message.seed) return;
     if (!state.surfaceWorld || state.surfaceWorld.seed !== message.seed) return;
@@ -4328,12 +4537,15 @@
       }
     }
     applyRobotMotion(message.robots);
+    applyShipMotion(message.ships);
+    syncShipOccupantPositions();
   }
 
   function applySnapshotStructures(structures) {
     const world = state.surfaceWorld;
     if (!world) return;
     const previousRobotRender = new Map();
+    const previousShipRender = new Map();
     for (const structure of state.structures) {
       if (!structure || structure.removed || structure.type !== "robot") continue;
       const robot = ensureRobotMeta(structure);
@@ -4341,6 +4553,16 @@
       previousRobotRender.set(`${structure.tx},${structure.ty}`, {
         x: Number.isFinite(robot.renderX) ? robot.renderX : robot.x,
         y: Number.isFinite(robot.renderY) ? robot.renderY : robot.y,
+      });
+    }
+    for (const structure of state.structures) {
+      if (!structure || structure.removed || structure.type !== "abandoned_ship") continue;
+      const ship = ensureAbandonedShipMeta(structure);
+      if (!ship) continue;
+      previousShipRender.set(`${structure.tx},${structure.ty}`, {
+        x: Number.isFinite(ship.renderX) ? ship.renderX : ship.x,
+        y: Number.isFinite(ship.renderY) ? ship.renderY : ship.y,
+        angle: Number.isFinite(ship.renderAngle) ? ship.renderAngle : ship.angle,
       });
     }
     const activeHousePos = state.activeHouse ? { tx: state.activeHouse.tx, ty: state.activeHouse.ty } : null;
@@ -4365,7 +4587,7 @@
       if (!isStructureValidOnLoad(world, normalized, bridgeSet, anchoredBridgeSet)) continue;
       const storageSize = normalized.type === "robot"
         ? ROBOT_STORAGE_SIZE
-        : (normalized.type === "chest" ? CHEST_SIZE : null);
+        : ((normalized.type === "chest" || normalized.type === "shipwreck") ? CHEST_SIZE : null);
       clearResourcesForFootprint(world, normalized.type, normalized.tx, normalized.ty);
       const structure = addStructure(normalized.type, normalized.tx, normalized.ty, {
         storage: Array.isArray(entry.storage)
@@ -4377,6 +4599,7 @@
         meta: entry.meta ? JSON.parse(JSON.stringify(entry.meta)) : null,
       });
       if (structure.type === "chest") structure.storage = sanitizeInventorySlots(structure.storage, CHEST_SIZE);
+      if (structure.type === "shipwreck") structure.storage = sanitizeInventorySlots(structure.storage, SHIPWRECK_STORAGE_SIZE);
       if (structure.type === "robot") structure.storage = sanitizeInventorySlots(structure.storage, ROBOT_STORAGE_SIZE);
       if (structure.type === "robot") {
         const robot = ensureRobotMeta(structure);
@@ -4386,11 +4609,20 @@
           robot.renderY = previous.y;
         }
       }
+      if (structure.type === "abandoned_ship") {
+        const ship = ensureAbandonedShipMeta(structure);
+        const previous = previousShipRender.get(`${structure.tx},${structure.ty}`);
+        if (ship && previous) {
+          ship.renderX = previous.x;
+          ship.renderY = previous.y;
+          ship.renderAngle = previous.angle;
+        }
+      }
     }
 
     if (activeChestPos) {
       const chest = getStructureAt(activeChestPos.tx, activeChestPos.ty);
-      if (chest && (chest.type === "chest" || chest.type === "robot")) {
+      if (isSurfaceStorageStructure(chest)) {
         state.activeChest = chest;
       } else {
         closeChest();
@@ -4416,6 +4648,16 @@
         state.player.inHut = false;
       }
     }
+
+    if (state.activeShipRepair) {
+      const repairTarget = getStructureAt(state.activeShipRepair.tx, state.activeShipRepair.ty);
+      if (repairTarget && !repairTarget.removed && repairTarget.type === "abandoned_ship") {
+        state.activeShipRepair = repairTarget;
+      } else {
+        closeShipRepairPanel();
+      }
+    }
+    syncShipOccupantPositions();
   }
 
   function applyPlayersSnapshot(players) {
@@ -4495,6 +4737,7 @@
     if (!state.surfaceWorld || state.surfaceWorld.seed !== snapshot.seed) {
       closeStationMenu();
       closeChest();
+      closeShipRepairPanel();
       closeInventory();
       if (buildMenu) buildMenu.classList.add("hidden");
       selectedSlot = null;
@@ -4813,6 +5056,10 @@
         clearResourceTiles(world, result.clearResourceTiles);
       }
       const itemDef = ITEMS[message.itemId];
+      if (!itemDef || itemDef.debugOnly) {
+        sendFailure();
+        return;
+      }
       if (result.upgradeHouse && result.targetHouse) {
         upgradeHouseStructure(result.targetHouse, itemDef.placeType);
       } else {
@@ -5070,7 +5317,7 @@
     if (!conn || !message) return;
     if (typeof message.tx !== "number" || typeof message.ty !== "number") return;
     const structure = getStructureAt(message.tx, message.ty);
-    if (!structure || (structure.type !== "chest" && structure.type !== "robot")) return;
+    if (!isSurfaceStorageStructure(structure)) return;
     const player = net.players.get(conn.peer);
     if (!player || !canRemotePlayerAccessSurfaceStructure(player, structure, structure.type === "robot" ? 2.1 : 1.95)) {
       return;
@@ -5078,7 +5325,7 @@
     if (structure.type === "robot") {
       ensureRobotMeta(structure);
     }
-    const storageSize = structure.type === "robot" ? ROBOT_STORAGE_SIZE : CHEST_SIZE;
+    const storageSize = structure.type === "robot" ? ROBOT_STORAGE_SIZE : SHIPWRECK_STORAGE_SIZE;
     structure.storage = sanitizeInventorySlots(message.storage, storageSize);
     markDirty();
   }
@@ -5145,6 +5392,180 @@
     if (message.action === "ping") {
       setRobotInteractionPause(structure, ROBOT_CONFIG.interactionPause);
     }
+  }
+
+  function handleShipRepairCommit(message) {
+    if (!message) return;
+    state.shipActionPending = false;
+    const structure = getStructureAt(Math.floor(Number(message.tx)), Math.floor(Number(message.ty)));
+    if (!message.ok) {
+      setPrompt(message.reason || "Repair failed", 1);
+      renderShipRepairPanel();
+      return;
+    }
+    if (!structure || structure.type !== "abandoned_ship") {
+      setPrompt("Repair synchronized", 0.9);
+      renderShipRepairPanel();
+      return;
+    }
+    const cost = (message.cost && typeof message.cost === "object")
+      ? message.cost
+      : ABANDONED_SHIP_CONFIG.repairCost;
+    if (!hasCost(state.inventory, cost)) {
+      setPrompt("Repair confirmed by host", 1.1);
+    } else {
+      applyCost(state.inventory, cost);
+      updateAllSlotUI();
+      markDirty();
+      setPrompt("Abandoned ship repaired", 1.2);
+    }
+    closeShipRepairPanel();
+  }
+
+  function handleDebugBoatPlaceResult(message) {
+    state.debugBoatPlacePending = false;
+    if (!message?.ok) {
+      setPrompt(message?.reason || "Boat placement failed", 1);
+      return;
+    }
+    setPrompt("Repaired boat placed", 1);
+  }
+
+  function sendDebugBoatPlaceResult(conn, requestId, ok, reason = null) {
+    if (!conn?.open) return;
+    const payload = {
+      type: "debugBoatPlaceResult",
+      requestId,
+      ok: !!ok,
+    };
+    if (!ok && reason) payload.reason = reason;
+    conn.send(payload);
+  }
+
+  function handleDebugBoatPlace(conn, message) {
+    if (!conn || !message) return;
+    const requestId = typeof message.requestId === "string" ? message.requestId : null;
+    if (!state.surfaceWorld) {
+      sendDebugBoatPlaceResult(conn, requestId, false, "World not ready");
+      return;
+    }
+    if (!state.debugUnlocked) {
+      sendDebugBoatPlaceResult(conn, requestId, false, "Debug disabled");
+      return;
+    }
+    const player = net.players.get(conn.peer);
+    if (!player) {
+      sendDebugBoatPlaceResult(conn, requestId, false, "Player unavailable");
+      return;
+    }
+    if (player.inCave || player.inHut) {
+      sendDebugBoatPlaceResult(conn, requestId, false, "Cannot place here");
+      return;
+    }
+    const tx = Math.floor(Number(message.tx));
+    const ty = Math.floor(Number(message.ty));
+    if (!Number.isInteger(tx) || !Number.isInteger(ty)) {
+      sendDebugBoatPlaceResult(conn, requestId, false, "Invalid target");
+      return;
+    }
+    if (!inBounds(tx, ty, state.surfaceWorld.size)) {
+      sendDebugBoatPlaceResult(conn, requestId, false, "Out of bounds");
+      return;
+    }
+    const centerX = (tx + 0.5) * CONFIG.tileSize;
+    const centerY = (ty + 0.5) * CONFIG.tileSize;
+    if (!canRemotePlayerReachPoint(player, centerX, centerY, 16)) {
+      sendDebugBoatPlaceResult(conn, requestId, false, "Move closer");
+      return;
+    }
+
+    const placed = placeDebugRepairedBoatAt(state.surfaceWorld, tx, ty);
+    if (!placed.ok) {
+      sendDebugBoatPlaceResult(conn, requestId, false, placed.reason || "Must place on water.");
+      return;
+    }
+
+    markDirty();
+    sendDebugBoatPlaceResult(conn, requestId, true);
+    broadcastNet(buildSnapshot());
+    const motion = buildMotionUpdate();
+    if (motion) broadcastNet(motion);
+  }
+
+  function handleShipAction(conn, message) {
+    if (!conn || !message) return;
+    const player = net.players.get(conn.peer);
+    if (!player || player.inCave || player.inHut) return;
+    if (!Number.isInteger(message.tx) || !Number.isInteger(message.ty)) return;
+    const structure = getStructureAt(message.tx, message.ty);
+    if (!structure || structure.type !== "abandoned_ship") return;
+    const ship = ensureAbandonedShipMeta(structure);
+    if (!ship) return;
+    if (!canRemotePlayerAccessSurfaceStructure(player, structure, 2.35)) return;
+    const action = typeof message.action === "string" ? message.action : "";
+
+    if (action === "board") {
+      removePlayerFromAllShips(conn.peer);
+      const seatIndex = assignPlayerToShip(structure, conn.peer);
+      if (seatIndex == null) return;
+      syncShipOccupantPositions();
+      markDirty();
+      const motion = buildMotionUpdate();
+      if (motion) broadcastNet(motion);
+      return;
+    }
+
+    if (action === "leave") {
+      if (!removePlayerFromAllShips(conn.peer)) return;
+      syncShipOccupantPositions();
+      markDirty();
+      const motion = buildMotionUpdate();
+      if (motion) broadcastNet(motion);
+      return;
+    }
+
+    if (action === "repair") {
+      if (ship.repaired) {
+        if (conn.open) {
+          conn.send({
+            type: "shipRepairCommit",
+            ok: false,
+            tx: structure.tx,
+            ty: structure.ty,
+            reason: "Already repaired",
+          });
+        }
+        return;
+      }
+      ship.repaired = true;
+      ship.vx = 0;
+      ship.vy = 0;
+      markDirty();
+      const motion = buildMotionUpdate();
+      if (motion) broadcastNet(motion);
+      if (conn.open) {
+        conn.send({
+          type: "shipRepairCommit",
+          ok: true,
+          tx: structure.tx,
+          ty: structure.ty,
+          cost: ABANDONED_SHIP_CONFIG.repairCost,
+        });
+      }
+    }
+  }
+
+  function handleShipControl(conn, message) {
+    if (!conn || !message) return;
+    if (!Number.isInteger(message.tx) || !Number.isInteger(message.ty)) return;
+    const structure = getStructureAt(message.tx, message.ty);
+    if (!structure || structure.type !== "abandoned_ship") return;
+    const ship = ensureAbandonedShipMeta(structure);
+    if (!ship) return;
+    if (ship.driverId !== conn.peer) return;
+    ship.driverInputX = clamp(Number(message.inputX) || 0, -1, 1);
+    ship.driverInputY = clamp(Number(message.inputY) || 0, -1, 1);
+    ship.controlAge = 0;
   }
 
   function handleBenchRobotControl(conn, message) {
@@ -5363,6 +5784,7 @@
 
   function handleRespawnMessage(message) {
     if (!state.player) return;
+    removePlayerFromAllShips(getLocalShipPlayerId());
     if (typeof message.hp === "number") state.player.hp = message.hp;
     if (typeof message.maxHp === "number") state.player.maxHp = message.maxHp;
     if (typeof message.x === "number") state.player.x = message.x;
@@ -5383,7 +5805,9 @@
     resetTouchInput();
     closeStationMenu();
     closeChest();
+    closeShipRepairPanel();
     closeInventory();
+    syncShipOccupantPositions();
     updateHealthUI();
     state.respawnLock = false;
   }
@@ -5575,6 +5999,27 @@
             robot.renderY = smoothValue(robot.renderY, robot.y, dt, NET_CONFIG.robotSmooth);
           }
         }
+      }
+      for (const structure of state.structures) {
+        if (!structure || structure.removed || structure.type !== "abandoned_ship") continue;
+        const ship = ensureAbandonedShipMeta(structure);
+        if (!ship) continue;
+        if (ship.renderX == null || ship.renderY == null) {
+          ship.renderX = ship.x;
+          ship.renderY = ship.y;
+          ship.renderAngle = ship.angle;
+          continue;
+        }
+        const drift = Math.hypot(ship.x - ship.renderX, ship.y - ship.renderY);
+        if (drift > CONFIG.tileSize * 10) {
+          ship.renderX = ship.x;
+          ship.renderY = ship.y;
+        } else {
+          ship.renderX = smoothValue(ship.renderX, ship.x, dt, NET_CONFIG.robotSmooth);
+          ship.renderY = smoothValue(ship.renderY, ship.y, dt, NET_CONFIG.robotSmooth);
+        }
+        const angleDelta = normalizeAngleRadians(ship.angle - (ship.renderAngle ?? ship.angle));
+        ship.renderAngle = normalizeAngleRadians((ship.renderAngle ?? ship.angle) + angleDelta * clamp(dt * 10, 0, 1));
       }
     }
 
@@ -6676,7 +7121,9 @@
     }
 
     if (shiftSession && !netIsClient() && Array.isArray(world.animals)) {
+      ensureSeedShipFeatures(world);
       ensureMushroomIslandGreenCows(world, 32);
+      ensureSpawnIslandHarvestAnimals(world, state.spawnTile, 4, 32);
     }
 
     return true;
@@ -9193,33 +9640,61 @@
     return anchored;
   }
 
+  function isWaterStructureType(type) {
+    return type === "bridge"
+      || type === "dock"
+      || type === "shipwreck"
+      || type === "abandoned_ship";
+  }
+
+  function canUseWaterStructureFootprint(world, type, tx, ty, options = {}) {
+    const { ignoreStructureId = null } = options;
+    if (!world) return false;
+    const footprint = getStructureFootprint(type);
+    for (let oy = 0; oy < footprint.h; oy += 1) {
+      for (let ox = 0; ox < footprint.w; ox += 1) {
+        const fx = tx + ox;
+        const fy = ty + oy;
+        if (!inBounds(fx, fy, world.size)) return false;
+        const idx = tileIndex(fx, fy, world.size);
+        if (world.tiles[idx] !== 0) return false;
+        const occupied = getStructureAt(fx, fy);
+        if (occupied && !occupied.removed && occupied.id !== ignoreStructureId) return false;
+      }
+    }
+    return true;
+  }
+
   function isStructureValidOnLoad(world, entry, bridgeSet, anchoredBridgeSet = null) {
     if (!entry || !inBounds(entry.tx, entry.ty, world.size)) return false;
     if (REMOVED_STRUCTURE_TYPES.has(entry.type)) return false;
     const idx = tileIndex(entry.tx, entry.ty, world.size);
     const baseLand = world.tiles[idx] === 1;
 
-    if (entry.type === "bridge" || entry.type === "dock") {
+    if (isWaterStructureType(entry.type)) {
       if (baseLand) return false;
-      const key = `${entry.tx},${entry.ty}`;
-      if (anchoredBridgeSet instanceof Set && !anchoredBridgeSet.has(key)) {
-        return false;
+      if (entry.type === "bridge" || entry.type === "dock") {
+        const key = `${entry.tx},${entry.ty}`;
+        if (anchoredBridgeSet instanceof Set && !anchoredBridgeSet.has(key)) {
+          return false;
+        }
+        if (bridgeTouchesLand(world, entry.tx, entry.ty)) return true;
+        const toKey = (tx, ty) => `${tx},${ty}`;
+        const left = inBounds(entry.tx - 1, entry.ty, world.size)
+          && (world.tiles[tileIndex(entry.tx - 1, entry.ty, world.size)] === 1
+            || bridgeSet?.has(toKey(entry.tx - 1, entry.ty)));
+        const right = inBounds(entry.tx + 1, entry.ty, world.size)
+          && (world.tiles[tileIndex(entry.tx + 1, entry.ty, world.size)] === 1
+            || bridgeSet?.has(toKey(entry.tx + 1, entry.ty)));
+        const up = inBounds(entry.tx, entry.ty - 1, world.size)
+          && (world.tiles[tileIndex(entry.tx, entry.ty - 1, world.size)] === 1
+            || bridgeSet?.has(toKey(entry.tx, entry.ty - 1)));
+        const down = inBounds(entry.tx, entry.ty + 1, world.size)
+          && (world.tiles[tileIndex(entry.tx, entry.ty + 1, world.size)] === 1
+            || bridgeSet?.has(toKey(entry.tx, entry.ty + 1)));
+        if (!(left || right || up || down)) return false;
       }
-      if (bridgeTouchesLand(world, entry.tx, entry.ty)) return true;
-      const toKey = (tx, ty) => `${tx},${ty}`;
-      const left = inBounds(entry.tx - 1, entry.ty, world.size)
-        && (world.tiles[tileIndex(entry.tx - 1, entry.ty, world.size)] === 1
-          || bridgeSet?.has(toKey(entry.tx - 1, entry.ty)));
-      const right = inBounds(entry.tx + 1, entry.ty, world.size)
-        && (world.tiles[tileIndex(entry.tx + 1, entry.ty, world.size)] === 1
-          || bridgeSet?.has(toKey(entry.tx + 1, entry.ty)));
-      const up = inBounds(entry.tx, entry.ty - 1, world.size)
-        && (world.tiles[tileIndex(entry.tx, entry.ty - 1, world.size)] === 1
-          || bridgeSet?.has(toKey(entry.tx, entry.ty - 1)));
-      const down = inBounds(entry.tx, entry.ty + 1, world.size)
-        && (world.tiles[tileIndex(entry.tx, entry.ty + 1, world.size)] === 1
-          || bridgeSet?.has(toKey(entry.tx, entry.ty + 1)));
-      return left || right || up || down;
+      return canUseWaterStructureFootprint(world, entry.type, entry.tx, entry.ty);
     }
 
     if (!baseLand) return false;
@@ -9363,6 +9838,8 @@
   function getStructureFootprint(type) {
     if (type === "medium_house") return { w: 2, h: 1 };
     if (type === "large_house") return { w: 2, h: 2 };
+    if (type === "shipwreck") return { w: 2, h: 2 };
+    if (type === "abandoned_ship") return ABANDONED_SHIP_CONFIG.footprint;
     return { w: 1, h: 1 };
   }
 
@@ -9379,6 +9856,10 @@
     if (structure?.type === "robot") {
       const robotPos = getRobotDisplayPosition(structure, false);
       if (robotPos) return robotPos;
+    }
+    if (structure?.type === "abandoned_ship") {
+      const shipPos = getAbandonedShipDisplayPosition(structure, false);
+      if (shipPos) return { x: shipPos.x, y: shipPos.y };
     }
     const footprint = getStructureFootprint(structure?.type);
     return {
@@ -9588,6 +10069,110 @@
     robot.pauseTimer = Math.max(robot.pauseTimer || 0, duration);
   }
 
+  function getLocalShipPlayerId() {
+    return net.playerId || "local";
+  }
+
+  function normalizeAngleRadians(angle) {
+    if (!Number.isFinite(angle)) return 0;
+    let wrapped = angle % (Math.PI * 2);
+    if (wrapped > Math.PI) wrapped -= Math.PI * 2;
+    if (wrapped < -Math.PI) wrapped += Math.PI * 2;
+    return wrapped;
+  }
+
+  function getAbandonedShipSeatOffsets() {
+    const seatA = CONFIG.tileSize * 0.32;
+    const seatB = CONFIG.tileSize * 0.68;
+    return [
+      { x: -seatA, y: -seatA * 0.45 },
+      { x: seatA * 0.1, y: -seatA * 0.45 },
+      { x: seatB, y: -seatA * 0.45 },
+      { x: -seatA * 0.5, y: seatA * 0.52 },
+      { x: seatA * 0.52, y: seatA * 0.52 },
+    ].slice(0, ABANDONED_SHIP_CONFIG.maxPassengers);
+  }
+
+  function createAbandonedShipMeta(tx, ty) {
+    const footprint = getStructureFootprint("abandoned_ship");
+    const centerX = (tx + footprint.w * 0.5) * CONFIG.tileSize;
+    const centerY = (ty + footprint.h * 0.5) * CONFIG.tileSize;
+    return {
+      ship: {
+        x: centerX,
+        y: centerY,
+        renderX: centerX,
+        renderY: centerY,
+        angle: 0,
+        renderAngle: 0,
+        vx: 0,
+        vy: 0,
+        repaired: false,
+        damage: 0,
+        driverId: null,
+        seats: Array.from({ length: ABANDONED_SHIP_CONFIG.maxPassengers }, () => null),
+        driverInputX: 0,
+        driverInputY: 0,
+        controlAge: 0,
+      },
+    };
+  }
+
+  function ensureAbandonedShipMeta(structure) {
+    if (!structure || structure.type !== "abandoned_ship") return null;
+    if (!structure.meta || typeof structure.meta !== "object") {
+      structure.meta = createAbandonedShipMeta(structure.tx, structure.ty);
+    }
+    if (!structure.meta.ship || typeof structure.meta.ship !== "object") {
+      structure.meta.ship = createAbandonedShipMeta(structure.tx, structure.ty).ship;
+    }
+    const ship = structure.meta.ship;
+    const footprint = getStructureFootprint("abandoned_ship");
+    const defaultX = (structure.tx + footprint.w * 0.5) * CONFIG.tileSize;
+    const defaultY = (structure.ty + footprint.h * 0.5) * CONFIG.tileSize;
+    if (!Number.isFinite(ship.x)) ship.x = defaultX;
+    if (!Number.isFinite(ship.y)) ship.y = defaultY;
+    if (!Number.isFinite(ship.renderX)) ship.renderX = ship.x;
+    if (!Number.isFinite(ship.renderY)) ship.renderY = ship.y;
+    ship.angle = normalizeAngleRadians(ship.angle);
+    ship.renderAngle = normalizeAngleRadians(
+      Number.isFinite(ship.renderAngle) ? ship.renderAngle : ship.angle
+    );
+    ship.vx = Number.isFinite(ship.vx) ? ship.vx : 0;
+    ship.vy = Number.isFinite(ship.vy) ? ship.vy : 0;
+    ship.repaired = !!ship.repaired;
+    ship.damage = clamp(Number(ship.damage) || 0, 0, 100);
+    ship.driverInputX = clamp(Number(ship.driverInputX) || 0, -1, 1);
+    ship.driverInputY = clamp(Number(ship.driverInputY) || 0, -1, 1);
+    ship.controlAge = Math.max(0, Number(ship.controlAge) || 0);
+    const maxSeats = ABANDONED_SHIP_CONFIG.maxPassengers;
+    const seats = Array.from({ length: maxSeats }, (_, index) => {
+      const value = Array.isArray(ship.seats) ? ship.seats[index] : null;
+      return typeof value === "string" && value.length > 0 ? value : null;
+    });
+    ship.seats = seats;
+    ship.driverId = typeof ship.driverId === "string" && ship.driverId.length > 0
+      ? ship.driverId
+      : null;
+    if (ship.driverId && !ship.seats.includes(ship.driverId)) {
+      ship.driverId = null;
+    }
+    if (!ship.driverId) {
+      ship.driverId = ship.seats.find((id) => typeof id === "string") || null;
+    }
+    return ship;
+  }
+
+  function getAbandonedShipDisplayPosition(structure, useRenderPosition = false) {
+    const ship = ensureAbandonedShipMeta(structure);
+    if (!ship) return null;
+    return {
+      x: useRenderPosition && Number.isFinite(ship.renderX) ? ship.renderX : ship.x,
+      y: useRenderPosition && Number.isFinite(ship.renderY) ? ship.renderY : ship.y,
+      angle: useRenderPosition && Number.isFinite(ship.renderAngle) ? ship.renderAngle : ship.angle,
+    };
+  }
+
   function isInventoryFull(inventory) {
     if (!Array.isArray(inventory) || inventory.length === 0) return true;
     for (const slot of inventory) {
@@ -9670,6 +10255,15 @@
     }
     if (type === "robot") {
       ensureRobotMeta(structure);
+    }
+    if (type === "abandoned_ship") {
+      ensureAbandonedShipMeta(structure);
+    }
+    if (type === "shipwreck") {
+      structure.storage = sanitizeInventorySlots(
+        structure.storage,
+        SHIPWRECK_STORAGE_SIZE
+      );
     }
     state.structures.push(structure);
     setStructureFootprintInGrid(structure, true);
@@ -10344,6 +10938,633 @@
     return ensureSingleWildSpawnRobot(world);
   }
 
+  function getWeightedLootEntry(rng, table) {
+    if (!Array.isArray(table) || table.length === 0) return null;
+    const totalWeight = table.reduce((sum, entry) => sum + Math.max(0, Number(entry?.weight) || 0), 0);
+    if (totalWeight <= 0) return null;
+    let roll = rng() * totalWeight;
+    for (const entry of table) {
+      roll -= Math.max(0, Number(entry?.weight) || 0);
+      if (roll <= 0) return entry;
+    }
+    return table[table.length - 1];
+  }
+
+  function fillShipwreckStorageForSeed(storage, seedInt, wreckIndex) {
+    if (!Array.isArray(storage)) return;
+    for (const slot of storage) {
+      slot.id = null;
+      slot.qty = 0;
+    }
+    const rng = makeRng((seedInt ^ (wreckIndex * 1103515245)) >>> 0);
+    const picks = 3 + Math.floor(rng() * 3);
+    for (let i = 0; i < picks; i += 1) {
+      const loot = getWeightedLootEntry(rng, SHIPWRECK_LOOT_TABLE);
+      if (!loot?.id || !ITEMS[loot.id]) continue;
+      const min = Math.max(1, Math.floor(Number(loot.min) || 1));
+      const max = Math.max(min, Math.floor(Number(loot.max) || min));
+      const qty = min + Math.floor(rng() * (max - min + 1));
+      addItem(storage, loot.id, clamp(qty, 1, MAX_STACK));
+    }
+  }
+
+  function getStructureCenterTile(type, tx, ty) {
+    const footprint = getStructureFootprint(type);
+    return {
+      x: tx + footprint.w * 0.5,
+      y: ty + footprint.h * 0.5,
+    };
+  }
+
+  function getStructureAnchorForCenterTile(type, centerX, centerY) {
+    const footprint = getStructureFootprint(type);
+    return {
+      tx: Math.round(centerX - footprint.w * 0.5),
+      ty: Math.round(centerY - footprint.h * 0.5),
+    };
+  }
+
+  function getAllSurfaceStructureAnchors(type) {
+    if (!Array.isArray(state.structures)) return [];
+    return state.structures.filter((structure) => (
+      structure
+      && !structure.removed
+      && structure.type === type
+    ));
+  }
+
+  function generateSeededShipwreckPlacements(world) {
+    if (!world || !Array.isArray(world.islands)) return [];
+    const seedInt = Number.isFinite(world.seedInt) ? world.seedInt : seedToInt(String(world.seed || "island-1"));
+    const candidates = [];
+    const islands = world.islands;
+    const maxPairGap = Math.max(SHIPWRECK_CONFIG.minPairGapTiles + 1, SHIPWRECK_CONFIG.maxPairGapTiles);
+    const targetCount = clamp(
+      Math.floor(islands.length / 8),
+      SHIPWRECK_CONFIG.minPerWorld,
+      SHIPWRECK_CONFIG.maxPerWorld
+    );
+
+    for (let i = 0; i < islands.length; i += 1) {
+      const a = islands[i];
+      if (!a || a.radius < 5) continue;
+      for (let j = i + 1; j < islands.length; j += 1) {
+        const b = islands[j];
+        if (!b || b.radius < 5) continue;
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const dist = Math.hypot(dx, dy);
+        if (dist <= 0.001) continue;
+        const edgeGap = dist - (a.radius + b.radius);
+        if (edgeGap < SHIPWRECK_CONFIG.minPairGapTiles || edgeGap > maxPairGap) continue;
+        const nx = dx / dist;
+        const ny = dy / dist;
+        const px = -ny;
+        const py = nx;
+        const span = Math.max(1, edgeGap * 0.5);
+        for (let attempt = 0; attempt < 4; attempt += 1) {
+          const noiseA = rand2d(seedInt + i * 17 + attempt * 11, seedInt + j * 31 + 91, seedInt + 7003);
+          const noiseB = rand2d(seedInt + j * 29 + attempt * 13, seedInt + i * 43 + 127, seedInt + 9411);
+          const t = 0.35 + noiseA * 0.3;
+          const lateral = (noiseB - 0.5) * span;
+          const centerX = a.x + dx * t + px * lateral;
+          const centerY = a.y + dy * t + py * lateral;
+          const anchor = getStructureAnchorForCenterTile("shipwreck", centerX, centerY);
+          const key = `${anchor.tx},${anchor.ty}`;
+          const score = rand2d(seedInt + i * 131 + j * 197, attempt * 19 + 73, seedInt + 15491);
+          candidates.push({
+            tx: anchor.tx,
+            ty: anchor.ty,
+            centerX,
+            centerY,
+            key,
+            score,
+          });
+        }
+      }
+    }
+
+    candidates.sort((a, b) => (
+      b.score - a.score
+      || a.tx - b.tx
+      || a.ty - b.ty
+    ));
+
+    const placements = [];
+    const seen = new Set();
+    for (const candidate of candidates) {
+      if (placements.length >= targetCount) break;
+      if (seen.has(candidate.key)) continue;
+      if (!canUseWaterStructureFootprint(world, "shipwreck", candidate.tx, candidate.ty)) continue;
+      const tooClose = placements.some((entry) => {
+        const ax = entry.tx + 1;
+        const ay = entry.ty + 1;
+        const bx = candidate.tx + 1;
+        const by = candidate.ty + 1;
+        return Math.hypot(ax - bx, ay - by) < SHIPWRECK_CONFIG.minSpacingTiles;
+      });
+      if (tooClose) continue;
+      placements.push({ tx: candidate.tx, ty: candidate.ty });
+      seen.add(candidate.key);
+    }
+
+    if (placements.length >= targetCount) return placements;
+    const fallbackRng = makeRng((seedInt ^ 0x8d3a5f91) >>> 0);
+    for (let attempt = 0; attempt < SHIPWRECK_CONFIG.pairAttempts; attempt += 1) {
+      if (placements.length >= targetCount) break;
+      const island = islands[Math.floor(fallbackRng() * islands.length)];
+      if (!island) continue;
+      const angle = fallbackRng() * Math.PI * 2;
+      const dist = island.radius + 3 + fallbackRng() * 11;
+      const centerX = island.x + Math.cos(angle) * dist;
+      const centerY = island.y + Math.sin(angle) * dist;
+      const anchor = getStructureAnchorForCenterTile("shipwreck", centerX, centerY);
+      if (!canUseWaterStructureFootprint(world, "shipwreck", anchor.tx, anchor.ty)) continue;
+      const tooClose = placements.some((entry) => (
+        Math.hypot((entry.tx + 1) - (anchor.tx + 1), (entry.ty + 1) - (anchor.ty + 1)) < SHIPWRECK_CONFIG.minSpacingTiles
+      ));
+      if (tooClose) continue;
+      placements.push({ tx: anchor.tx, ty: anchor.ty });
+    }
+
+    return placements;
+  }
+
+  function ensureSeededShipwrecks(world) {
+    if (!world || !Array.isArray(state.structures)) return false;
+    const seedInt = Number.isFinite(world.seedInt) ? world.seedInt : seedToInt(String(world.seed || "island-1"));
+    const placements = generateSeededShipwreckPlacements(world);
+    const byIndex = new Map();
+    const toRemove = [];
+    let changed = false;
+
+    for (const structure of getAllSurfaceStructureAnchors("shipwreck")) {
+      const index = Number.isInteger(structure?.meta?.shipwreckIndex) ? structure.meta.shipwreckIndex : null;
+      if (index == null || index < 0 || index >= placements.length) {
+        toRemove.push(structure);
+        continue;
+      }
+      if (byIndex.has(index)) {
+        toRemove.push(structure);
+        continue;
+      }
+      byIndex.set(index, structure);
+    }
+
+    for (const structure of toRemove) {
+      removeStructure(structure);
+      changed = true;
+    }
+
+    for (let index = 0; index < placements.length; index += 1) {
+      const placement = placements[index];
+      const existing = byIndex.get(index);
+      if (existing) {
+        const validSpot = canUseWaterStructureFootprint(world, "shipwreck", placement.tx, placement.ty, {
+          ignoreStructureId: existing.id,
+        });
+        if (!validSpot) {
+          removeStructure(existing);
+          changed = true;
+          byIndex.delete(index);
+        } else if (existing.tx !== placement.tx || existing.ty !== placement.ty) {
+          setStructureFootprintInGrid(existing, false);
+          existing.tx = placement.tx;
+          existing.ty = placement.ty;
+          setStructureFootprintInGrid(existing, true);
+          changed = true;
+        }
+      }
+
+      if (!byIndex.has(index)) {
+        if (!canUseWaterStructureFootprint(world, "shipwreck", placement.tx, placement.ty)) continue;
+        const structure = addStructure("shipwreck", placement.tx, placement.ty, {
+          storage: createEmptyInventory(SHIPWRECK_STORAGE_SIZE),
+          meta: {
+            seeded: true,
+            shipwreckIndex: index,
+          },
+        });
+        fillShipwreckStorageForSeed(structure.storage, seedInt, index);
+        changed = true;
+        continue;
+      }
+
+      const kept = byIndex.get(index);
+      if (!kept.meta) kept.meta = {};
+      kept.meta.seeded = true;
+      kept.meta.shipwreckIndex = index;
+      kept.storage = sanitizeInventorySlots(kept.storage, SHIPWRECK_STORAGE_SIZE);
+    }
+
+    return changed;
+  }
+
+  function getSpawnAnchorTile(world) {
+    const spawn = state.spawnTile || findSpawnTile(world);
+    return {
+      x: Number.isFinite(spawn?.x) ? spawn.x + 0.5 : world.size * 0.5,
+      y: Number.isFinite(spawn?.y) ? spawn.y + 0.5 : world.size * 0.5,
+    };
+  }
+
+  function isAbandonedShipStructureValid(world, structure, outerIslands = null) {
+    if (!world || !structure || structure.removed || structure.type !== "abandoned_ship") return false;
+    if (!canUseWaterStructureFootprint(world, structure.type, structure.tx, structure.ty, { ignoreStructureId: structure.id })) {
+      return false;
+    }
+    const center = getStructureCenterTile(structure.type, structure.tx, structure.ty);
+    const spawn = getSpawnAnchorTile(world);
+    const spawnDist = Math.hypot(center.x - spawn.x, center.y - spawn.y);
+    if (spawnDist < ABANDONED_SHIP_CONFIG.minSpawnDistanceFromSpawnTiles) return false;
+    if (spawnDist > ABANDONED_SHIP_CONFIG.maxSpawnDistanceFromSpawnTiles) return false;
+    const nearestIsland = getIslandForTile(world, Math.floor(center.x), Math.floor(center.y));
+    if (nearestIsland) return false;
+    if (!Array.isArray(outerIslands) || outerIslands.length === 0) return true;
+    return outerIslands.some((island) => {
+      const dist = Math.hypot(center.x - island.x, center.y - island.y);
+      return dist <= island.radius + 16;
+    });
+  }
+
+  function findAbandonedShipPlacement(world) {
+    if (!world || !Array.isArray(world.islands)) return null;
+    const seedInt = Number.isFinite(world.seedInt) ? world.seedInt : seedToInt(String(world.seed || "island-1"));
+    const outerIslands = getOutermostIslandsForWildRobot(world);
+    if (outerIslands.length === 0) return null;
+    const spawn = getSpawnAnchorTile(world);
+    const islandStart = Math.floor(rand2d(seedInt + 17, seedInt + 41, seedInt + 73) * outerIslands.length);
+
+    for (let order = 0; order < outerIslands.length; order += 1) {
+      const island = outerIslands[(islandStart + order) % outerIslands.length];
+      if (!island) continue;
+      for (let attempt = 0; attempt < 48; attempt += 1) {
+        const a = rand2d(seedInt + order * 31 + attempt * 13, seedInt + 191, seedInt + 4001);
+        const b = rand2d(seedInt + order * 43 + attempt * 17, seedInt + 317, seedInt + 5171);
+        const angle = a * Math.PI * 2;
+        const ring = island.radius + 3 + b * 10;
+        const centerX = island.x + Math.cos(angle) * ring;
+        const centerY = island.y + Math.sin(angle) * ring;
+        const spawnDist = Math.hypot(centerX - spawn.x, centerY - spawn.y);
+        if (spawnDist < ABANDONED_SHIP_CONFIG.minSpawnDistanceFromSpawnTiles) continue;
+        if (spawnDist > ABANDONED_SHIP_CONFIG.maxSpawnDistanceFromSpawnTiles) continue;
+        const anchor = getStructureAnchorForCenterTile("abandoned_ship", centerX, centerY);
+        if (!canUseWaterStructureFootprint(world, "abandoned_ship", anchor.tx, anchor.ty)) continue;
+        const nearOuter = outerIslands.some((candidateIsland) => {
+          const dist = Math.hypot(centerX - candidateIsland.x, centerY - candidateIsland.y);
+          return dist <= candidateIsland.radius + 16;
+        });
+        if (!nearOuter) continue;
+        return anchor;
+      }
+    }
+    return null;
+  }
+
+  function ensureSingleAbandonedShip(world = state.surfaceWorld || state.world) {
+    if (!world || !Array.isArray(state.structures)) return false;
+    const outerIslands = getOutermostIslandsForWildRobot(world);
+    const allShips = getAllSurfaceStructureAnchors("abandoned_ship")
+      .slice()
+      .sort((a, b) => (a.tx - b.tx) || (a.ty - b.ty) || ((a.id || 0) - (b.id || 0)));
+    const ships = allShips.filter((structure) => !structure?.meta?.debugPlaced);
+    let changed = false;
+    let keep = null;
+
+    for (const structure of ships) {
+      if (!keep) {
+        keep = structure;
+        continue;
+      }
+      removeStructure(structure);
+      changed = true;
+    }
+
+    if (keep && !isAbandonedShipStructureValid(world, keep, outerIslands)) {
+      removeStructure(keep);
+      keep = null;
+      changed = true;
+    }
+
+    if (!keep) {
+      const placement = findAbandonedShipPlacement(world);
+      if (placement && canUseWaterStructureFootprint(world, "abandoned_ship", placement.tx, placement.ty)) {
+        const ship = addStructure("abandoned_ship", placement.tx, placement.ty, {
+          meta: {
+            seeded: true,
+          },
+        });
+        ensureAbandonedShipMeta(ship);
+        changed = true;
+      }
+    }
+
+    return changed;
+  }
+
+  function ensureSeedShipFeatures(world = state.surfaceWorld || state.world) {
+    if (!world) return false;
+    let changed = false;
+    if (ensureSingleAbandonedShip(world)) changed = true;
+    if (ensureSeededShipwrecks(world)) changed = true;
+    return changed;
+  }
+
+  function getAbandonedShipStructures() {
+    if (!Array.isArray(state.structures)) return [];
+    return state.structures.filter((structure) => (
+      structure
+      && !structure.removed
+      && structure.type === "abandoned_ship"
+    ));
+  }
+
+  function getShipSeatInfoForPlayer(playerId) {
+    if (!playerId) return null;
+    for (const structure of getAbandonedShipStructures()) {
+      const ship = ensureAbandonedShipMeta(structure);
+      if (!ship || !Array.isArray(ship.seats)) continue;
+      const seatIndex = ship.seats.indexOf(playerId);
+      if (seatIndex >= 0) {
+        return {
+          structure,
+          ship,
+          seatIndex,
+          isDriver: ship.driverId === playerId,
+        };
+      }
+    }
+    return null;
+  }
+
+  function getShipSeatWorldPosition(structure, seatIndex, useRender = false) {
+    const shipPos = getAbandonedShipDisplayPosition(structure, useRender);
+    if (!shipPos) return null;
+    const offsets = getAbandonedShipSeatOffsets();
+    const seat = offsets[clamp(seatIndex, 0, offsets.length - 1)] || offsets[0];
+    const cos = Math.cos(shipPos.angle);
+    const sin = Math.sin(shipPos.angle);
+    const localX = Number(seat?.x) || 0;
+    const localY = Number(seat?.y) || 0;
+    return {
+      x: shipPos.x + localX * cos - localY * sin,
+      y: shipPos.y + localX * sin + localY * cos,
+      angle: shipPos.angle,
+    };
+  }
+
+  function removePlayerFromShipStructure(structure, playerId) {
+    const ship = ensureAbandonedShipMeta(structure);
+    if (!ship || !playerId) return false;
+    let changed = false;
+    for (let i = 0; i < ship.seats.length; i += 1) {
+      if (ship.seats[i] !== playerId) continue;
+      ship.seats[i] = null;
+      changed = true;
+    }
+    if (ship.driverId === playerId) {
+      ship.driverId = ship.seats.find((id) => typeof id === "string" && id.length > 0) || null;
+      changed = true;
+    }
+    if (!ship.driverId) {
+      ship.driverInputX = 0;
+      ship.driverInputY = 0;
+      ship.controlAge = 0;
+      ship.vx = 0;
+      ship.vy = 0;
+    }
+    return changed;
+  }
+
+  function removePlayerFromAllShips(playerId) {
+    if (!playerId) return false;
+    let changed = false;
+    for (const structure of getAbandonedShipStructures()) {
+      if (removePlayerFromShipStructure(structure, playerId)) changed = true;
+    }
+    return changed;
+  }
+
+  function assignPlayerToShip(structure, playerId) {
+    const ship = ensureAbandonedShipMeta(structure);
+    if (!ship || !playerId) return null;
+    const existingSeat = ship.seats.indexOf(playerId);
+    if (existingSeat >= 0) {
+      if (!ship.driverId) ship.driverId = playerId;
+      return existingSeat;
+    }
+    const seatIndex = ship.seats.findIndex((id) => !id);
+    if (seatIndex < 0) return null;
+    ship.seats[seatIndex] = playerId;
+    if (!ship.driverId) ship.driverId = playerId;
+    return seatIndex;
+  }
+
+  function pruneShipOccupants(structure) {
+    const ship = ensureAbandonedShipMeta(structure);
+    if (!ship) return false;
+    const valid = new Set([getLocalShipPlayerId()]);
+    for (const id of net.players.keys()) valid.add(id);
+    let changed = false;
+    for (let i = 0; i < ship.seats.length; i += 1) {
+      const occupantId = ship.seats[i];
+      if (!occupantId || valid.has(occupantId)) continue;
+      ship.seats[i] = null;
+      changed = true;
+    }
+    if (ship.driverId && !valid.has(ship.driverId)) {
+      ship.driverId = null;
+      changed = true;
+    }
+    if (!ship.driverId) {
+      const fallbackDriver = ship.seats.find((id) => typeof id === "string" && id.length > 0) || null;
+      if (fallbackDriver !== ship.driverId) {
+        ship.driverId = fallbackDriver;
+        changed = true;
+      }
+    }
+    if (!ship.driverId) {
+      ship.driverInputX = 0;
+      ship.driverInputY = 0;
+      ship.controlAge = 0;
+      ship.vx = 0;
+      ship.vy = 0;
+    }
+    return changed;
+  }
+
+  function syncShipOccupantPositions() {
+    const localSeatInfo = getShipSeatInfoForPlayer(getLocalShipPlayerId());
+    if (localSeatInfo && state.player && !state.inCave && !state.player.inHut) {
+      const pos = getShipSeatWorldPosition(localSeatInfo.structure, localSeatInfo.seatIndex, !net.isHost);
+      if (pos) {
+        state.player.x = pos.x;
+        state.player.y = pos.y;
+        state.player.facing.x = Math.cos(pos.angle);
+        state.player.facing.y = Math.sin(pos.angle);
+      }
+    }
+
+    for (const remote of net.players.values()) {
+      if (!remote || remote.inCave || remote.inHut) continue;
+      const seatInfo = getShipSeatInfoForPlayer(remote.id);
+      if (!seatInfo) continue;
+      const pos = getShipSeatWorldPosition(seatInfo.structure, seatInfo.seatIndex, !net.isHost);
+      if (!pos) continue;
+      remote.x = pos.x;
+      remote.y = pos.y;
+      remote.renderX = pos.x;
+      remote.renderY = pos.y;
+      remote.facing = {
+        x: Math.cos(pos.angle),
+        y: Math.sin(pos.angle),
+      };
+    }
+  }
+
+  function getShipAnchorForWorldPosition(structure, worldX, worldY) {
+    const centerTileX = worldX / CONFIG.tileSize;
+    const centerTileY = worldY / CONFIG.tileSize;
+    return getStructureAnchorForCenterTile(structure.type, centerTileX, centerTileY);
+  }
+
+  function canAbandonedShipOccupyAt(world, structure, worldX, worldY) {
+    if (!world || !structure) return false;
+    const anchor = getShipAnchorForWorldPosition(structure, worldX, worldY);
+    return canUseWaterStructureFootprint(world, structure.type, anchor.tx, anchor.ty, {
+      ignoreStructureId: structure.id,
+    });
+  }
+
+  function moveAbandonedShipStructureTo(world, structure, worldX, worldY) {
+    if (!world || !structure) return false;
+    const ship = ensureAbandonedShipMeta(structure);
+    if (!ship) return false;
+    if (!canAbandonedShipOccupyAt(world, structure, worldX, worldY)) return false;
+    const anchor = getShipAnchorForWorldPosition(structure, worldX, worldY);
+    if (anchor.tx !== structure.tx || anchor.ty !== structure.ty) {
+      setStructureFootprintInGrid(structure, false);
+      structure.tx = anchor.tx;
+      structure.ty = anchor.ty;
+      setStructureFootprintInGrid(structure, true);
+    }
+    ship.x = worldX;
+    ship.y = worldY;
+    return true;
+  }
+
+  function getDriverInputForShip(structure, ship) {
+    if (!ship?.driverId) return { x: 0, y: 0 };
+    const driverId = ship.driverId;
+    if (driverId === getLocalShipPlayerId()) {
+      const uiLock = inventoryOpen
+        || !!state.activeStation
+        || !!state.activeChest
+        || !!state.activeShipRepair
+        || state.gameWon;
+      return uiLock ? { x: 0, y: 0 } : getMoveVector();
+    }
+    if (ship.controlAge > ABANDONED_SHIP_CONFIG.remoteInputTimeout) {
+      return { x: 0, y: 0 };
+    }
+    return {
+      x: clamp(Number(ship.driverInputX) || 0, -1, 1),
+      y: clamp(Number(ship.driverInputY) || 0, -1, 1),
+    };
+  }
+
+  function updateAbandonedShips(dt) {
+    const world = state.surfaceWorld;
+    if (!world) return;
+    if (netIsClientReady()) {
+      const localSeat = getShipSeatInfoForPlayer(getLocalShipPlayerId());
+      if (localSeat?.isDriver) {
+        const input = getMoveVector();
+        state.shipControlSendTimer -= dt;
+        if (state.shipControlSendTimer <= 0) {
+          sendShipControlInput(localSeat.structure, input.x, input.y);
+          state.shipControlSendTimer = 0.05;
+        }
+      } else {
+        state.shipControlSendTimer = 0;
+      }
+      syncShipOccupantPositions();
+      return;
+    }
+    let changed = false;
+
+    for (const structure of getAbandonedShipStructures()) {
+      const ship = ensureAbandonedShipMeta(structure);
+      if (!ship) continue;
+      if (pruneShipOccupants(structure)) changed = true;
+
+      ship.controlAge = Math.max(0, ship.controlAge + dt);
+      if (!ship.repaired) {
+        ship.vx = 0;
+        ship.vy = 0;
+      }
+
+      const input = ship.repaired ? getDriverInputForShip(structure, ship) : { x: 0, y: 0 };
+      const turn = clamp(input.x, -1, 1);
+      const throttle = clamp(-input.y, -1, 1);
+      if (Math.abs(turn) > 0.001) {
+        const turnScalar = 0.45 + Math.abs(throttle) * 0.55;
+        ship.angle = normalizeAngleRadians(ship.angle + turn * ABANDONED_SHIP_CONFIG.turnSpeed * turnScalar * dt);
+      }
+      if (ship.repaired && Math.abs(throttle) > 0.001) {
+        ship.vx += Math.cos(ship.angle) * throttle * ABANDONED_SHIP_CONFIG.accel * dt;
+        ship.vy += Math.sin(ship.angle) * throttle * ABANDONED_SHIP_CONFIG.accel * dt;
+      }
+
+      ship.vx *= Math.pow(ABANDONED_SHIP_CONFIG.drag, dt * 60);
+      ship.vy *= Math.pow(ABANDONED_SHIP_CONFIG.drag, dt * 60);
+      const speed = Math.hypot(ship.vx, ship.vy);
+      if (speed > ABANDONED_SHIP_CONFIG.speedMax) {
+        const scale = ABANDONED_SHIP_CONFIG.speedMax / speed;
+        ship.vx *= scale;
+        ship.vy *= scale;
+      } else if (speed < 0.6) {
+        ship.vx = 0;
+        ship.vy = 0;
+      }
+
+      const targetX = ship.x + ship.vx * dt;
+      const targetY = ship.y + ship.vy * dt;
+      let moved = false;
+      if (canAbandonedShipOccupyAt(world, structure, targetX, targetY)) {
+        moved = moveAbandonedShipStructureTo(world, structure, targetX, targetY);
+      } else {
+        const canX = canAbandonedShipOccupyAt(world, structure, targetX, ship.y);
+        const canY = canAbandonedShipOccupyAt(world, structure, ship.x, targetY);
+        if (canX) {
+          moved = moveAbandonedShipStructureTo(world, structure, targetX, ship.y) || moved;
+          ship.vy *= 0.35;
+        } else if (canY) {
+          moved = moveAbandonedShipStructureTo(world, structure, ship.x, targetY) || moved;
+          ship.vx *= 0.35;
+        } else {
+          ship.vx = 0;
+          ship.vy = 0;
+        }
+      }
+      if (moved || Math.abs(turn) > 0.001 || Math.abs(throttle) > 0.001) changed = true;
+    }
+
+    if (changed && !netIsClientReady()) markDirty();
+    syncShipOccupantPositions();
+  }
+
+  function sendShipControlInput(structure, inputX, inputY) {
+    if (!netIsClientReady() || !structure) return;
+    sendToHost({
+      type: "shipControl",
+      tx: structure.tx,
+      ty: structure.ty,
+      inputX: clamp(Number(inputX) || 0, -1, 1),
+      inputY: clamp(Number(inputY) || 0, -1, 1),
+    });
+  }
+
   function startNewGame(seedStr) {
     const normalizedSeed = normalizeSeedValue(seedStr);
     const world = generateWorld(normalizedSeed);
@@ -10369,6 +11590,7 @@
     world.nextVillagerId = world.nextVillagerId || 1;
     seedSurfaceAnimals(world, 24);
     const spawn = findSpawnTile(world);
+    ensureSpawnIslandHarvestAnimals(world, spawn, 4, 32);
     state.spawnTile = spawn;
     state.timeOfDay = 0;
     state.isNight = false;
@@ -10410,6 +11632,10 @@
     state.targetResource = null;
     state.activeStation = null;
     state.activeChest = null;
+    closeShipRepairPanel();
+    state.shipControlSendTimer = 0;
+    state.nearShip = null;
+    state.debugBoatPlacePending = false;
     state.ambientFish = [];
     state.ambientFishSpawnTimer = 0;
 
@@ -10417,6 +11643,7 @@
     addStructure("bench", benchSpot.tx, benchSpot.ty, { meta: { spawnBench: true } });
     seedSurfaceVillages(world);
     ensureGuaranteedOuterWildRobot(world);
+    ensureSeedShipFeatures(world);
     ensureMushroomIslandGreenCows(world);
 
     state.dirty = true;
@@ -10520,7 +11747,7 @@
           if (!isStructureValidOnLoad(world, normalized, bridgeSet, anchoredBridgeSet)) continue;
           const storageSize = normalized.type === "robot"
             ? ROBOT_STORAGE_SIZE
-            : (normalized.type === "chest" ? CHEST_SIZE : null);
+            : ((normalized.type === "chest" || normalized.type === "shipwreck") ? CHEST_SIZE : null);
           clearResourcesForFootprint(world, normalized.type, normalized.tx, normalized.ty);
           const structure = addStructure(normalized.type, normalized.tx, normalized.ty, {
             storage: Array.isArray(entry.storage)
@@ -10532,10 +11759,12 @@
             meta: entry.meta ? JSON.parse(JSON.stringify(entry.meta)) : null,
           });
           if (structure.type === "chest") structure.storage = sanitizeInventorySlots(structure.storage, CHEST_SIZE);
+          if (structure.type === "shipwreck") structure.storage = sanitizeInventorySlots(structure.storage, SHIPWRECK_STORAGE_SIZE);
           if (structure.type === "robot") structure.storage = sanitizeInventorySlots(structure.storage, ROBOT_STORAGE_SIZE);
         }
       }
       const spawnTile = findSpawnTile(world);
+      const harvestAnimalsAdded = ensureSpawnIslandHarvestAnimals(world, spawnTile, 4, 32);
       state.player = {
         x: preparedSave.player?.x ?? (spawnTile.x + 0.5) * CONFIG.tileSize,
         y: preparedSave.player?.y ?? (spawnTile.y + 0.5) * CONFIG.tileSize,
@@ -10617,16 +11846,23 @@
       const villagesAdded = ensureSurfaceVillagePresence(world);
       const villagersAdded = ensureVillageVillagers(world);
       const wildRobotAdded = ensureGuaranteedOuterWildRobot(world);
+      const shipFeaturesAdded = ensureSeedShipFeatures(world);
       const mushroomCowsAdded = ensureMushroomIslandGreenCows(world);
 
       state.targetResource = null;
       state.activeStation = null;
       state.activeChest = null;
+      closeShipRepairPanel();
+      state.shipControlSendTimer = 0;
+      state.nearShip = null;
+      state.debugBoatPlacePending = false;
       state.dirty = (!layoutCompatible)
         || villagesAdded
         || villagersAdded > 0
         || wildRobotAdded
-        || mushroomCowsAdded > 0;
+        || shipFeaturesAdded
+        || mushroomCowsAdded > 0
+        || harvestAnimalsAdded > 0;
       if (state.dirty && !netIsClientReady()) {
         saveStatus.textContent = "Saving...";
       }
@@ -11041,7 +12277,10 @@
       const sx = center.x;
       const sy = center.y;
       const dist = Math.hypot(sx - player.x, sy - player.y);
-      if (dist < CONFIG.interactRange && dist < closestDist) {
+      const footprint = getStructureFootprint(structure.type);
+      const halfSpanPx = Math.max(footprint.w, footprint.h) * CONFIG.tileSize * 0.5;
+      const maxDist = CONFIG.interactRange + Math.max(0, halfSpanPx - CONFIG.tileSize * 0.5);
+      if (dist < maxDist && dist < closestDist) {
         closest = structure;
         closestDist = dist;
       }
@@ -11163,6 +12402,7 @@
     };
     closeStationMenu();
     closeChest();
+    closeShipRepairPanel();
     closeInventory();
     buildMenu.classList.add("hidden");
     setPrompt(`Inside ${STRUCTURE_DEFS[structure.type]?.name}`, 1.2);
@@ -11177,6 +12417,7 @@
     state.nearBed = null;
     closeStationMenu();
     closeChest();
+    closeShipRepairPanel();
     closeInventory();
     setPrompt("Outside", 0.8);
     if (net.enabled) sendPlayerUpdate();
@@ -11876,6 +13117,10 @@
       renderStationMenu();
     }
 
+    if (state.activeShipRepair) {
+      renderShipRepairPanel();
+    }
+
     if (state.settingsTab === "objectives") {
       renderObjectiveGuide();
     }
@@ -12415,14 +13660,30 @@
     stationMenu.classList.add("hidden");
   }
 
+  function isSurfaceStorageStructure(structure) {
+    return !!structure
+      && !structure.removed
+      && (structure.type === "chest" || structure.type === "robot" || structure.type === "shipwreck");
+  }
+
+  function isDirectChestStructure(structure) {
+    return !!structure
+      && !structure.removed
+      && (structure.type === "chest" || structure.type === "shipwreck");
+  }
+
   function openChest(structure) {
     if (!structure) return;
     if (!structure.storage) {
-      structure.storage = createEmptyInventory(structure.type === "robot" ? ROBOT_STORAGE_SIZE : CHEST_SIZE);
+      structure.storage = createEmptyInventory(
+        structure.type === "robot" ? ROBOT_STORAGE_SIZE : SHIPWRECK_STORAGE_SIZE
+      );
     }
     state.activeChest = structure;
     if (chestPanelTitle) {
-      chestPanelTitle.textContent = structure.type === "robot" ? "Robot Cargo" : "Chest";
+      chestPanelTitle.textContent = structure.type === "robot"
+        ? "Robot Cargo"
+        : (structure.type === "shipwreck" ? "Shipwreck Chest" : "Chest");
     }
     if (chestPanelHint) {
       chestPanelHint.textContent = structure.type === "robot"
@@ -12446,6 +13707,187 @@
     closeInventory();
     selectedSlot = null;
     updateAllSlotUI();
+  }
+
+  function closeShipRepairPanel() {
+    state.activeShipRepair = null;
+    state.shipActionPending = false;
+    if (shipRepairPanel) shipRepairPanel.classList.add("hidden");
+  }
+
+  function renderShipRepairPanel() {
+    if (!shipRepairPanel) return;
+    const structure = state.activeShipRepair;
+    if (!structure || structure.removed || structure.type !== "abandoned_ship") {
+      closeShipRepairPanel();
+      return;
+    }
+    const ship = ensureAbandonedShipMeta(structure);
+    if (!ship) {
+      closeShipRepairPanel();
+      return;
+    }
+    if (shipRepairTitle) shipRepairTitle.textContent = STRUCTURE_DEFS.abandoned_ship.name;
+    if (shipRepairCost) {
+      shipRepairCost.innerHTML = "";
+      renderRecipeCostWithHighlights(shipRepairCost, ABANDONED_SHIP_CONFIG.repairCost, state.inventory);
+    }
+    const hasMaterials = hasCost(state.inventory, ABANDONED_SHIP_CONFIG.repairCost);
+    if (shipRepairStatus) {
+      shipRepairStatus.textContent = ship.repaired
+        ? "The ship is repaired and ready to sail."
+        : "Restore this vessel with materials to unlock travel.";
+    }
+    if (shipRepairBtn) {
+      shipRepairBtn.disabled = ship.repaired || state.shipActionPending || !hasMaterials;
+      if (ship.repaired) {
+        shipRepairBtn.textContent = "Ship Repaired";
+      } else if (state.shipActionPending) {
+        shipRepairBtn.textContent = "Waiting for Host...";
+      } else {
+        shipRepairBtn.textContent = "Repair Ship";
+      }
+    }
+  }
+
+  function openShipRepairPanel(structure) {
+    if (!structure || structure.removed || structure.type !== "abandoned_ship") return;
+    closeStationMenu();
+    closeChest();
+    closeInventory();
+    state.activeShipRepair = structure;
+    state.shipActionPending = false;
+    if (shipRepairPanel) shipRepairPanel.classList.remove("hidden");
+    renderShipRepairPanel();
+  }
+
+  function moveEntityNearShipAfterDisembark(entity, structure) {
+    const world = state.surfaceWorld || state.world;
+    if (!entity || !structure || !world) return;
+    const shipCenter = getStructureCenterWorld(structure);
+    const tx = Math.floor(shipCenter.x / CONFIG.tileSize);
+    const ty = Math.floor(shipCenter.y / CONFIG.tileSize);
+    const tile = findNearestWalkableTileInWorld(world, tx, ty, 12);
+    if (!tile) return;
+    entity.x = (tile.tx + 0.5) * CONFIG.tileSize;
+    entity.y = (tile.ty + 0.5) * CONFIG.tileSize;
+    if (Number.isFinite(entity.renderX)) entity.renderX = entity.x;
+    if (Number.isFinite(entity.renderY)) entity.renderY = entity.y;
+  }
+
+  function movePlayerNearShipAfterDisembark(structure) {
+    if (!state.player) return;
+    moveEntityNearShipAfterDisembark(state.player, structure);
+  }
+
+  function repairAbandonedShipLocally(structure) {
+    if (!structure || structure.type !== "abandoned_ship") return false;
+    const ship = ensureAbandonedShipMeta(structure);
+    if (!ship || ship.repaired) return false;
+    if (!hasCost(state.inventory, ABANDONED_SHIP_CONFIG.repairCost)) {
+      setPrompt("Missing repair materials", 1);
+      return false;
+    }
+    applyCost(state.inventory, ABANDONED_SHIP_CONFIG.repairCost);
+    ship.repaired = true;
+    ship.vx = 0;
+    ship.vy = 0;
+    updateAllSlotUI();
+    markDirty();
+    setPrompt("Abandoned ship repaired", 1.2);
+    closeShipRepairPanel();
+    return true;
+  }
+
+  function boardLocalPlayerOnShip(structure) {
+    if (!structure || structure.type !== "abandoned_ship") return false;
+    const ship = ensureAbandonedShipMeta(structure);
+    if (!ship) return false;
+    if (!ship.repaired) {
+      openShipRepairPanel(structure);
+      return false;
+    }
+    const localId = getLocalShipPlayerId();
+    removePlayerFromAllShips(localId);
+    const seatIndex = assignPlayerToShip(structure, localId);
+    if (seatIndex == null) {
+      setPrompt("Ship is full", 0.9);
+      return false;
+    }
+    closeShipRepairPanel();
+    closeStationMenu();
+    closeChest();
+    syncShipOccupantPositions();
+    markDirty();
+    if (ship.driverId === localId) {
+      setPrompt("Driving ship", 0.9);
+    } else {
+      setPrompt("Boarded as passenger", 0.9);
+    }
+    return true;
+  }
+
+  function leaveLocalShip() {
+    const localId = getLocalShipPlayerId();
+    const seatInfo = getShipSeatInfoForPlayer(localId);
+    if (!seatInfo) return false;
+    if (!removePlayerFromShipStructure(seatInfo.structure, localId)) return false;
+    movePlayerNearShipAfterDisembark(seatInfo.structure);
+    markDirty();
+    setPrompt("Left ship", 0.8);
+    return true;
+  }
+
+  function requestBoardAbandonedShip(structure) {
+    if (!structure || structure.type !== "abandoned_ship") return false;
+    if (netIsClientReady()) {
+      sendToHost({
+        type: "shipAction",
+        action: "board",
+        tx: structure.tx,
+        ty: structure.ty,
+      });
+      return true;
+    }
+    return boardLocalPlayerOnShip(structure);
+  }
+
+  function requestLeaveAbandonedShip() {
+    const seatInfo = getShipSeatInfoForPlayer(getLocalShipPlayerId());
+    if (!seatInfo) return false;
+    if (netIsClientReady()) {
+      sendToHost({
+        type: "shipAction",
+        action: "leave",
+        tx: seatInfo.structure.tx,
+        ty: seatInfo.structure.ty,
+      });
+      return true;
+    }
+    return leaveLocalShip();
+  }
+
+  function requestRepairAbandonedShip(structure) {
+    if (!structure || structure.type !== "abandoned_ship") return false;
+    if (netIsClientReady()) {
+      if (state.shipActionPending) return false;
+      const ship = ensureAbandonedShipMeta(structure);
+      if (!ship || ship.repaired) return false;
+      if (!hasCost(state.inventory, ABANDONED_SHIP_CONFIG.repairCost)) {
+        setPrompt("Missing repair materials", 1);
+        return false;
+      }
+      state.shipActionPending = true;
+      sendToHost({
+        type: "shipAction",
+        action: "repair",
+        tx: structure.tx,
+        ty: structure.ty,
+      });
+      renderShipRepairPanel();
+      return true;
+    }
+    return repairAbandonedShipLocally(structure);
   }
 
   function sendRobotCommand(structure, action, extras = null) {
@@ -13536,6 +14978,22 @@
     );
   }
 
+  function toggleDebugPlaceRepairedBoat() {
+    if (!state.debugUnlocked) {
+      setPrompt("Debug is locked. Open Settings to unlock.", 1.2);
+      return;
+    }
+    state.debugPlaceRepairedBoat = !state.debugPlaceRepairedBoat;
+    state.debugBoatPlacePending = false;
+    updateDebugPlaceBoatButton();
+    setPrompt(
+      state.debugPlaceRepairedBoat
+        ? "Repaired boat placement enabled"
+        : "Repaired boat placement disabled",
+      1.2
+    );
+  }
+
   function toggleDebugAbandonedRobotMarker() {
     if (!state.debugUnlocked) {
       setPrompt("Debug is locked. Open Settings to unlock.", 1.2);
@@ -13696,9 +15154,22 @@
   function updatePlayer(dt) {
     if (!state.world || !state.player) return;
     const speedMult = getDebugSpeedMultiplier();
+    const shipSeat = (!state.inCave && !state.player.inHut)
+      ? getShipSeatInfoForPlayer(getLocalShipPlayerId())
+      : null;
+    if (shipSeat) {
+      const seatPos = getShipSeatWorldPosition(shipSeat.structure, shipSeat.seatIndex, !net.isHost);
+      if (seatPos) {
+        state.player.x = seatPos.x;
+        state.player.y = seatPos.y;
+        state.player.facing.x = Math.cos(seatPos.angle);
+        state.player.facing.y = Math.sin(seatPos.angle);
+      }
+      return;
+    }
 
     if (state.player.inHut && state.activeHouse && state.housePlayer) {
-      const uiLock = inventoryOpen || !!state.activeStation || !!state.activeChest || state.gameWon;
+      const uiLock = inventoryOpen || !!state.activeStation || !!state.activeChest || !!state.activeShipRepair || state.gameWon;
       const move = uiLock ? { x: 0, y: 0 } : getMoveVector();
       const step = 3.8 * dt * speedMult;
       if (move.x !== 0 || move.y !== 0) {
@@ -13712,7 +15183,7 @@
       return;
     }
 
-    const uiLock = inventoryOpen || !!state.activeStation || !!state.activeChest || state.gameWon;
+    const uiLock = inventoryOpen || !!state.activeStation || !!state.activeChest || !!state.activeShipRepair || state.gameWon;
     const move = uiLock ? { x: 0, y: 0 } : getMoveVector();
     const surface = state.surfaceWorld || state.world;
     const biomeSpeedScale = (!state.inCave && !state.player.inHut && surface)
@@ -14056,6 +15527,7 @@
   function resetInputStateAfterRespawn() {
     closeStationMenu();
     closeChest();
+    closeShipRepairPanel();
     closeInventory();
     interactPressed = false;
     attackPressed = false;
@@ -14066,6 +15538,7 @@
   function handlePlayerDeath() {
     if (!state.player || state.respawnLock) return;
     state.respawnLock = true;
+    removePlayerFromAllShips(getLocalShipPlayerId());
     const deathWorld = state.world;
     const deathX = state.player.x;
     const deathY = state.player.y;
@@ -14294,6 +15767,15 @@
     return cfg.drop || { raw_meat: 1 };
   }
 
+  function isHarvestAnimalType(type) {
+    const normalizedType = normalizeAnimalType(type);
+    return normalizedType === "goat" || normalizedType === "boar";
+  }
+
+  function pickHarvestAnimalType(rng = Math.random) {
+    return rng() < 0.42 ? "goat" : "boar";
+  }
+
   function playAnimalReactionSfx(world, animal, event = "hurt") {
     if (!animal) return;
     const kind = event === "death"
@@ -14412,23 +15894,38 @@
     return null;
   }
 
-  function spawnSurfaceAnimalFromIslands(world, minSpacingTiles = 5) {
+  function spawnSurfaceAnimalFromIslands(world, minSpacingTiles = 5, options = null) {
     if (!world || !Array.isArray(world.islands) || world.islands.length === 0) return false;
-    const islandAttempts = Math.max(6, Math.min(26, world.islands.length * 2));
+    const preferredIslands = Array.isArray(options?.islands) && options.islands.length > 0
+      ? options.islands.filter(Boolean)
+      : world.islands;
+    if (!preferredIslands.length) return false;
+    const islandAttempts = Math.max(8, Math.min(36, preferredIslands.length * 3));
     for (let attempt = 0; attempt < islandAttempts; attempt += 1) {
-      const island = world.islands[Math.floor(Math.random() * world.islands.length)];
+      const island = preferredIslands[Math.floor(Math.random() * preferredIslands.length)];
       if (!island) continue;
-      const tile = pickAnimalSpawnTileOnIsland(world, island, {
+      const strictTile = pickAnimalSpawnTileOnIsland(world, island, {
         attempts: 10,
         radiusScale: 0.84,
         minRadiusScale: 0.08,
         minSpacingTiles,
         enforceIslandOwnership: true,
       });
+      // Fallback lets passive animals continue to spawn even when debug island merges
+      // make strict island ownership ambiguous.
+      const tile = strictTile || pickAnimalSpawnTileOnIsland(world, island, {
+        attempts: 8,
+        radiusScale: 0.86,
+        minRadiusScale: 0.06,
+        minSpacingTiles,
+        enforceIslandOwnership: false,
+      });
       if (!tile) continue;
       const spawnScale = getSurfaceAnimalSpawnScale(world, tile.tx, tile.ty);
       if (spawnScale <= 0 || Math.random() > spawnScale) continue;
-      spawnAnimal(world, tile.tx, tile.ty, pickSurfaceAnimalType(world, tile.tx, tile.ty));
+      const forcedType = typeof options?.forceType === "string" ? normalizeAnimalType(options.forceType) : null;
+      const animalType = forcedType || pickSurfaceAnimalType(world, tile.tx, tile.ty);
+      spawnAnimal(world, tile.tx, tile.ty, animalType);
       return true;
     }
     return false;
@@ -14445,6 +15942,59 @@
     const py = animal.y / CONFIG.tileSize;
     const radiusPad = Math.max(2, (Number(island.radius) || 0) * 0.9);
     return Math.hypot(px - island.x, py - island.y) <= radiusPad;
+  }
+
+  function countHarvestAnimalsOnIsland(world, island) {
+    if (!world || !island || !Array.isArray(world.animals)) return 0;
+    let count = 0;
+    for (const animal of world.animals) {
+      if (!animal || animal.hp <= 0) continue;
+      if (!isHarvestAnimalType(animal.type)) continue;
+      if (isAnimalOnIsland(world, animal, island)) count += 1;
+    }
+    return count;
+  }
+
+  function spawnHarvestAnimalOnIsland(world, island, minSpacingTiles = 2.75) {
+    if (!world || !island) return false;
+    const strictTile = pickAnimalSpawnTileOnIsland(world, island, {
+      attempts: 20,
+      radiusScale: 0.86,
+      minRadiusScale: 0.1,
+      minSpacingTiles,
+      enforceIslandOwnership: true,
+    });
+    const relaxedTile = strictTile || pickAnimalSpawnTileOnIsland(world, island, {
+      attempts: 16,
+      radiusScale: 0.9,
+      minRadiusScale: 0.08,
+      minSpacingTiles,
+      enforceIslandOwnership: false,
+    });
+    if (!relaxedTile) return false;
+    spawnAnimal(world, relaxedTile.tx, relaxedTile.ty, pickHarvestAnimalType());
+    return true;
+  }
+
+  function ensureSpawnIslandHarvestAnimals(world, spawnTile, minCount = 4, maxAnimals = Infinity) {
+    if (!world || !Array.isArray(world.animals) || !Array.isArray(world.islands)) return 0;
+    const spawnTx = Number.isFinite(spawnTile?.x) ? Math.floor(spawnTile.x) : null;
+    const spawnTy = Number.isFinite(spawnTile?.y) ? Math.floor(spawnTile.y) : null;
+    const spawnIsland = (spawnTx != null && spawnTy != null)
+      ? getIslandForTile(world, spawnTx, spawnTy)
+      : (world.islands.find((island) => island?.starter) || null);
+    if (!spawnIsland) return 0;
+    const hardCap = Number.isFinite(maxAnimals) ? maxAnimals : Infinity;
+    const target = Math.max(0, Math.floor(minCount) || 0);
+    const existing = countHarvestAnimalsOnIsland(world, spawnIsland);
+    const missing = Math.max(0, target - existing);
+    let added = 0;
+    for (let i = 0; i < missing; i += 1) {
+      if (world.animals.length >= hardCap) break;
+      if (!spawnHarvestAnimalOnIsland(world, spawnIsland, 2.75)) break;
+      added += 1;
+    }
+    return added;
   }
 
   function countGreenCowsOnIsland(world, island) {
@@ -14975,6 +16525,7 @@
 
   function respawnRemotePlayer(player) {
     if (!player) return;
+    const removedFromShip = removePlayerFromAllShips(player.id);
     const surface = state.surfaceWorld || state.world;
     const spawnPos = getPlayerRespawnPosition(player, surface);
     player.hp = player.maxHp;
@@ -15017,6 +16568,11 @@
         y: player.y,
         checkpoint: normalizeCheckpoint(player.checkpoint),
       });
+    }
+    if (removedFromShip) {
+      markDirty();
+      const motion = buildMotionUpdate();
+      if (motion) broadcastNet(motion);
     }
   }
 
@@ -15666,14 +17222,23 @@
     const world = state.surfaceWorld || state.world;
     if (!world || !Array.isArray(world.animals)) return;
     const maxAnimals = 32;
+    const players = getPlayersForWorld(world);
     world.animalSpawnTimer -= dt;
     if (world.animalSpawnTimer <= 0) {
       world.animalSpawnTimer = 5 + Math.random() * 4;
+      const spawnIslandHarvestAdded = ensureSpawnIslandHarvestAnimals(world, state.spawnTile, 4, maxAnimals);
       const greenCowAdded = ensureMushroomIslandGreenCows(world, maxAnimals);
+      let passiveSpawned = false;
       if (world.animals.length < maxAnimals) {
-        spawnSurfaceAnimalFromIslands(world, 5);
+        const activeIslands = getSurfaceActiveIslands(world, players);
+        const spawnedNearPlayers = activeIslands.length > 0
+          && spawnSurfaceAnimalFromIslands(world, 4.6, { islands: activeIslands });
+        passiveSpawned = !!spawnedNearPlayers;
+        if (!spawnedNearPlayers) {
+          passiveSpawned = spawnSurfaceAnimalFromIslands(world, 5);
+        }
       }
-      if (greenCowAdded > 0) {
+      if (greenCowAdded > 0 || spawnIslandHarvestAdded > 0 || passiveSpawned) {
         markDirty();
       }
     }
@@ -16702,7 +18267,16 @@
 
   function getPlacementItem() {
     if (state.gameWon) return null;
-    if (state.inCave || inventoryOpen || state.activeStation || state.activeChest) return null;
+    if (state.inCave || inventoryOpen || state.activeStation || state.activeChest || state.activeShipRepair) return null;
+    if (getShipSeatInfoForPlayer(getLocalShipPlayerId())) return null;
+    if (!state.player.inHut && isDebugBoatPlacementActive()) {
+      return {
+        slotIndex: null,
+        itemId: DEBUG_REPAIRED_BOAT_ITEM_ID,
+        itemDef: ITEMS[DEBUG_REPAIRED_BOAT_ITEM_ID],
+        debugPlacement: "repairedBoat",
+      };
+    }
     const slot = state.inventory[activeSlot];
     if (!slot || !slot.id) return null;
     const itemDef = ITEMS[slot.id];
@@ -16751,6 +18325,46 @@
     const structure = getStructureAt(tx, ty);
     const itemDef = ITEMS[itemId];
     if (!itemDef) return { ok: false, reason: "Invalid" };
+    if (itemDef.debugOnly && !state.debugUnlocked) return { ok: false, reason: "Debug only" };
+
+    if (itemDef.placeType === "abandoned_ship") {
+      const centerTileX = tx + 0.5;
+      const centerTileY = ty + 0.5;
+      const anchor = getStructureAnchorForCenterTile("abandoned_ship", centerTileX, centerTileY);
+      const footprint = getStructureFootprint("abandoned_ship");
+      let touchesLand = false;
+      let occupied = false;
+      for (let oy = 0; oy < footprint.h; oy += 1) {
+        for (let ox = 0; ox < footprint.w; ox += 1) {
+          const fx = anchor.tx + ox;
+          const fy = anchor.ty + oy;
+          if (!inBounds(fx, fy, world.size)) {
+            touchesLand = true;
+            continue;
+          }
+          const tile = world.tiles[tileIndex(fx, fy, world.size)];
+          if (tile !== 0) {
+            touchesLand = true;
+          }
+          const occupiedStructure = getStructureAt(fx, fy);
+          if (occupiedStructure && !occupiedStructure.removed) {
+            occupied = true;
+          }
+        }
+      }
+      if (touchesLand) return { ok: false, reason: "Must place on water." };
+      if (occupied) return { ok: false, reason: "Occupied" };
+      if (!canUseWaterStructureFootprint(world, "abandoned_ship", anchor.tx, anchor.ty)) {
+        return { ok: false, reason: "Must place on water." };
+      }
+      return {
+        ok: true,
+        anchorTx: anchor.tx,
+        anchorTy: anchor.ty,
+        shipSpawnX: (tx + 0.5) * CONFIG.tileSize,
+        shipSpawnY: (ty + 0.5) * CONFIG.tileSize,
+      };
+    }
 
     if (structure) {
       if (isHouseType(structure.type) && isHouseType(itemDef.placeType)) {
@@ -16841,6 +18455,40 @@
     return canPlaceItemAt(state.world, state.inCave, itemId, tx, ty);
   }
 
+  function placeDebugRepairedBoatAt(world, tx, ty, placementResult = null) {
+    if (!world) return { ok: false, reason: "No world" };
+    const result = (placementResult && placementResult.ok)
+      ? placementResult
+      : canPlaceItemAt(world, false, DEBUG_REPAIRED_BOAT_ITEM_ID, tx, ty);
+    if (!result.ok) return result;
+    const anchorTx = Number.isInteger(result.anchorTx) ? result.anchorTx : tx;
+    const anchorTy = Number.isInteger(result.anchorTy) ? result.anchorTy : ty;
+    if (!canUseWaterStructureFootprint(world, "abandoned_ship", anchorTx, anchorTy)) {
+      return { ok: false, reason: "Must place on water." };
+    }
+    const structure = addStructure("abandoned_ship", anchorTx, anchorTy, {
+      meta: { debugPlaced: true },
+    });
+    const ship = ensureAbandonedShipMeta(structure);
+    if (ship) {
+      ship.repaired = true;
+      ship.damage = 0;
+      ship.vx = 0;
+      ship.vy = 0;
+      ship.driverId = null;
+      ship.driverInputX = 0;
+      ship.driverInputY = 0;
+      ship.controlAge = 0;
+      ship.seats = Array.from({ length: ABANDONED_SHIP_CONFIG.maxPassengers }, () => null);
+      if (Number.isFinite(result.shipSpawnX)) ship.x = result.shipSpawnX;
+      if (Number.isFinite(result.shipSpawnY)) ship.y = result.shipSpawnY;
+      ship.renderX = ship.x;
+      ship.renderY = ship.y;
+      ship.renderAngle = ship.angle;
+    }
+    return { ok: true, structure };
+  }
+
   function upgradeHouseStructure(structure, nextType) {
     if (!structure || !isHouseType(nextType)) return false;
     const surface = state.surfaceWorld || state.world;
@@ -16928,6 +18576,38 @@
       return false;
     }
 
+    if (placement.debugPlacement === "repairedBoat") {
+      if (netIsClient()) {
+        if (state.debugBoatPlacePending) {
+          setPrompt("Waiting for host...", 0.8);
+          return false;
+        }
+        const requestId = `${net.playerId}-debug-boat-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+        state.debugBoatPlacePending = true;
+        sendToHost({
+          type: "debugBoatPlace",
+          requestId,
+          tx,
+          ty,
+        });
+        setPrompt("Requesting boat placement...", 0.9);
+        return true;
+      }
+      const placed = placeDebugRepairedBoatAt(state.world, tx, ty, result);
+      if (!placed.ok) {
+        setPrompt(placed.reason || "Must place on water.", 0.9);
+        return false;
+      }
+      markDirty();
+      setPrompt("Repaired boat placed", 1.1);
+      if (net.isHost && net.connections.size > 0) {
+        broadcastNet(buildSnapshot());
+        const motion = buildMotionUpdate();
+        if (motion) broadcastNet(motion);
+      }
+      return true;
+    }
+
     if (result.clearResourceTiles?.length) {
       clearResourceTiles(state.world, result.clearResourceTiles);
     }
@@ -16991,6 +18671,8 @@
     state.player.inHut = false;
     closeStationMenu();
     closeChest();
+    closeShipRepairPanel();
+    closeInventory();
     buildMenu.classList.add("hidden");
     const entrance = cave.world.entrance;
     state.player.x = (entrance.tx + 0.5) * CONFIG.tileSize;
@@ -17011,6 +18693,8 @@
       state.player.y = returnPos.y;
     }
     state.returnPosition = null;
+    closeShipRepairPanel();
+    closeInventory();
     markDirty();
     if (net.enabled) sendPlayerUpdate();
   }
@@ -17078,12 +18762,14 @@
       : findNearestAnimalAt(combatWorld, state.player, MONSTER.attackRange + 12, preferRenderTargets);
     const resourceGate = state.targetResource ? canHarvestResource(state.targetResource) : { ok: true, reason: "" };
     const swordUnlocked = canDamageMonsters(state.player);
+    const localShipSeat = getShipSeatInfoForPlayer(getLocalShipPlayerId());
 
     if (inHouse) {
       state.nearBench = false;
       state.nearBenchStructure = null;
       state.nearCave = null;
       state.nearDock = null;
+      state.nearShip = null;
       state.nearHouse = state.activeHouse;
       const chest = findNearestInteriorStructure(state.player, state.activeHouse, (entry) => entry.type === "chest");
       const station = findNearestInteriorStructure(state.player, state.activeHouse, (entry) => STRUCTURE_DEFS[entry.type]?.station);
@@ -17108,8 +18794,9 @@
       state.nearBench = !!nearbyBench;
       state.nearBenchStructure = nearbyBench;
       state.nearStation = findNearestStructure(state.player, (structure) => STRUCTURE_DEFS[structure.type]?.station);
-      state.nearChest = findNearestStructure(state.player, (structure) => structure.type === "chest");
+      state.nearChest = findNearestStructure(state.player, (structure) => isDirectChestStructure(structure));
       state.nearDock = findNearestStructure(state.player, (structure) => structure.type === "dock");
+      state.nearShip = findNearestStructure(state.player, (structure) => structure.type === "abandoned_ship");
       state.nearCave = findNearestCave(state.surfaceWorld, state.player);
       state.nearHouse = findNearestStructure(state.player, (structure) => isHouseType(structure.type));
       state.nearBed = findNearestStructure(state.player, (structure) => structure.type === "bed");
@@ -17119,6 +18806,7 @@
       state.nearStation = null;
       state.nearChest = null;
       state.nearDock = null;
+      state.nearShip = null;
       state.nearCave = null;
       state.nearHouse = null;
       state.nearBed = null;
@@ -17158,6 +18846,20 @@
       if (dist > CONFIG.interactRange * 1.3) closeChest();
     }
 
+    if (state.activeShipRepair) {
+      const shipCenter = getStructureCenterWorld(state.activeShipRepair);
+      const dist = Math.hypot(shipCenter.x - state.player.x, shipCenter.y - state.player.y);
+      if (
+        state.activeShipRepair.removed
+        || state.activeShipRepair.type !== "abandoned_ship"
+        || dist > CONFIG.interactRange * 1.45
+      ) {
+        closeShipRepairPanel();
+      } else {
+        renderShipRepairPanel();
+      }
+    }
+
     if (state.promptTimer <= 0) {
       const placement = getPlacementItem();
       if (placement) {
@@ -17187,6 +18889,14 @@
           else if (state.targetResource) setPrompt(`Press Space / Tap Attack to ${getResourceActionName(state.targetResource)}`);
           else setPrompt("Wind echoes through the cave");
         }
+      } else if (state.activeShipRepair) {
+        setPrompt("Repairing abandoned ship");
+      } else if (localShipSeat) {
+        setPrompt(localShipSeat.isDriver ? "WASD/Stick to steer, E to disembark" : "Passenger, press E to disembark");
+      } else if (state.nearShip) {
+        const ship = ensureAbandonedShipMeta(state.nearShip);
+        if (ship?.repaired) setPrompt("Press E to board abandoned ship");
+        else setPrompt("Press E to repair abandoned ship");
       } else if (state.activeChest) {
         setPrompt("Chest open");
       } else if (state.nearChest) {
@@ -17245,10 +18955,18 @@
           const dist = Math.hypot(ex - state.player.x, ey - state.player.y);
           if (dist < CONFIG.interactRange) leaveCave();
         }
+      } else if (state.activeShipRepair) {
+        closeShipRepairPanel();
+      } else if (localShipSeat) {
+        requestLeaveAbandonedShip();
       } else if (state.activeChest) {
         closeChest();
       } else if (state.activeStation) {
         closeStationMenu();
+      } else if (state.nearShip) {
+        const ship = ensureAbandonedShipMeta(state.nearShip);
+        if (ship?.repaired) requestBoardAbandonedShip(state.nearShip);
+        else openShipRepairPanel(state.nearShip);
       } else if (state.nearChest) {
         openChest(state.nearChest);
       } else if (state.nearStation) {
@@ -17275,7 +18993,9 @@
     }
 
     if (attackPressed) {
-      if (state.inCave) {
+      if (localShipSeat || state.activeShipRepair) {
+        // Ship occupants and repair flow disable combat/harvest actions.
+      } else if (state.inCave) {
         if (state.targetMonster || state.targetAnimal) performAttack();
         else attemptHarvest(state.targetResource);
       } else if (!state.player.inHut) {
@@ -17285,7 +19005,7 @@
       attackPressed = false;
     }
 
-    if (!state.inCave && !state.player.inHut && state.nearBench) {
+    if (!state.inCave && !state.player.inHut && state.nearBench && !state.activeShipRepair && !localShipSeat) {
       if (!wasNearBench) {
         buildMenu.classList.remove("hidden");
         renderBuildMenu();
@@ -17331,6 +19051,7 @@
       updateAnimals(worldStep);
       updateVillagers(worldStep);
       updateRobots(worldStep);
+      updateAbandonedShips(worldStep);
       updateAllMonsterBurnEffects(worldStep);
       worldDtRemaining -= worldStep;
     }
@@ -18089,6 +19810,8 @@
     const def = STRUCTURE_DEFS[structure.type];
     if (!def) return;
     const footprint = getStructureFootprint(structure.type);
+    const structureWidthPx = footprint.w * CONFIG.tileSize;
+    const structureHeightPx = footprint.h * CONFIG.tileSize;
     let worldX = structure.tx * CONFIG.tileSize;
     let worldY = structure.ty * CONFIG.tileSize;
     if (structure.type === "robot") {
@@ -18097,11 +19820,15 @@
         worldX = drawPos.x - CONFIG.tileSize * 0.5;
         worldY = drawPos.y - CONFIG.tileSize * 0.5;
       }
+    } else if (structure.type === "abandoned_ship") {
+      const drawPos = getAbandonedShipDisplayPosition(structure, !net.isHost);
+      if (drawPos) {
+        worldX = drawPos.x - structureWidthPx * 0.5;
+        worldY = drawPos.y - structureHeightPx * 0.5;
+      }
     }
     const screenX = worldX - camera.x;
     const screenY = worldY - camera.y;
-    const structureWidthPx = footprint.w * CONFIG.tileSize;
-    const structureHeightPx = footprint.h * CONFIG.tileSize;
     if (
       screenX < -structureWidthPx ||
       screenY < -structureHeightPx ||
@@ -18178,6 +19905,149 @@
         ctx.fillStyle = tintColor(def.color, -0.3);
         ctx.fillRect(baseX + 2, baseY + 2, 3, baseSize - 4);
         ctx.fillRect(baseX + baseSize - 5, baseY + 2, 3, baseSize - 4);
+        break;
+      }
+      case "shipwreck": {
+        const seed = (((structure.tx + 11) * 92821) ^ ((structure.ty + 17) * 68917)) >>> 0;
+        const tilt = (((seed % 19) - 9) / 180) * Math.PI;
+        const cx = baseX + baseWidth * 0.5;
+        const cy = baseY + baseHeight * 0.5;
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.rotate(tilt);
+        ctx.translate(-cx, -cy);
+
+        ctx.fillStyle = "rgba(0,0,0,0.22)";
+        ctx.beginPath();
+        ctx.ellipse(cx, baseY + baseHeight - 1, Math.max(16, baseWidth * 0.44), 5, 0, 0, Math.PI * 2);
+        ctx.fill();
+
+        const deckX = baseX + 2;
+        const deckY = baseY + 4;
+        const deckW = baseWidth - 4;
+        const deckH = baseHeight - 8;
+        ctx.fillStyle = tintColor(def.color, -0.02);
+        ctx.fillRect(deckX, deckY, deckW, deckH);
+        ctx.strokeStyle = tintColor(def.color, -0.32);
+        ctx.lineWidth = 1.3;
+        const plankStep = 7;
+        for (let x = deckX + 4; x < deckX + deckW - 2; x += plankStep) {
+          ctx.beginPath();
+          ctx.moveTo(x, deckY + 1);
+          ctx.lineTo(x, deckY + deckH - 1);
+          ctx.stroke();
+        }
+
+        ctx.fillStyle = "rgba(28, 20, 14, 0.38)";
+        ctx.fillRect(deckX + deckW * 0.52, deckY + 3, 5, Math.max(9, deckH * 0.5));
+        ctx.fillRect(deckX + 5, deckY + deckH - 8, Math.max(10, deckW * 0.28), 4);
+
+        ctx.strokeStyle = tintColor(def.color, -0.46);
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(deckX + 3, deckY + deckH - 2);
+        ctx.lineTo(deckX + deckW * 0.27, deckY + deckH - 7);
+        ctx.lineTo(deckX + deckW * 0.45, deckY + deckH - 2);
+        ctx.stroke();
+
+        const chestW = 20;
+        const chestH = 12;
+        const chestX = cx - chestW * 0.5 + 3;
+        const chestY = deckY + Math.max(7, deckH * 0.36);
+        ctx.fillStyle = "#7c532f";
+        ctx.fillRect(chestX, chestY, chestW, chestH);
+        ctx.fillStyle = "#5b3a1f";
+        ctx.fillRect(chestX, chestY, chestW, 5);
+        ctx.fillStyle = "#d6b971";
+        ctx.fillRect(chestX + chestW * 0.5 - 2, chestY + 5, 4, 4);
+        ctx.restore();
+        break;
+      }
+      case "abandoned_ship": {
+        const shipPos = getAbandonedShipDisplayPosition(structure, !net.isHost);
+        const ship = ensureAbandonedShipMeta(structure);
+        const centerX = (shipPos ? shipPos.x : (structure.tx + footprint.w * 0.5) * CONFIG.tileSize) - camera.x;
+        const centerY = (shipPos ? shipPos.y : (structure.ty + footprint.h * 0.5) * CONFIG.tileSize) - camera.y;
+        const angle = shipPos?.angle ?? 0;
+        const halfW = structureWidthPx * 0.48;
+        const halfH = structureHeightPx * 0.42;
+        ctx.save();
+        ctx.translate(centerX, centerY);
+        ctx.rotate(angle);
+
+        ctx.fillStyle = "rgba(0,0,0,0.28)";
+        ctx.beginPath();
+        ctx.ellipse(0, halfH * 0.74, halfW * 0.86, 7, 0, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = tintColor(def.color, -0.14);
+        ctx.beginPath();
+        ctx.moveTo(-halfW, -halfH * 0.2);
+        ctx.lineTo(-halfW * 0.78, halfH * 0.55);
+        ctx.lineTo(halfW * 0.74, halfH * 0.55);
+        ctx.lineTo(halfW, -halfH * 0.12);
+        ctx.lineTo(halfW * 0.55, -halfH * 0.58);
+        ctx.lineTo(-halfW * 0.62, -halfH * 0.58);
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.fillStyle = tintColor(def.color, 0.07);
+        ctx.fillRect(-halfW * 0.66, -halfH * 0.38, halfW * 1.32, halfH * 0.72);
+        ctx.strokeStyle = tintColor(def.color, -0.4);
+        ctx.lineWidth = 1.4;
+        for (let x = -halfW * 0.58; x <= halfW * 0.58; x += 11) {
+          ctx.beginPath();
+          ctx.moveTo(x, -halfH * 0.34);
+          ctx.lineTo(x, halfH * 0.3);
+          ctx.stroke();
+        }
+
+        ctx.fillStyle = tintColor(def.color, -0.05);
+        ctx.fillRect(-halfW * 0.12, -halfH * 0.62, halfW * 0.52, halfH * 0.32);
+        ctx.fillStyle = "rgba(235, 218, 188, 0.64)";
+        ctx.fillRect(halfW * 0.02, -halfH * 0.57, 12, 7);
+        ctx.fillRect(halfW * 0.02, -halfH * 0.44, 12, 7);
+
+        ctx.strokeStyle = tintColor(def.color, -0.46);
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(-halfW * 0.72, -halfH * 0.1);
+        ctx.lineTo(-halfW * 0.72, -halfH * 0.8);
+        ctx.lineTo(-halfW * 0.36, -halfH * 0.86);
+        ctx.stroke();
+
+        if (ship?.repaired) {
+          ctx.fillStyle = "rgba(132, 224, 176, 0.9)";
+          ctx.beginPath();
+          ctx.moveTo(-halfW * 0.36, -halfH * 0.86);
+          ctx.lineTo(-halfW * 0.08, -halfH * 0.73);
+          ctx.lineTo(-halfW * 0.36, -halfH * 0.62);
+          ctx.closePath();
+          ctx.fill();
+        } else {
+          ctx.fillStyle = "rgba(220, 133, 108, 0.9)";
+          ctx.beginPath();
+          ctx.moveTo(-halfW * 0.36, -halfH * 0.86);
+          ctx.lineTo(-halfW * 0.1, -halfH * 0.74);
+          ctx.lineTo(-halfW * 0.36, -halfH * 0.66);
+          ctx.closePath();
+          ctx.fill();
+          ctx.strokeStyle = "rgba(39, 19, 16, 0.55)";
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.moveTo(-halfW * 0.02, -halfH * 0.24);
+          ctx.lineTo(halfW * 0.34, halfH * 0.16);
+          ctx.stroke();
+        }
+
+        if (ship?.driverId) {
+          ctx.fillStyle = "rgba(255, 244, 206, 0.85)";
+          ctx.beginPath();
+          ctx.arc(-halfW * 0.2, -halfH * 0.08, 3.2, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        ctx.restore();
         break;
       }
       case "wall": {
@@ -20071,13 +21941,18 @@
         const placeResult = canPlaceItem(placement.itemId, tx, ty);
         const valid = placeResult.ok;
 
-        const previewType = isHouseType(placement.itemDef.placeType) ? placement.itemDef.placeType : null;
+        const previewType = (
+          isHouseType(placement.itemDef.placeType)
+          || placement.itemDef.placeType === "abandoned_ship"
+        )
+          ? placement.itemDef.placeType
+          : null;
         const anchorTx = (placeResult.upgradeHouse && placeResult.targetHouse)
           ? placeResult.targetHouse.tx
-          : tx;
+          : (Number.isInteger(placeResult.anchorTx) ? placeResult.anchorTx : tx);
         const anchorTy = (placeResult.upgradeHouse && placeResult.targetHouse)
           ? placeResult.targetHouse.ty
-          : ty;
+          : (Number.isInteger(placeResult.anchorTy) ? placeResult.anchorTy : ty);
         const footprint = previewType ? getStructureFootprint(previewType) : { w: 1, h: 1 };
 
         forEachStructureFootprintTile(previewType || "single", anchorTx, anchorTy, (fx, fy) => {
@@ -20154,6 +22029,7 @@
         if (state.player && state.player.hp <= 0) {
           const surface = state.surfaceWorld || state.world;
           if (surface) {
+            removePlayerFromAllShips(getLocalShipPlayerId());
             state.inCave = false;
             state.activeCave = null;
             state.world = surface;
@@ -20578,6 +22454,19 @@
     setBuildCategory(buildCategory, false);
 
     destroyChestBtn.addEventListener("click", destroyActiveChest);
+    if (shipRepairBtn) {
+      shipRepairBtn.addEventListener("click", () => {
+        ensureAudioContext();
+        if (state.activeShipRepair) {
+          requestRepairAbandonedShip(state.activeShipRepair);
+        }
+      });
+    }
+    if (shipRepairCloseBtn) {
+      shipRepairCloseBtn.addEventListener("click", () => {
+        closeShipRepairPanel();
+      });
+    }
     if (newRunBtn) {
       newRunBtn.addEventListener("click", () => {
         promptNewSeed();
@@ -20650,6 +22539,7 @@
     if (infiniteResourcesBtn) infiniteResourcesBtn.addEventListener("click", toggleInfiniteResources);
     if (debugWorldMapBtn) debugWorldMapBtn.addEventListener("click", toggleDebugWorldMap);
     if (continentalShiftBtn) continentalShiftBtn.addEventListener("click", toggleContinentalShift);
+    if (debugPlaceBoatBtn) debugPlaceBoatBtn.addEventListener("click", toggleDebugPlaceRepairedBoat);
     if (toggleRobotRecallBtn) {
       toggleRobotRecallBtn.addEventListener("click", () => {
         ensureAudioContext();
