@@ -1,4 +1,6 @@
 :root {
+  --app-vw: 100vw;
+  --app-vh: 100vh;
   --ui-font: "Trebuchet MS", "Segoe UI", sans-serif;
   --ui-text: #edf2f6;
   --ui-text-muted: rgba(214, 224, 235, 0.82);
@@ -31,6 +33,9 @@ html, body {
   width: 100%;
   height: 100%;
   overflow: hidden;
+  overscroll-behavior: none;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
   background: #0b1a2a;
   font-family: var(--ui-font);
 }
@@ -38,10 +43,13 @@ html, body {
 #game {
   position: absolute;
   inset: 0;
-  width: 100%;
-  height: 100%;
+  width: var(--app-vw);
+  height: var(--app-vh);
   display: block;
   touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 
 #ui {
@@ -49,6 +57,10 @@ html, body {
   inset: 0;
   color: var(--ui-text);
   pointer-events: none;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 
 #topbar {
@@ -65,6 +77,8 @@ html, body {
   pointer-events: auto;
   align-items: center;
   flex-wrap: wrap;
+  max-width: 100%;
+  overscroll-behavior-x: contain;
   backdrop-filter: blur(6px);
   -webkit-overflow-scrolling: touch;
 }
@@ -256,6 +270,7 @@ html, body {
   -webkit-backdrop-filter: blur(6px);
   z-index: 5;
   overflow: hidden;
+  overscroll-behavior: contain;
   animation: panelEnter 0.18s ease-out;
 }
 
@@ -486,7 +501,7 @@ html, body {
   bottom: auto;
   right: auto;
   width: 280px;
-  max-height: calc(100vh - 140px);
+  max-height: calc(var(--app-vh) - 140px);
   overflow-y: auto;
 }
 
@@ -495,7 +510,7 @@ html, body {
   top: 60px;
   bottom: auto;
   width: 332px;
-  max-height: calc(100vh - 120px);
+  max-height: calc(var(--app-vh) - 120px);
   overflow-y: auto;
 }
 
@@ -937,6 +952,8 @@ button:focus-visible {
   z-index: 20;
   overflow: hidden;
   isolation: isolate;
+  align-items: center;
+  justify-content: center;
 }
 
 .start-scene-art {
@@ -1106,6 +1123,8 @@ button:focus-visible {
   width: min(430px, 92vw);
   position: relative;
   z-index: 3;
+  margin: 0 auto;
+  transform: translateZ(0);
 }
 
 .start-screen .overlay-card {
@@ -1348,7 +1367,7 @@ button:focus-visible {
     transform: translateX(-50%);
     width: min(92vw, 360px);
     bottom: calc(152px + env(safe-area-inset-bottom));
-    max-height: 58vh;
+    max-height: min(58vh, calc(var(--app-vh) - 188px));
     overflow-y: auto;
   }
 
@@ -1399,7 +1418,7 @@ button:focus-visible {
     transform: translateX(-50%);
     top: calc(58px + env(safe-area-inset-top));
     width: min(94vw, 360px);
-    max-height: 64vh;
+    max-height: min(64vh, calc(var(--app-vh) - 144px));
   }
 
   #debugPanel {
@@ -1408,7 +1427,7 @@ button:focus-visible {
     transform: translateX(-50%);
     top: calc(96px + env(safe-area-inset-top));
     width: min(86vw, 320px);
-    max-height: 54vh;
+    max-height: min(54vh, calc(var(--app-vh) - 174px));
     overflow-y: auto;
   }
 

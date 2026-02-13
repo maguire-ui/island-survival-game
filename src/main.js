@@ -10,6 +10,7 @@
   const healthFill = document.getElementById("healthFill");
   const saveStatus = document.getElementById("saveStatus");
   const promptEl = document.getElementById("prompt");
+  const topbar = document.getElementById("topbar");
   const inventoryPanel = document.getElementById("inventory");
   const hotbarEl = document.getElementById("hotbar");
   const inventorySlotsEl = document.getElementById("inventorySlots");
@@ -113,6 +114,10 @@
   const PLAYER_ATTACK_FALLBACK_REACH = PLAYER_ATTACK_REACH - 4;
 
   const TOUCH_STICK_MAX_DIST = 40;
+  const MOBILE_RENDER_DPR_CAP = 2;
+  const DESKTOP_RENDER_DPR_CAP = 2.5;
+  const MOBILE_RENDER_MAX_PIXELS = 3000000;
+  const DESKTOP_RENDER_MAX_PIXELS = 5200000;
 
   const MONSTER_CAMPFIRE_FEAR = Object.freeze({
     radiusPadding: 6,
@@ -162,7 +167,7 @@
     crawler: {
       name: "Crawler",
       color: "#2b2d3a",
-      hp: 7,
+      hp: 8,
       speed: 60,
       damage: 9,
       attackRange: 26,
@@ -177,7 +182,7 @@
     brute: {
       name: "Brute",
       color: "#4b3232",
-      hp: 12,
+      hp: 14,
       speed: 52,
       damage: 13,
       attackRange: 28,
@@ -192,7 +197,7 @@
     skeleton: {
       name: "Skeleton",
       color: "#98a3b4",
-      hp: 5,
+      hp: 6,
       speed: 56,
       damage: 8,
       attackRange: 24,
@@ -207,7 +212,7 @@
     marsh_stalker: {
       name: "Marsh Stalker",
       color: "#4e8e68",
-      hp: 8,
+      hp: 10,
       speed: 62,
       damage: 8,
       attackRange: 25,
@@ -224,7 +229,7 @@
     polar_bear: {
       name: "Polar Bear",
       color: "#dfe9f5",
-      hp: 18,
+      hp: 21,
       speed: 66,
       damage: 16,
       attackRange: 30,
@@ -240,7 +245,7 @@
     lion: {
       name: "Lion",
       color: "#c79359",
-      hp: 14,
+      hp: 17,
       speed: 76,
       damage: 14,
       attackRange: 29,
@@ -256,7 +261,7 @@
     wolf: {
       name: "Wolf",
       color: "#9ea6b7",
-      hp: 11,
+      hp: 13,
       speed: 84,
       damage: 11,
       attackRange: 27,
@@ -610,6 +615,9 @@
     { tier: 5, name: "Blood-Hardened Blade", damage: 5 },
   ];
 
+  // Damp sword scaling versus hostile mobs to avoid early one-tap kills.
+  const SWORD_DAMAGE_VS_MONSTER_SCALE = [1, 0.9, 0.84, 0.8, 0.76, 0.72];
+
   const PLAYER_UNLOCK_DEFAULTS = Object.freeze({
     pickaxe: false,
     orePickaxe: false,
@@ -720,7 +728,7 @@
       id: "medicine",
       name: "POULTICE",
       description: "Fast emergency healing during fights.",
-      cost: { raw_meat: 1, hide: 1, wood: 1 },
+      cost: { monster_flesh: 1, hide: 1, wood: 1 },
     },
     {
       id: "chest",
@@ -750,13 +758,13 @@
       id: "village_map",
       name: "Village Map",
       description: "Shows a tracked village zone and all active players.",
-      cost: { wayfinder_stone: 1, paper: 4, plank: 2, stick: 1 },
+      cost: { gold_ingot: 2, paper: 5, plank: 3, stick: 2 },
     },
     {
       id: "cave_map",
       name: "Cave Map",
       description: "Shows a tracked cave zone and all active players.",
-      cost: { wayfinder_stone: 1, paper: 5, plank: 3, stone: 4, stick: 2 },
+      cost: { gold_ingot: 3, paper: 6, plank: 4, stone: 6, stick: 3 },
     },
     {
       id: "beacon",
@@ -984,7 +992,7 @@
     smelter: [
       {
         name: "Make Charcoal",
-        description: "Burn wood into coal fuel for smelting.",
+        description: "Burn wood into charcoal fuel (stored as Coal).",
         input: { wood: 2 },
         output: { coal: 1 },
       },
@@ -1002,9 +1010,9 @@
       },
       {
         name: "Cook Meat",
-        description: "Cooked meat restores health when consumed. Fuel with wood or coal.",
+        description: "Cooked meat restores health when consumed. Requires coal/charcoal fuel.",
         input: { raw_meat: 1 },
-        inputAny: [{ wood: 1 }, { coal: 1 }],
+        inputAny: [{ coal: 1 }],
         output: { cooked_meat: 1 },
       },
       {
@@ -1040,12 +1048,6 @@
         description: "Convert stone into beacon-grade bricks.",
         input: { stone: 2, wood: 1 },
         output: { brick: 1 },
-      },
-      {
-        name: "Forge Wayfinder Stone",
-        description: "Shape a wayfinder charm-stone used to craft maps.",
-        input: { brick: 1, paper: 1, stick: 1, gold_ingot: 1 },
-        output: { wayfinder_stone: 1 },
       },
     ],
   };
@@ -1231,7 +1233,7 @@
 
   const ABANDONED_ROBOT_OUTER_RING_RATIO = 0.16;
   const ABANDONED_ROBOT_FARTHEST_PERCENT = 0.28;
-  const MAX_ISLAND_BRIDGE_GAP_TILES = 15;
+  const MAX_ISLAND_BRIDGE_GAP_TILES = 11;
   const SHIPWRECK_STORAGE_SIZE = CHEST_SIZE;
   const SHIPWRECK_CONFIG = Object.freeze({
     minPerWorld: 3,
@@ -1273,17 +1275,17 @@
   });
 
   const SURFACE_PASSIVE_ANIMAL_CONFIG = Object.freeze({
-    baselineMin: 24,
-    baselineMax: 112,
-    baselineIslandFactor: 1.6,
-    baselineIslandOffset: 7,
-    maxBase: 34,
-    maxIslandFactor: 2.75,
-    maxIslandOffset: 4,
-    maxCap: 140,
-    spawnIslandHarvestMin: 4,
-    activeIslandHarvestMin: 2,
-    catchupSpawnBurstMax: 6,
+    baselineMin: 7,
+    baselineMax: 30,
+    baselineIslandFactor: 0.65,
+    baselineIslandOffset: 9,
+    maxBase: 14,
+    maxIslandFactor: 1.1,
+    maxIslandOffset: 7,
+    maxCap: 42,
+    spawnIslandHarvestMin: 2,
+    activeIslandHarvestMin: 1,
+    catchupSpawnBurstMax: 2,
   });
 
   const AMBIENT_FISH_CONFIG = Object.freeze({
@@ -1362,8 +1364,25 @@
   const MENU_THEME_GAIN = 1.45;
   const MUSIC_GAIN_BOOST = 2.35;
   const BACKGROUND_MUSIC_ENABLED = true;
-  const BACKGROUND_MUSIC_SRC = "assets/background-track.wav";
+  const BACKGROUND_MUSIC_TRACKS = Object.freeze([
+    "assets/background-track.wav",
+    "assets/background-track-ambient-1.wav",
+    "assets/background-track-ambient-2.wav",
+    "assets/background-track-lofi-2.wav",
+  ]);
   const BACKGROUND_MUSIC_TRACK_GAIN = 0.38;
+  const BACKGROUND_MUSIC_CROSSFADE_SECONDS = 7.5;
+  const BACKGROUND_MUSIC_CROSSFADE_LEAD_SECONDS = 10.5;
+  const BACKGROUND_MUSIC_RECOVERY_SILENCE_SECONDS = 12;
+  const BACKGROUND_MUSIC_MAX_SILENCE_SECONDS = 180;
+  const SLEEP_SEQUENCE = Object.freeze({
+    crawlToBedDuration: 0.58,
+    fadeOutDuration: 0.52,
+    blackoutDuration: 1.35,
+    fadeInDuration: 0.62,
+    walkOffBedDuration: 0.56,
+    exitOffsetTiles: 0.9,
+  });
   const PLAYER_HIT_SFX_SRC = "assets/player-hit.mp3";
   const PLAYER_HIT_SFX_TRIM_THRESHOLD = 0.012;
   const PLAYER_HIT_SFX_MAX_SCAN_SECONDS = 1.6;
@@ -1383,6 +1402,11 @@
   const BOAR_GRUNT_SFX_MAX_SCAN_SECONDS = 2.0;
   const BOAR_GRUNT_SFX_MIN_PRE_ROLL_SECONDS = 0.003;
   const BOAR_GRUNT_SFX_GAIN = 0.74;
+  const SAMPLE_ZERO_CROSS_WINDOW_SECONDS = 0.012;
+  const SAMPLE_FADE_IN_SECONDS = 0.004;
+  const SAMPLE_FADE_OUT_SECONDS = 0.018;
+  const CHASE_LOOP_ZERO_CROSS_WINDOW_SECONDS = 0.02;
+  const CHASE_LOOP_MIN_SPAN_SECONDS = 0.28;
   const LION_AGGRO_SFX_SRC = "assets/lion-aggro.mp3";
   const LION_AGGRO_SFX_TRIM_THRESHOLD = 0.008;
   const LION_AGGRO_SFX_MAX_SCAN_SECONDS = 2.2;
@@ -1423,6 +1447,7 @@
     screenScale: 0.23,
   });
   const DEBUG_WILD_ROBOT_TOGGLE_HEIGHT = 24;
+  const DEBUG_BOAT_RECEIPT_MAX = 192;
   const ROBOT_STORAGE_SIZE = CHEST_SIZE;
   const ROBOT_MODE = Object.freeze({
     trees: "trees",
@@ -1458,6 +1483,8 @@
   let buildCategory = "navigation";
   let selectedSlot = null;
   let activeSlot = 0;
+  let storagePanelLayoutRaf = 0;
+  let resizeRaf = 0;
 
   const touch = {
     active: false,
@@ -1536,6 +1563,7 @@
     debugIslandDrag: null,
     debugSpeedMultiplier: SETTINGS_DEFAULTS.debugSpeedMultiplier,
     debugWorldSpeedMultiplier: SETTINGS_DEFAULTS.debugWorldSpeedMultiplier,
+    sleepSequence: null,
     ambientFish: [],
     ambientFishSpawnTimer: 0,
     nearShip: null,
@@ -1559,6 +1587,7 @@
     players: new Map(),
     pendingPlaces: new Map(),
     pendingHousePlaces: new Map(),
+    debugBoatPlaceReceipts: new Map(),
     snapshotTimer: NET_CONFIG.snapshotInterval,
     motionTimer: NET_CONFIG.motionInterval,
     playerTimer: NET_CONFIG.playerSendInterval,
@@ -1593,8 +1622,16 @@
     caveAmbienceFilter: null,
     caveAmbienceLfo: null,
     caveAmbienceLfoGain: null,
-    bgmElement: null,
-    bgmSource: null,
+    musicDecks: [],
+    musicShuffleBag: [],
+    musicLastTrackIndex: -1,
+    musicActiveDeckIndex: -1,
+    musicNextDeckIndex: -1,
+    musicCrossfadeFromIndex: -1,
+    musicCrossfadeToIndex: -1,
+    musicCrossfadeEndTime: 0,
+    musicSilenceTimer: 0,
+    musicRecoveryCooldown: 0,
     playerHitBuffer: null,
     playerHitTrimStart: 0,
     playerHitLoadPromise: null,
@@ -1696,6 +1733,24 @@
 
   function smoothstep(t) {
     return t * t * (3 - 2 * t);
+  }
+
+  function normalizeDirectionVector(x, y, fallbackX = 1, fallbackY = 0) {
+    const length = Math.hypot(x, y);
+    if (length > 0.0001) {
+      return {
+        x: x / length,
+        y: y / length,
+      };
+    }
+    const fallbackLength = Math.hypot(fallbackX, fallbackY);
+    if (fallbackLength > 0.0001) {
+      return {
+        x: fallbackX / fallbackLength,
+        y: fallbackY / fallbackLength,
+      };
+    }
+    return { x: 1, y: 0 };
   }
 
   function smoothValue(current, target, dt, speed = NET_CONFIG.renderSmooth) {
@@ -1841,10 +1896,6 @@
     }
     if (audio.sfxBus) {
       audio.sfxBus.gain.setTargetAtTime(sfx, audio.ctx?.currentTime || 0, 0.04);
-    }
-    if (audio.bgmElement) {
-      audio.bgmElement.muted = !BACKGROUND_MUSIC_ENABLED;
-      audio.bgmElement.volume = BACKGROUND_MUSIC_TRACK_GAIN;
     }
   }
 
@@ -2011,41 +2062,356 @@
     return audio.ctx;
   }
 
-  function ensureBackgroundMusicSource() {
-    if (!BACKGROUND_MUSIC_ENABLED) return false;
-    if (!audio.ctx || !audio.musicBus) return false;
-    if (!audio.bgmElement) {
-      const element = new Audio(BACKGROUND_MUSIC_SRC);
-      element.loop = true;
-      element.preload = "auto";
-      element.volume = BACKGROUND_MUSIC_TRACK_GAIN;
-      audio.bgmElement = element;
+  function createMusicTrackOrder() {
+    const order = BACKGROUND_MUSIC_TRACKS.map((_, index) => index);
+    for (let i = order.length - 1; i > 0; i -= 1) {
+      const j = Math.floor(Math.random() * (i + 1));
+      const temp = order[i];
+      order[i] = order[j];
+      order[j] = temp;
     }
-    if (!audio.bgmSource) {
+    if (order.length > 1 && order[0] === audio.musicLastTrackIndex) {
+      const temp = order[0];
+      order[0] = order[1];
+      order[1] = temp;
+    }
+    return order;
+  }
+
+  function takeNextBackgroundMusicTrackIndex() {
+    if (!Array.isArray(audio.musicShuffleBag) || audio.musicShuffleBag.length === 0) {
+      audio.musicShuffleBag = createMusicTrackOrder();
+    }
+    if (!Array.isArray(audio.musicShuffleBag) || audio.musicShuffleBag.length === 0) return null;
+    return audio.musicShuffleBag.shift();
+  }
+
+  function createBackgroundMusicDeck() {
+    if (!audio.ctx || !audio.musicBus) return null;
+    const element = new Audio();
+    element.loop = false;
+    element.preload = "auto";
+    element.playsInline = true;
+    element.volume = 1;
+    const gain = audio.ctx.createGain();
+    gain.gain.setValueAtTime(0, audio.ctx.currentTime);
+    let source = null;
+    try {
+      source = audio.ctx.createMediaElementSource(element);
+      source.connect(gain);
+      gain.connect(audio.musicBus);
+    } catch (err) {
       try {
-        audio.bgmSource = audio.ctx.createMediaElementSource(audio.bgmElement);
-        audio.bgmSource.connect(audio.musicBus);
-      } catch (err) {
-        return false;
+        gain.disconnect();
+      } catch (disconnectErr) {
+        // ignore disconnect errors
       }
+      return null;
+    }
+    const deck = {
+      element,
+      source,
+      gain,
+      trackIndex: -1,
+    };
+    element.addEventListener("ended", () => {
+      handleBackgroundMusicDeckEnded(deck);
+    });
+    return deck;
+  }
+
+  function setBackgroundMusicDeckGain(deck, value, fadeSeconds = 0) {
+    if (!audio.ctx || !deck?.gain) return;
+    const now = audio.ctx.currentTime;
+    const gain = deck.gain.gain;
+    const target = clamp(Number(value) || 0, 0, 1.2);
+    const fade = Math.max(0, Number(fadeSeconds) || 0);
+    gain.cancelScheduledValues(now);
+    gain.setValueAtTime(gain.value, now);
+    if (fade > 0.001) {
+      gain.linearRampToValueAtTime(target, now + fade);
+    } else {
+      gain.setValueAtTime(target, now);
+    }
+  }
+
+  function stopBackgroundMusicDeck(deck, resetPosition = false) {
+    if (!deck?.element) return;
+    try {
+      deck.element.pause();
+    } catch (err) {
+      // ignore pause errors
+    }
+    if (resetPosition) {
+      try {
+        deck.element.currentTime = 0;
+      } catch (err) {
+        // ignore seek errors
+      }
+    }
+    setBackgroundMusicDeckGain(deck, 0, 0);
+  }
+
+  function assignBackgroundMusicTrack(deck, trackIndex) {
+    if (!deck?.element) return false;
+    if (!Number.isInteger(trackIndex)) return false;
+    const src = BACKGROUND_MUSIC_TRACKS[trackIndex];
+    if (!src) return false;
+    if (deck.trackIndex !== trackIndex) {
+      deck.element.src = src;
+      deck.element.load();
+    }
+    deck.trackIndex = trackIndex;
+    try {
+      deck.element.currentTime = 0;
+    } catch (err) {
+      // ignore seek errors
     }
     return true;
   }
 
-  function updateBackgroundMusicPlayback() {
-    if (!BACKGROUND_MUSIC_ENABLED) {
-      if (audio.bgmElement && !audio.bgmElement.paused) {
-        audio.bgmElement.pause();
+  function playBackgroundMusicDeck(deck) {
+    if (!deck?.element) return;
+    const playPromise = deck.element.play();
+    if (playPromise && typeof playPromise.catch === "function") {
+      playPromise.catch(() => {});
+    }
+  }
+
+  function startImmediateNextBackgroundTrack() {
+    if (!Array.isArray(audio.musicDecks)) return false;
+    if (!Number.isInteger(audio.musicActiveDeckIndex) || audio.musicActiveDeckIndex < 0) return false;
+    const activeDeck = audio.musicDecks[audio.musicActiveDeckIndex];
+    if (!activeDeck) return false;
+    const nextTrackIndex = takeNextBackgroundMusicTrackIndex();
+    if (!Number.isInteger(nextTrackIndex)) return false;
+    if (!assignBackgroundMusicTrack(activeDeck, nextTrackIndex)) return false;
+    audio.musicLastTrackIndex = nextTrackIndex;
+    audio.musicNextDeckIndex = -1;
+    audio.musicCrossfadeFromIndex = -1;
+    audio.musicCrossfadeToIndex = -1;
+    audio.musicCrossfadeEndTime = 0;
+    setBackgroundMusicDeckGain(activeDeck, BACKGROUND_MUSIC_TRACK_GAIN, 0.3);
+    playBackgroundMusicDeck(activeDeck);
+    primeNextBackgroundMusicDeck();
+    return true;
+  }
+
+  function isAnyBackgroundMusicDeckAudible() {
+    if (!Array.isArray(audio.musicDecks) || audio.musicDecks.length === 0) return false;
+    for (const deck of audio.musicDecks) {
+      if (!deck?.element || !deck?.gain) continue;
+      if (deck.element.paused || deck.element.ended) continue;
+      const gainValue = Number(deck.gain.gain?.value);
+      if (!Number.isFinite(gainValue) || gainValue <= 0.003) continue;
+      return true;
+    }
+    return false;
+  }
+
+  function forceBackgroundMusicRecovery() {
+    stopBackgroundMusicPlayback(false);
+    updateBackgroundMusicPlayback(0);
+  }
+
+  function handleBackgroundMusicDeckEnded(deck) {
+    if (!deck || !BACKGROUND_MUSIC_ENABLED) return;
+    if (!audio.ctx || !Array.isArray(audio.musicDecks)) return;
+    const deckIndex = audio.musicDecks.indexOf(deck);
+    if (deckIndex < 0) return;
+    if (deckIndex !== audio.musicActiveDeckIndex) return;
+    if (Number.isInteger(audio.musicCrossfadeToIndex) && audio.musicCrossfadeToIndex >= 0) return;
+    if (startBackgroundMusicCrossfade(0.45)) return;
+    startImmediateNextBackgroundTrack();
+  }
+
+  function stopBackgroundMusicPlayback(resetShuffle = false) {
+    if (Array.isArray(audio.musicDecks)) {
+      for (const deck of audio.musicDecks) {
+        stopBackgroundMusicDeck(deck, false);
       }
+    }
+    audio.musicActiveDeckIndex = -1;
+    audio.musicNextDeckIndex = -1;
+    audio.musicCrossfadeFromIndex = -1;
+    audio.musicCrossfadeToIndex = -1;
+    audio.musicCrossfadeEndTime = 0;
+    audio.musicSilenceTimer = 0;
+    audio.musicRecoveryCooldown = 0;
+    if (resetShuffle) {
+      audio.musicShuffleBag = [];
+      audio.musicLastTrackIndex = -1;
+    }
+  }
+
+  function primeNextBackgroundMusicDeck() {
+    if (!Array.isArray(audio.musicDecks) || audio.musicDecks.length < 2) return false;
+    if (!Number.isInteger(audio.musicActiveDeckIndex) || audio.musicActiveDeckIndex < 0) return false;
+    const nextDeckIndex = (audio.musicActiveDeckIndex + 1) % audio.musicDecks.length;
+    const nextDeck = audio.musicDecks[nextDeckIndex];
+    if (!nextDeck) return false;
+    const nextTrackIndex = takeNextBackgroundMusicTrackIndex();
+    if (!Number.isInteger(nextTrackIndex)) return false;
+    if (!assignBackgroundMusicTrack(nextDeck, nextTrackIndex)) return false;
+    stopBackgroundMusicDeck(nextDeck, false);
+    audio.musicNextDeckIndex = nextDeckIndex;
+    return true;
+  }
+
+  function startBackgroundMusicCrossfade(fadeSeconds = BACKGROUND_MUSIC_CROSSFADE_SECONDS) {
+    if (!audio.ctx) return false;
+    if (!Number.isInteger(audio.musicActiveDeckIndex) || audio.musicActiveDeckIndex < 0) return false;
+    if (!Number.isInteger(audio.musicNextDeckIndex) || audio.musicNextDeckIndex < 0) {
+      if (!primeNextBackgroundMusicDeck()) return false;
+    }
+    const fromIndex = audio.musicActiveDeckIndex;
+    const toIndex = audio.musicNextDeckIndex;
+    if (fromIndex === toIndex) return false;
+    const fromDeck = audio.musicDecks[fromIndex];
+    const toDeck = audio.musicDecks[toIndex];
+    if (!fromDeck || !toDeck || toDeck.trackIndex < 0) return false;
+
+    const fade = clamp(Number(fadeSeconds) || BACKGROUND_MUSIC_CROSSFADE_SECONDS, 0.2, 20);
+    setBackgroundMusicDeckGain(toDeck, 0, 0);
+    playBackgroundMusicDeck(toDeck);
+    setBackgroundMusicDeckGain(toDeck, BACKGROUND_MUSIC_TRACK_GAIN, fade);
+    setBackgroundMusicDeckGain(fromDeck, 0, fade);
+
+    audio.musicCrossfadeFromIndex = fromIndex;
+    audio.musicCrossfadeToIndex = toIndex;
+    audio.musicCrossfadeEndTime = audio.ctx.currentTime + fade;
+    return true;
+  }
+
+  function finishBackgroundMusicCrossfade() {
+    if (!Number.isInteger(audio.musicCrossfadeToIndex) || audio.musicCrossfadeToIndex < 0) return;
+    const fromDeck = audio.musicDecks[audio.musicCrossfadeFromIndex];
+    const toDeck = audio.musicDecks[audio.musicCrossfadeToIndex];
+    if (fromDeck) stopBackgroundMusicDeck(fromDeck, true);
+    if (toDeck) setBackgroundMusicDeckGain(toDeck, BACKGROUND_MUSIC_TRACK_GAIN, 0);
+    audio.musicActiveDeckIndex = audio.musicCrossfadeToIndex;
+    audio.musicLastTrackIndex = Number.isInteger(toDeck?.trackIndex)
+      ? toDeck.trackIndex
+      : audio.musicLastTrackIndex;
+    audio.musicNextDeckIndex = -1;
+    audio.musicCrossfadeFromIndex = -1;
+    audio.musicCrossfadeToIndex = -1;
+    audio.musicCrossfadeEndTime = 0;
+    primeNextBackgroundMusicDeck();
+  }
+
+  function ensureBackgroundMusicSource() {
+    if (!BACKGROUND_MUSIC_ENABLED) return false;
+    if (!audio.ctx || !audio.musicBus) return false;
+    if (!Array.isArray(audio.musicDecks)) {
+      audio.musicDecks = [];
+    }
+    while (audio.musicDecks.length < 2) {
+      const deck = createBackgroundMusicDeck();
+      if (!deck) break;
+      audio.musicDecks.push(deck);
+    }
+    return audio.musicDecks.length >= 1;
+  }
+
+  function updateBackgroundMusicPlayback(dt = 0) {
+    const step = Number.isFinite(dt) && dt > 0 ? dt : (1 / 60);
+    if (!BACKGROUND_MUSIC_ENABLED) {
+      stopBackgroundMusicPlayback(true);
       return;
     }
     if (!ensureBackgroundMusicSource()) return;
     applyAudioLevels();
-    if (audio.bgmElement.paused) {
-      const playPromise = audio.bgmElement.play();
-      if (playPromise && typeof playPromise.catch === "function") {
-        playPromise.catch(() => {});
+    audio.musicRecoveryCooldown = Math.max(0, (Number(audio.musicRecoveryCooldown) || 0) - step);
+
+    if (!Number.isInteger(audio.musicActiveDeckIndex) || audio.musicActiveDeckIndex < 0) {
+      const firstDeck = audio.musicDecks[0];
+      const firstTrackIndex = takeNextBackgroundMusicTrackIndex();
+      if (!firstDeck || !Number.isInteger(firstTrackIndex)) return;
+      if (!assignBackgroundMusicTrack(firstDeck, firstTrackIndex)) return;
+      setBackgroundMusicDeckGain(firstDeck, BACKGROUND_MUSIC_TRACK_GAIN, 1.15);
+      playBackgroundMusicDeck(firstDeck);
+      audio.musicActiveDeckIndex = 0;
+      audio.musicLastTrackIndex = firstTrackIndex;
+      audio.musicNextDeckIndex = -1;
+      audio.musicCrossfadeFromIndex = -1;
+      audio.musicCrossfadeToIndex = -1;
+      audio.musicCrossfadeEndTime = 0;
+      audio.musicSilenceTimer = 0;
+      audio.musicRecoveryCooldown = 0;
+      primeNextBackgroundMusicDeck();
+      return;
+    }
+
+    const activeDeck = audio.musicDecks[audio.musicActiveDeckIndex];
+    if (!activeDeck || activeDeck.trackIndex < 0) {
+      forceBackgroundMusicRecovery();
+      return;
+    }
+
+    if (
+      Number.isInteger(audio.musicCrossfadeToIndex)
+      && audio.musicCrossfadeToIndex >= 0
+      && Number.isFinite(audio.musicCrossfadeEndTime)
+      && audio.ctx.currentTime >= audio.musicCrossfadeEndTime
+    ) {
+      finishBackgroundMusicCrossfade();
+      return;
+    }
+
+    if (!Number.isInteger(audio.musicNextDeckIndex) || audio.musicNextDeckIndex < 0) {
+      primeNextBackgroundMusicDeck();
+    }
+
+    if (
+      activeDeck.element.ended
+      && (!Number.isInteger(audio.musicCrossfadeToIndex) || audio.musicCrossfadeToIndex < 0)
+    ) {
+      if (!startBackgroundMusicCrossfade(0.45)) {
+        startImmediateNextBackgroundTrack();
       }
+    } else if (activeDeck.element.paused && audio.musicCrossfadeToIndex < 0) {
+      playBackgroundMusicDeck(activeDeck);
+    }
+
+    const duration = Number(activeDeck.element.duration);
+    const current = Number(activeDeck.element.currentTime);
+    const hasDuration = Number.isFinite(duration) && duration > 0.5 && Number.isFinite(current);
+    if (!hasDuration && activeDeck.element.ended && audio.musicCrossfadeToIndex < 0) {
+      if (!startBackgroundMusicCrossfade(0.45)) {
+        startImmediateNextBackgroundTrack();
+      }
+    }
+    if (hasDuration && audio.musicCrossfadeToIndex < 0) {
+      const remaining = Math.max(0, duration - current);
+      const desiredFade = Math.min(
+        BACKGROUND_MUSIC_CROSSFADE_SECONDS,
+        Math.max(0.8, remaining - 0.12)
+      );
+      if (remaining <= BACKGROUND_MUSIC_CROSSFADE_LEAD_SECONDS) {
+        startBackgroundMusicCrossfade(desiredFade);
+      } else if (remaining <= 0.16) {
+        startBackgroundMusicCrossfade(0.28 + Math.max(0, dt) * 0.5);
+      }
+    }
+
+    if (isAnyBackgroundMusicDeckAudible()) {
+      audio.musicSilenceTimer = 0;
+      return;
+    }
+
+    audio.musicSilenceTimer = (Number(audio.musicSilenceTimer) || 0) + step;
+
+    if (audio.musicSilenceTimer >= BACKGROUND_MUSIC_MAX_SILENCE_SECONDS) {
+      forceBackgroundMusicRecovery();
+      return;
+    }
+    if (
+      audio.musicSilenceTimer >= BACKGROUND_MUSIC_RECOVERY_SILENCE_SECONDS
+      && audio.musicRecoveryCooldown <= 0
+    ) {
+      forceBackgroundMusicRecovery();
+      audio.musicRecoveryCooldown = 6;
     }
   }
 
@@ -2094,6 +2460,46 @@
     });
   }
 
+  function snapOffsetToZeroCrossing(buffer, offsetSeconds, searchWindowSeconds = SAMPLE_ZERO_CROSS_WINDOW_SECONDS) {
+    if (!buffer || !Number.isFinite(buffer.length) || buffer.length <= 2) return 0;
+    const sampleRate = Math.max(1, Number(buffer.sampleRate) || 44100);
+    const frameCount = Math.max(2, Math.floor(buffer.length));
+    const targetFrame = clamp(Math.floor((Number(offsetSeconds) || 0) * sampleRate), 1, frameCount - 1);
+    const windowFrames = Math.max(1, Math.floor(Math.max(0.001, Number(searchWindowSeconds) || 0.01) * sampleRate));
+    const minFrame = Math.max(1, targetFrame - windowFrames);
+    const maxFrame = Math.min(frameCount - 1, targetFrame + windowFrames);
+    const channels = Math.max(1, Math.floor(Number(buffer.numberOfChannels) || 1));
+    const channelData = [];
+    for (let c = 0; c < channels; c += 1) {
+      channelData.push(buffer.getChannelData(c));
+    }
+
+    let bestFrame = targetFrame;
+    let bestScore = Infinity;
+    for (let frame = minFrame; frame <= maxFrame; frame += 1) {
+      let crossed = false;
+      let score = 0;
+      for (let c = 0; c < channelData.length; c += 1) {
+        const data = channelData[c];
+        const prev = Number(data[frame - 1]) || 0;
+        const next = Number(data[frame]) || 0;
+        if ((prev <= 0 && next >= 0) || (prev >= 0 && next <= 0)) {
+          crossed = true;
+        }
+        score += Math.abs(prev) + Math.abs(next);
+      }
+      if (!crossed) continue;
+      const frameDist = Math.abs(frame - targetFrame) / (windowFrames + 1);
+      const weightedScore = score + frameDist * 0.002;
+      if (weightedScore < bestScore) {
+        bestScore = weightedScore;
+        bestFrame = frame;
+        if (weightedScore <= 0.0003) break;
+      }
+    }
+    return bestFrame / sampleRate;
+  }
+
   function detectLeadingSignalStartSeconds(buffer, options = null) {
     if (!buffer || !Number.isFinite(buffer.length) || buffer.length <= 0) return 0;
     const sampleRate = Math.max(1, Number(buffer.sampleRate) || 44100);
@@ -2135,7 +2541,58 @@
     if (firstFrame < 0) return 0;
     const preRollFrames = Math.floor(sampleRate * preRollSeconds);
     const startFrame = Math.max(0, firstFrame - preRollFrames);
-    return startFrame / sampleRate;
+    return snapOffsetToZeroCrossing(
+      buffer,
+      startFrame / sampleRate,
+      SAMPLE_ZERO_CROSS_WINDOW_SECONDS
+    );
+  }
+
+  function playTrimmedSampleBuffer(buffer, startOffset, gainValue, options = null) {
+    if (!audio.ctx || !audio.enabled || !audio.sfxBus || !buffer) return false;
+    const opts = options && typeof options === "object" ? options : {};
+    const now = audio.ctx.currentTime;
+    const source = audio.ctx.createBufferSource();
+    const gain = audio.ctx.createGain();
+    source.buffer = buffer;
+    const duration = Math.max(0.01, source.buffer.duration || 0.01);
+    const maxStart = Math.max(0, duration - 0.01);
+    const rawStart = clamp(Number(startOffset) || 0, 0, maxStart);
+    const snappedStart = snapOffsetToZeroCrossing(source.buffer, rawStart, SAMPLE_ZERO_CROSS_WINDOW_SECONDS);
+    const playStart = clamp(snappedStart, 0, maxStart);
+    const playDuration = Math.max(0.01, duration - playStart);
+    const targetGain = clamp(Number(gainValue) || 0.6, 0.0001, 1.4);
+    const fadeIn = clamp(Number(opts.fadeInSeconds) || SAMPLE_FADE_IN_SECONDS, 0.001, 0.06);
+    const fadeOut = clamp(Number(opts.fadeOutSeconds) || SAMPLE_FADE_OUT_SECONDS, 0.004, 0.12);
+    const endAt = now + playDuration;
+    const releaseLead = clamp(fadeOut, 0.002, Math.max(0.002, playDuration - 0.001));
+    const releaseStart = clamp(
+      now + Math.max(fadeIn, playDuration - releaseLead),
+      now + fadeIn,
+      endAt - 0.0005
+    );
+
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(targetGain, now + fadeIn);
+    gain.gain.setValueAtTime(targetGain, releaseStart);
+    gain.gain.exponentialRampToValueAtTime(0.0001, endAt);
+    source.connect(gain);
+    gain.connect(audio.sfxBus);
+    source.start(now, playStart, playDuration);
+    source.stop(endAt + 0.02);
+    source.onended = () => {
+      try {
+        source.disconnect();
+      } catch (err) {
+        // ignore disconnect errors
+      }
+      try {
+        gain.disconnect();
+      } catch (err) {
+        // ignore disconnect errors
+      }
+    };
+    return true;
   }
 
   function ensurePlayerHitSampleLoaded() {
@@ -2163,17 +2620,12 @@
       ensurePlayerHitSampleLoaded();
       return false;
     }
-    const now = audio.ctx.currentTime;
-    const source = audio.ctx.createBufferSource();
-    const gain = audio.ctx.createGain();
-    source.buffer = audio.playerHitBuffer;
-    const maxStart = Math.max(0, source.buffer.duration - 0.01);
-    const startOffset = clamp(Number(audio.playerHitTrimStart) || 0, 0, maxStart);
-    gain.gain.setValueAtTime(clamp(0.88 * amp, 0.0001, 1.4), now);
-    source.connect(gain);
-    gain.connect(audio.sfxBus);
-    source.start(now, startOffset);
-    return true;
+    return playTrimmedSampleBuffer(
+      audio.playerHitBuffer,
+      audio.playerHitTrimStart,
+      clamp(0.88 * amp, 0.0001, 1.4),
+      { fadeInSeconds: 0.003, fadeOutSeconds: 0.02 }
+    );
   }
 
   function ensureGreenCowMooSampleLoaded() {
@@ -2205,20 +2657,12 @@
       ensureGreenCowMooSampleLoaded();
       return false;
     }
-    const now = audio.ctx.currentTime;
-    const source = audio.ctx.createBufferSource();
-    const gain = audio.ctx.createGain();
-    source.buffer = audio.greenCowMooBuffer;
-    const maxStart = Math.max(0, source.buffer.duration - 0.01);
-    const startOffset = clamp(Number(audio.greenCowMooTrimStart) || 0, 0, maxStart);
-    gain.gain.setValueAtTime(
+    return playTrimmedSampleBuffer(
+      audio.greenCowMooBuffer,
+      audio.greenCowMooTrimStart,
       clamp(GREEN_COW_MOO_SFX_GAIN * amp, 0.0001, 1.2),
-      now
+      { fadeInSeconds: 0.004, fadeOutSeconds: 0.03 }
     );
-    source.connect(gain);
-    gain.connect(audio.sfxBus);
-    source.start(now, startOffset);
-    return true;
   }
 
   function ensureGoatBleatSampleLoaded() {
@@ -2250,20 +2694,12 @@
       ensureGoatBleatSampleLoaded();
       return false;
     }
-    const now = audio.ctx.currentTime;
-    const source = audio.ctx.createBufferSource();
-    const gain = audio.ctx.createGain();
-    source.buffer = audio.goatBleatBuffer;
-    const maxStart = Math.max(0, source.buffer.duration - 0.01);
-    const startOffset = clamp(Number(audio.goatBleatTrimStart) || 0, 0, maxStart);
-    gain.gain.setValueAtTime(
+    return playTrimmedSampleBuffer(
+      audio.goatBleatBuffer,
+      audio.goatBleatTrimStart,
       clamp(GOAT_BLEAT_SFX_GAIN * amp, 0.0001, 1.2),
-      now
+      { fadeInSeconds: 0.004, fadeOutSeconds: 0.03 }
     );
-    source.connect(gain);
-    gain.connect(audio.sfxBus);
-    source.start(now, startOffset);
-    return true;
   }
 
   function ensureBoarGruntSampleLoaded() {
@@ -2295,20 +2731,12 @@
       ensureBoarGruntSampleLoaded();
       return false;
     }
-    const now = audio.ctx.currentTime;
-    const source = audio.ctx.createBufferSource();
-    const gain = audio.ctx.createGain();
-    source.buffer = audio.boarGruntBuffer;
-    const maxStart = Math.max(0, source.buffer.duration - 0.01);
-    const startOffset = clamp(Number(audio.boarGruntTrimStart) || 0, 0, maxStart);
-    gain.gain.setValueAtTime(
+    return playTrimmedSampleBuffer(
+      audio.boarGruntBuffer,
+      audio.boarGruntTrimStart,
       clamp(BOAR_GRUNT_SFX_GAIN * amp, 0.0001, 1.2),
-      now
+      { fadeInSeconds: 0.004, fadeOutSeconds: 0.03 }
     );
-    source.connect(gain);
-    gain.connect(audio.sfxBus);
-    source.start(now, startOffset);
-    return true;
   }
 
   function ensureLionAggroSampleLoaded() {
@@ -2433,23 +2861,41 @@
       }
     }
     if (entry.source) {
+      const source = entry.source;
+      const gainNode = entry.gain;
+      const cleanup = () => {
+        if (source) {
+          try {
+            source.disconnect();
+          } catch (err) {
+            // ignore disconnect errors
+          }
+        }
+        if (gainNode) {
+          try {
+            gainNode.disconnect();
+          } catch (err) {
+            // ignore disconnect errors
+          }
+        }
+      };
+      const prevEnded = source.onended;
+      source.onended = () => {
+        if (typeof prevEnded === "function") {
+          try {
+            prevEnded();
+          } catch (err) {
+            // ignore callback errors
+          }
+        }
+        cleanup();
+      };
       try {
-        entry.source.stop(now + fade + 0.02);
+        source.stop(now + fade + 0.02);
       } catch (err) {
         // ignore stop errors
       }
-      try {
-        entry.source.disconnect();
-      } catch (err) {
-        // ignore disconnect errors
-      }
-    }
-    if (entry.gain) {
-      try {
-        entry.gain.disconnect();
-      } catch (err) {
-        // ignore disconnect errors
-      }
+      window.setTimeout(cleanup, Math.ceil((fade + 0.12) * 1000));
     }
   }
 
@@ -2495,10 +2941,29 @@
     source.buffer = profile.buffer;
     source.loop = true;
     const maxStart = Math.max(0, source.buffer.duration - 0.01);
-    const startOffset = clamp(Number(profile.trimStart) || 0, 0, maxStart);
+    const rawStart = clamp(Number(profile.trimStart) || 0, 0, maxStart);
+    const startOffset = snapOffsetToZeroCrossing(
+      source.buffer,
+      rawStart,
+      CHASE_LOOP_ZERO_CROSS_WINDOW_SECONDS
+    );
     if (startOffset > 0 && source.buffer.duration - startOffset > 0.01) {
       source.loopStart = startOffset;
-      source.loopEnd = source.buffer.duration;
+      const rawLoopEnd = Math.max(
+        startOffset + CHASE_LOOP_MIN_SPAN_SECONDS,
+        source.buffer.duration - 0.004
+      );
+      const snappedLoopEnd = snapOffsetToZeroCrossing(
+        source.buffer,
+        rawLoopEnd,
+        CHASE_LOOP_ZERO_CROSS_WINDOW_SECONDS * 1.4
+      );
+      const safeLoopEnd = clamp(
+        snappedLoopEnd,
+        startOffset + CHASE_LOOP_MIN_SPAN_SECONDS,
+        source.buffer.duration
+      );
+      source.loopEnd = safeLoopEnd;
     }
 
     gain.gain.setValueAtTime(0.0001, now);
@@ -3480,7 +3945,7 @@
 
   function updateAudio(dt) {
     if (!audio.ctx || !audio.enabled) return;
-    updateBackgroundMusicPlayback();
+    updateBackgroundMusicPlayback(dt);
     const proceduralMusicActive = !!(
       audio.musicGain
       || audio.padGain
@@ -4186,6 +4651,7 @@
     net.players.clear();
     net.pendingPlaces.clear();
     net.pendingHousePlaces.clear();
+    net.debugBoatPlaceReceipts.clear();
     net.roomId = roomId;
     net.hostId = `${roomId}-host`;
     if (roomDisplay) {
@@ -4697,9 +5163,36 @@
     };
   }
 
+  function getStructureSerializationPriority(type) {
+    if (type === "bridge" || type === "dock") return 0;
+    if (type === "abandoned_ship") return 2;
+    return 1;
+  }
+
+  function sortStructureEntriesForPlacement(entries) {
+    if (!Array.isArray(entries)) return [];
+    return entries.slice().sort((a, b) => {
+      const priorityDiff = (
+        getStructureSerializationPriority(normalizeLegacyStructureType(a?.type))
+        - getStructureSerializationPriority(normalizeLegacyStructureType(b?.type))
+      );
+      if (priorityDiff !== 0) return priorityDiff;
+      const txA = Number.isFinite(Number(a?.tx)) ? Number(a.tx) : 0;
+      const txB = Number.isFinite(Number(b?.tx)) ? Number(b.tx) : 0;
+      if (txA !== txB) return txA - txB;
+      const tyA = Number.isFinite(Number(a?.ty)) ? Number(a.ty) : 0;
+      const tyB = Number.isFinite(Number(b?.ty)) ? Number(b.ty) : 0;
+      if (tyA !== tyB) return tyA - tyB;
+      const idA = Number.isFinite(Number(a?.id)) ? Number(a.id) : 0;
+      const idB = Number.isFinite(Number(b?.id)) ? Number(b.id) : 0;
+      return idA - idB;
+    });
+  }
+
   function serializeStructuresList() {
-    return state.structures
-      .filter((structure) => !structure.removed)
+    return sortStructureEntriesForPlacement(
+      state.structures.filter((structure) => !structure.removed)
+    )
       .map((structure) => ({
         type: structure.type,
         tx: structure.tx,
@@ -5211,13 +5704,14 @@
     state.structures = [];
     state.structureGrid = new Array(world.size * world.size).fill(null);
     if (!Array.isArray(structures)) return;
+    const orderedStructures = sortStructureEntriesForPlacement(structures);
     const bridgeSet = new Set(
-      structures
+      orderedStructures
         .filter((entry) => entry && (entry.type === "bridge" || entry.type === "dock"))
         .map((entry) => `${entry.tx},${entry.ty}`)
     );
     const anchoredBridgeSet = getAnchoredBridgeNetwork(world, bridgeSet);
-    for (const entry of structures) {
+    for (const entry of orderedStructures) {
       if (!entry) continue;
       const normalized = { ...entry, type: normalizeLegacyStructureType(entry.type) };
       if (!isStructureValidOnLoad(world, normalized, bridgeSet, anchoredBridgeSet)) continue;
@@ -5370,6 +5864,9 @@
 
   function applyNetworkSnapshot(snapshot) {
     if (!snapshot || !snapshot.seed) return;
+    if (state.sleepSequence) {
+      state.sleepSequence = null;
+    }
     if (!state.surfaceWorld || state.surfaceWorld.seed !== snapshot.seed) {
       closeStationMenu();
       closeChest();
@@ -5385,6 +5882,7 @@
       state.activeCave = null;
       state.activeHouse = null;
       state.housePlayer = null;
+      state.sleepSequence = null;
       state.returnPosition = null;
       state.ambientFish = [];
       state.ambientFishSpawnTimer = 0;
@@ -5546,6 +6044,7 @@
     if (message.snapshot) {
       applyNetworkSnapshot(message.snapshot);
     }
+    state.sleepSequence = null;
     net.ready = true;
     state.inCave = false;
     state.activeCave = null;
@@ -6078,51 +6577,78 @@
     conn.send(payload);
   }
 
+  function getDebugBoatPlaceReceipt(requestId) {
+    if (!requestId || !(net.debugBoatPlaceReceipts instanceof Map)) return null;
+    return net.debugBoatPlaceReceipts.get(requestId) || null;
+  }
+
+  function cacheDebugBoatPlaceReceipt(requestId, ok, reason = null) {
+    if (!requestId || !(net.debugBoatPlaceReceipts instanceof Map)) return;
+    net.debugBoatPlaceReceipts.set(requestId, {
+      ok: !!ok,
+      reason: reason || null,
+    });
+    while (net.debugBoatPlaceReceipts.size > DEBUG_BOAT_RECEIPT_MAX) {
+      const oldest = net.debugBoatPlaceReceipts.keys().next().value;
+      if (oldest == null) break;
+      net.debugBoatPlaceReceipts.delete(oldest);
+    }
+  }
+
   function handleDebugBoatPlace(conn, message) {
     if (!conn || !message) return;
     const requestId = typeof message.requestId === "string" ? message.requestId : null;
+    const cachedReceipt = getDebugBoatPlaceReceipt(requestId);
+    if (cachedReceipt) {
+      sendDebugBoatPlaceResult(conn, requestId, cachedReceipt.ok, cachedReceipt.reason);
+      return;
+    }
+    const respond = (ok, reason = null) => {
+      cacheDebugBoatPlaceReceipt(requestId, ok, reason);
+      sendDebugBoatPlaceResult(conn, requestId, ok, reason);
+    };
     if (!state.surfaceWorld) {
-      sendDebugBoatPlaceResult(conn, requestId, false, "World not ready");
+      respond(false, "World not ready");
       return;
     }
     if (!state.debugUnlocked) {
-      sendDebugBoatPlaceResult(conn, requestId, false, "Debug disabled");
+      respond(false, "Debug disabled");
       return;
     }
     const player = net.players.get(conn.peer);
     if (!player) {
-      sendDebugBoatPlaceResult(conn, requestId, false, "Player unavailable");
+      respond(false, "Player unavailable");
       return;
     }
     if (player.inCave || player.inHut) {
-      sendDebugBoatPlaceResult(conn, requestId, false, "Cannot place here");
+      respond(false, "Cannot place here");
       return;
     }
     const tx = Math.floor(Number(message.tx));
     const ty = Math.floor(Number(message.ty));
     if (!Number.isInteger(tx) || !Number.isInteger(ty)) {
-      sendDebugBoatPlaceResult(conn, requestId, false, "Invalid target");
+      respond(false, "Invalid target");
       return;
     }
     if (!inBounds(tx, ty, state.surfaceWorld.size)) {
-      sendDebugBoatPlaceResult(conn, requestId, false, "Out of bounds");
+      respond(false, "Out of bounds");
       return;
     }
     const centerX = (tx + 0.5) * CONFIG.tileSize;
     const centerY = (ty + 0.5) * CONFIG.tileSize;
     if (!canRemotePlayerReachPoint(player, centerX, centerY, 16)) {
-      sendDebugBoatPlaceResult(conn, requestId, false, "Move closer");
+      respond(false, "Move closer");
       return;
     }
 
     const placed = placeDebugRepairedBoatAt(state.surfaceWorld, tx, ty);
     if (!placed.ok) {
-      sendDebugBoatPlaceResult(conn, requestId, false, placed.reason || "Must place on water.");
+      respond(false, placed.reason || "Must place on water.");
       return;
     }
 
     markDirty();
-    sendDebugBoatPlaceResult(conn, requestId, true);
+    respond(true);
     broadcastNet(buildSnapshot());
     const motion = buildMotionUpdate();
     if (motion) broadcastNet(motion);
@@ -6260,6 +6786,25 @@
     destroyChest(structure);
   }
 
+  function applySleepSkipToDawn() {
+    state.timeOfDay = 0;
+    state.isNight = false;
+    state.checkpointTimer = 0;
+    state.animalVocalTimer = 2.4 + Math.random() * 1.8;
+    state.surfaceSpawnTimer = MONSTER.spawnInterval;
+    state.gameWon = false;
+    if (state.surfaceWorld) {
+      igniteSurfaceMonstersForDay(state.surfaceWorld);
+    }
+    updateTimeUI();
+    markDirty();
+    if (net.isHost && net.connections.size > 0) {
+      broadcastNet(buildSnapshot());
+      const motion = buildMotionUpdate();
+      if (motion) broadcastNet(motion);
+    }
+  }
+
   function handleSleepRequest(conn) {
     if (!state.isNight) return;
     if (conn) {
@@ -6276,16 +6821,7 @@
         if (!nearBed) return;
       }
     }
-    state.timeOfDay = 0;
-    state.isNight = false;
-    state.checkpointTimer = 0;
-    state.animalVocalTimer = 2.4 + Math.random() * 1.8;
-    state.surfaceSpawnTimer = MONSTER.spawnInterval;
-    state.gameWon = false;
-    if (state.surfaceWorld) {
-      igniteSurfaceMonstersForDay(state.surfaceWorld);
-    }
-    updateTimeUI();
+    applySleepSkipToDawn();
 
     if (conn) {
       const player = net.players.get(conn.peer);
@@ -6300,7 +6836,6 @@
         }
       }
     }
-    markDirty();
   }
 
   function handleDropPickup(conn, message) {
@@ -6430,6 +6965,7 @@
     state.player.invincible = 1;
     state.activeHouse = null;
     state.housePlayer = null;
+    state.sleepSequence = null;
     state.inCave = false;
     state.activeCave = null;
     state.world = state.surfaceWorld || state.world;
@@ -6998,24 +7534,6 @@
 
   function isGuardianMonsterType(type) {
     return type === "polar_bear" || type === "lion" || type === "wolf";
-  }
-
-  function isGuardianMonsterAllowedAtTile(world, monster, tx, ty) {
-    if (!world || !monster || !Number.isFinite(tx) || !Number.isFinite(ty)) return false;
-    if (!inBounds(tx, ty, world.size)) return false;
-    if (!isGuardianMonsterType(monster.type)) return true;
-    const biomeId = getSurfaceBiomeIdAtTile(world, tx, ty);
-    const biome = BIOMES[biomeId];
-    if (!biome) return false;
-    if (monster.type === "polar_bear") return biome.key === BIOME_KEYS.snow;
-    if (monster.type === "lion") return biome.key === BIOME_KEYS.jungle;
-    if (monster.type === "wolf") {
-      if (!isPlainsBiomeId(biomeId)) return false;
-      const island = getIslandForTile(world, tx, ty);
-      if (island && isSpawnIsland(world, island)) return false;
-      return true;
-    }
-    return false;
   }
 
   function isDayImmuneMonster(monster) {
@@ -7813,7 +8331,7 @@
         world,
         state.spawnTile,
         passiveTargets.spawnIslandHarvestMin,
-        Infinity
+        passiveTargets.maxAnimals
       );
     }
 
@@ -8616,12 +9134,12 @@
       }
     }
 
-    function enforceIslandBridgeGap(limitTiles = MAX_ISLAND_BRIDGE_GAP_TILES, iterations = 14) {
+    function enforceIslandBridgeGap(limitTiles = MAX_ISLAND_BRIDGE_GAP_TILES, iterations = 24) {
       if (islands.length <= 2) return;
-      const safeLimit = Math.max(6, Number(limitTiles) || 15);
+      const safeLimit = Math.max(6, Number(limitTiles) || 11);
       for (let pass = 0; pass < iterations; pass += 1) {
         let adjusted = false;
-        for (let i = 1; i < islands.length; i += 1) {
+        for (let i = 0; i < islands.length; i += 1) {
           const island = islands[i];
           let nearest = null;
           let nearestDist = Infinity;
@@ -8638,22 +9156,31 @@
           }
           if (!nearest || !nearest.other) continue;
           const edgeGap = nearestDist - (island.radius + nearest.other.radius);
-          if (edgeGap <= safeLimit + 0.35) continue;
-          const shift = Math.min(4.2, edgeGap - safeLimit);
-          const edgePad = island.radius + 14;
+          if (edgeGap <= safeLimit + 0.2) continue;
+          const shift = Math.min(4.8, edgeGap - safeLimit);
+          let movingIsland = island;
+          let moveDirX = nearest.dx / nearestDist;
+          let moveDirY = nearest.dy / nearestDist;
+          if (island.starter && !nearest.other.starter) {
+            // Keep starter anchored and pull another island toward it.
+            movingIsland = nearest.other;
+            moveDirX *= -1;
+            moveDirY *= -1;
+          }
+          const edgePad = movingIsland.radius + 14;
           const nextX = clamp(
-            island.x - (nearest.dx / nearestDist) * shift,
+            movingIsland.x - moveDirX * shift,
             edgePad,
             size - edgePad
           );
           const nextY = clamp(
-            island.y - (nearest.dy / nearestDist) * shift,
+            movingIsland.y - moveDirY * shift,
             edgePad,
             size - edgePad
           );
-          if (Math.hypot(nextX - island.x, nextY - island.y) > 0.01) {
-            island.x = nextX;
-            island.y = nextY;
+          if (Math.hypot(nextX - movingIsland.x, nextY - movingIsland.y) > 0.01) {
+            movingIsland.x = nextX;
+            movingIsland.y = nextY;
             adjusted = true;
           }
         }
@@ -9684,15 +10211,7 @@
       inventory: state.inventory,
       resourceStates: surface.resources.map((res) => serializeResource(res)),
       respawnTasks: surface.respawnTasks ?? [],
-      structures: state.structures
-        .filter((structure) => !structure.removed)
-        .map((structure) => ({
-          type: structure.type,
-          tx: structure.tx,
-          ty: structure.ty,
-          storage: structure.storage ? structure.storage.map((slot) => ({ ...slot })) : null,
-          meta: serializeStructureMeta(structure),
-        })),
+      structures: serializeStructuresList(),
       drops: (surface.drops ?? []).map((drop) => ({
         id: drop.id,
         itemId: drop.itemId,
@@ -10404,8 +10923,15 @@
       || type === "abandoned_ship";
   }
 
+  function isBridgeOrDockStructure(structure) {
+    return !!structure && !structure.removed && (structure.type === "bridge" || structure.type === "dock");
+  }
+
   function canUseWaterStructureFootprint(world, type, tx, ty, options = {}) {
-    const { ignoreStructureId = null } = options;
+    const {
+      ignoreStructureId = null,
+      allowOccupiedBy = null,
+    } = options;
     if (!world) return false;
     const footprint = getStructureFootprint(type);
     for (let oy = 0; oy < footprint.h; oy += 1) {
@@ -10416,7 +10942,12 @@
         const idx = tileIndex(fx, fy, world.size);
         if (world.tiles[idx] !== 0) return false;
         const occupied = getStructureAt(fx, fy);
-        if (occupied && !occupied.removed && occupied.id !== ignoreStructureId) return false;
+        if (occupied && !occupied.removed && occupied.id !== ignoreStructureId) {
+          const allowed = typeof allowOccupiedBy === "function"
+            ? !!allowOccupiedBy(occupied, fx, fy)
+            : false;
+          if (!allowed) return false;
+        }
       }
     }
     return true;
@@ -10451,7 +10982,10 @@
             || bridgeSet?.has(toKey(entry.tx, entry.ty + 1)));
         if (!(left || right || up || down)) return false;
       }
-      return canUseWaterStructureFootprint(world, entry.type, entry.tx, entry.ty);
+      const waterOptions = entry.type === "abandoned_ship"
+        ? { allowOccupiedBy: (occupied) => isBridgeOrDockStructure(occupied) }
+        : {};
+      return canUseWaterStructureFootprint(world, entry.type, entry.tx, entry.ty, waterOptions);
     }
 
     if (!baseLand) return false;
@@ -11002,6 +11536,45 @@
   function setStructureFootprintInGrid(structure, place) {
     if (!structure || !state.structureGrid) return;
     const size = state.surfaceWorld?.size ?? state.world.size;
+    if (structure.type === "abandoned_ship") {
+      if (!structure.__shipOverlap || typeof structure.__shipOverlap !== "object") {
+        structure.__shipOverlap = {};
+      }
+      const overlapMap = structure.__shipOverlap;
+      forEachStructureFootprintTile(structure.type, structure.tx, structure.ty, (tx, ty) => {
+        if (!inBounds(tx, ty, size)) return;
+        const idx = tileIndex(tx, ty, size);
+        const key = `${tx},${ty}`;
+        if (place) {
+          const existingId = state.structureGrid[idx];
+          const existing = Number.isInteger(existingId) ? state.structures[existingId] : null;
+          if (
+            existing
+            && !existing.removed
+            && existing.id !== structure.id
+            && isBridgeOrDockStructure(existing)
+          ) {
+            overlapMap[key] = existing.id;
+          } else if (existingId !== structure.id) {
+            delete overlapMap[key];
+          }
+          state.structureGrid[idx] = structure.id;
+          return;
+        }
+        if (state.structureGrid[idx] !== structure.id) return;
+        const underneathId = overlapMap[key];
+        let restoreId = null;
+        if (Number.isInteger(underneathId)) {
+          const underneath = state.structures[underneathId];
+          if (isBridgeOrDockStructure(underneath)) {
+            restoreId = underneathId;
+          }
+        }
+        state.structureGrid[idx] = restoreId;
+        delete overlapMap[key];
+      });
+      return;
+    }
     forEachStructureFootprintTile(structure.type, structure.tx, structure.ty, (tx, ty) => {
       if (!inBounds(tx, ty, size)) return;
       const idx = tileIndex(tx, ty, size);
@@ -11684,20 +12257,14 @@
         keep = structure;
         continue;
       }
-      if (!structure.meta) structure.meta = {};
-      if (structure.meta.wildSpawn) {
-        structure.meta.wildSpawn = false;
-        changed = true;
-      }
+      removeStructure(structure);
+      changed = true;
     }
 
     if (keep && !isWildRobotPlacementValid(world, keep, outerCandidateSet)) {
-      if (!keep.meta) keep.meta = {};
-      if (keep.meta.wildSpawn) {
-        keep.meta.wildSpawn = false;
-        changed = true;
-      }
+      removeStructure(keep);
       keep = null;
+      changed = true;
     }
 
     if (!keep) {
@@ -11944,7 +12511,10 @@
 
   function isAbandonedShipStructureValid(world, structure, outerIslands = null) {
     if (!world || !structure || structure.removed || structure.type !== "abandoned_ship") return false;
-    if (!canUseWaterStructureFootprint(world, structure.type, structure.tx, structure.ty, { ignoreStructureId: structure.id })) {
+    if (!canUseWaterStructureFootprint(world, structure.type, structure.tx, structure.ty, {
+      ignoreStructureId: structure.id,
+      allowOccupiedBy: (occupied) => isBridgeOrDockStructure(occupied),
+    })) {
       return false;
     }
     const center = getStructureCenterTile(structure.type, structure.tx, structure.ty);
@@ -12205,8 +12775,13 @@
   function canAbandonedShipOccupyAt(world, structure, worldX, worldY) {
     if (!world || !structure) return false;
     const anchor = getShipAnchorForWorldPosition(structure, worldX, worldY);
+    const ship = ensureAbandonedShipMeta(structure);
+    const allowBridgeOverlay = !!ship?.repaired;
     return canUseWaterStructureFootprint(world, structure.type, anchor.tx, anchor.ty, {
       ignoreStructureId: structure.id,
+      allowOccupiedBy: allowBridgeOverlay
+        ? (occupied) => isBridgeOrDockStructure(occupied)
+        : null,
     });
   }
 
@@ -12365,13 +12940,13 @@
     const initialAnimalRng = makeRng(((world.seedInt ?? seedToInt(world.seed || normalizedSeed)) ^ 0x53a9f11d) >>> 0);
     world.villagers = world.villagers || [];
     world.nextVillagerId = world.nextVillagerId || 1;
-    seedSurfaceAnimals(world, passiveTargets.baselineAnimals, { rng: initialAnimalRng, minSpacingTiles: 4.8 });
+    seedSurfaceAnimals(world, passiveTargets.baselineAnimals, { rng: initialAnimalRng, minSpacingTiles: 5.6 });
     const spawn = findSpawnTile(world);
     ensureSpawnIslandHarvestAnimals(
       world,
       spawn,
       passiveTargets.spawnIslandHarvestMin,
-      Infinity,
+      passiveTargets.maxAnimals,
       initialAnimalRng
     );
     state.spawnTile = spawn;
@@ -12411,6 +12986,7 @@
     setPlayerCheckpoint(state.player, world, state.player.x, state.player.y, true);
     state.activeHouse = null;
     state.housePlayer = null;
+    state.sleepSequence = null;
     state.inventory = createEmptyInventory(INVENTORY_SIZE);
     state.targetResource = null;
     state.activeStation = null;
@@ -12477,7 +13053,7 @@
       world.villagers = world.villagers || [];
       world.nextVillagerId = world.nextVillagerId || 1;
       if (world.animals.length === 0) {
-        seedSurfaceAnimals(world, passiveTargets.baselineAnimals, { rng: restoreAnimalRng, minSpacingTiles: 4.8 });
+        seedSurfaceAnimals(world, passiveTargets.baselineAnimals, { rng: restoreAnimalRng, minSpacingTiles: 5.6 });
       }
       ensureSurfaceCaves(world, preparedSave.caves);
 
@@ -12520,13 +13096,14 @@
       state.structureGrid = new Array(world.size * world.size).fill(null);
 
       if (Array.isArray(preparedSave.structures)) {
+        const orderedStructures = sortStructureEntriesForPlacement(preparedSave.structures);
         const bridgeSet = new Set(
-          preparedSave.structures
+          orderedStructures
             .filter((entry) => entry && (entry.type === "bridge" || entry.type === "dock"))
             .map((entry) => `${entry.tx},${entry.ty}`)
         );
         const anchoredBridgeSet = getAnchoredBridgeNetwork(world, bridgeSet);
-        for (const entry of preparedSave.structures) {
+        for (const entry of orderedStructures) {
           if (!entry) continue;
           const normalized = { ...entry, type: normalizeLegacyStructureType(entry.type) };
           if (!isStructureValidOnLoad(world, normalized, bridgeSet, anchoredBridgeSet)) continue;
@@ -12553,7 +13130,7 @@
         world,
         spawnTile,
         passiveTargets.spawnIslandHarvestMin,
-        Infinity,
+        passiveTargets.maxAnimals,
         restoreAnimalRng
       );
       state.player = {
@@ -12578,6 +13155,7 @@
       setPlayerCheckpoint(state.player, world, state.player.checkpoint?.x ?? state.player.x, state.player.checkpoint?.y ?? state.player.y, true);
       state.activeHouse = null;
       state.housePlayer = null;
+      state.sleepSequence = null;
       state.spawnTile = spawnTile;
       state.ambientFish = [];
       state.ambientFishSpawnTimer = 0;
@@ -13028,10 +13606,22 @@
     return Math.max(1, base);
   }
 
+  function isHostileMobTarget(target) {
+    if (!target) return false;
+    return Number.isFinite(target.attackRange)
+      && Number.isFinite(target.attackCooldown)
+      && Number.isFinite(target.aggroRange);
+  }
+
   function getAppliedAttackDamage(player, target) {
+    const swordTier = getSwordTier(player);
     let damage = Math.max(1, Math.floor(getAttackDamage(player)));
+    if (isHostileMobTarget(target)) {
+      const scale = SWORD_DAMAGE_VS_MONSTER_SCALE[swordTier] ?? 1;
+      damage = Math.max(1, Math.floor(damage * scale));
+    }
     // Diamond sword should reliably two-tap full-health targets instead of randomly one-shotting.
-    if (getSwordTier(player) >= 5 && target) {
+    if (swordTier >= 5 && target) {
       const targetMaxHp = Number(target.maxHp);
       const targetHp = Number(target.hp);
       if (Number.isFinite(targetMaxHp) && targetMaxHp > 1 && Number.isFinite(targetHp) && targetHp >= targetMaxHp) {
@@ -13183,6 +13773,7 @@
 
   function enterHouse(structure) {
     if (!structure || !isHouseType(structure.type)) return;
+    state.sleepSequence = null;
     ensureHouseMeta(structure);
     const interior = getHouseInterior(structure);
     state.activeHouse = structure;
@@ -13202,6 +13793,7 @@
 
   function leaveHouse() {
     if (!state.activeHouse) return;
+    state.sleepSequence = null;
     state.player.inHut = false;
     state.activeHouse = null;
     state.housePlayer = null;
@@ -13915,6 +14507,8 @@
     if (state.settingsTab === "objectives") {
       renderObjectiveGuide();
     }
+
+    scheduleStoragePanelLayout();
   }
 
   function drawRoundedRect(pathCtx, x, y, w, h, r) {
@@ -14396,15 +14990,91 @@
     return state.nearBench && !state.inCave && !state.player.inHut && !state.gameWon;
   }
 
+  function rectsOverlap(rectA, rectB, inset = 0) {
+    if (!rectA || !rectB) return false;
+    return (
+      rectA.left < rectB.right - inset
+      && rectA.right > rectB.left + inset
+      && rectA.top < rectB.bottom - inset
+      && rectA.bottom > rectB.top + inset
+    );
+  }
+
+  function applyStoragePanelLayout() {
+    if (!inventoryPanel) return;
+
+    const layoutPanelAboveInventory = (panel) => {
+      if (!panel) return;
+
+      // Reset to stylesheet defaults first.
+      panel.style.top = "";
+      panel.style.bottom = "";
+      panel.style.maxHeight = "";
+      panel.style.overflowY = "";
+
+      const viewportH = viewHeight || window.innerHeight || document.documentElement.clientHeight || 0;
+      if (viewportH <= 0) return;
+      if (panel.classList.contains("hidden")) return;
+
+      const compactLayout = viewWidth <= 820 || isCoarsePointerDevice();
+      const gap = 10;
+      const topbarBottom = topbar ? Math.max(0, topbar.getBoundingClientRect().bottom) : 0;
+      const safeTop = Math.max(14, Math.round(topbarBottom + 8));
+      const freePanelHeight = Math.max(140, Math.floor(viewportH - safeTop - 12));
+
+      if (inventoryPanel.classList.contains("hidden")) {
+        if (!compactLayout) return;
+        panel.style.top = `${safeTop}px`;
+        panel.style.bottom = "auto";
+        panel.style.maxHeight = `${freePanelHeight}px`;
+        panel.style.overflowY = "auto";
+        return;
+      }
+
+      const inventoryRect = inventoryPanel.getBoundingClientRect();
+      const stackedBottom = Math.max(0, (viewportH - inventoryRect.top) + gap);
+      const availableAboveInventory = Math.floor(inventoryRect.top - safeTop - gap);
+      const maxHeight = Math.max(140, Math.min(freePanelHeight, availableAboveInventory));
+
+      // Always stack storage/repair panels above inventory so they never collide.
+      panel.style.bottom = `${Math.round(stackedBottom)}px`;
+      panel.style.top = "auto";
+      panel.style.maxHeight = `${maxHeight}px`;
+      panel.style.overflowY = "auto";
+
+      const stackedRect = panel.getBoundingClientRect();
+      if (!rectsOverlap(stackedRect, inventoryRect, 4) && stackedRect.top >= safeTop) return;
+
+      // Fallback for short viewports: pin near top and keep bounded height.
+      panel.style.top = `${safeTop}px`;
+      panel.style.bottom = "auto";
+      panel.style.maxHeight = `${maxHeight}px`;
+      panel.style.overflowY = "auto";
+    };
+
+    layoutPanelAboveInventory(chestPanel);
+    layoutPanelAboveInventory(shipRepairPanel);
+  }
+
+  function scheduleStoragePanelLayout() {
+    if (storagePanelLayoutRaf) return;
+    storagePanelLayoutRaf = requestAnimationFrame(() => {
+      storagePanelLayoutRaf = 0;
+      applyStoragePanelLayout();
+    });
+  }
+
   function openInventory() {
     inventoryOpen = true;
     inventoryPanel.classList.remove("hidden");
+    scheduleStoragePanelLayout();
   }
 
   function closeInventory() {
     inventoryOpen = false;
     inventoryPanel.classList.add("hidden");
     selectedSlot = null;
+    scheduleStoragePanelLayout();
   }
 
   function toggleInventory() {
@@ -14486,6 +15156,7 @@
     }
     openInventory();
     chestPanel.classList.remove("hidden");
+    scheduleStoragePanelLayout();
     updateAllSlotUI();
   }
 
@@ -14497,6 +15168,7 @@
     if (chestPanelHint) chestPanelHint.textContent = "Click items to quick-transfer between chest and inventory.";
     closeInventory();
     selectedSlot = null;
+    scheduleStoragePanelLayout();
     updateAllSlotUI();
   }
 
@@ -14504,6 +15176,7 @@
     state.activeShipRepair = null;
     state.shipActionPending = false;
     if (shipRepairPanel) shipRepairPanel.classList.add("hidden");
+    scheduleStoragePanelLayout();
   }
 
   function renderShipRepairPanel() {
@@ -14549,6 +15222,7 @@
     state.activeShipRepair = structure;
     state.shipActionPending = false;
     if (shipRepairPanel) shipRepairPanel.classList.remove("hidden");
+    scheduleStoragePanelLayout();
     renderShipRepairPanel();
   }
 
@@ -15135,13 +15809,25 @@
     return null;
   }
 
-  function formatStationRecipeInputText(recipe) {
+  function renderStationRecipeCostWithHighlights(container, recipe, inventory = state.inventory) {
+    if (!container || !recipe) return;
     const variants = getStationRecipeInputVariants(recipe)
-      .map((cost) => formatCostItems(cost))
-      .filter((text) => text.length > 0);
-    if (variants.length === 0) return "";
-    if (variants.length === 1) return variants[0];
-    return variants.map((text) => `(${text})`).join(" or ");
+      .filter((cost) => cost && Object.keys(cost).length > 0);
+
+    for (let i = 0; i < variants.length; i += 1) {
+      const cost = variants[i];
+      if (i > 0) container.appendChild(document.createTextNode(" or "));
+      if (variants.length > 1) container.appendChild(document.createTextNode("("));
+      renderRecipeCostWithHighlights(container, cost, inventory);
+      if (variants.length > 1) container.appendChild(document.createTextNode(")"));
+    }
+
+    const outputText = formatCostItems(recipe.output);
+    if (!outputText) return;
+    if (variants.length > 0) {
+      container.appendChild(document.createTextNode(" -> "));
+    }
+    container.appendChild(document.createTextNode(outputText));
   }
 
   function renderStationMenu() {
@@ -15188,8 +15874,7 @@
         if (isInfiniteResourcesEnabled()) {
           cost.textContent = `Free (Infinite Resources) → ${outputText}`;
         } else {
-          const inputText = formatStationRecipeInputText(recipe);
-          cost.textContent = `${inputText} → ${outputText}`;
+          renderStationRecipeCostWithHighlights(cost, recipe, state.inventory);
         }
         card.appendChild(cost);
         const btn = document.createElement("button");
@@ -15944,6 +16629,7 @@
 
   function updatePlayer(dt) {
     if (!state.world || !state.player) return;
+    if (state.sleepSequence) return;
     const speedMult = getDebugSpeedMultiplier();
     const shipSeat = (!state.inCave && !state.player.inHut)
       ? getShipSeatInfoForPlayer(getLocalShipPlayerId())
@@ -16349,6 +17035,7 @@
       state.player.attackTimer = 0;
       state.activeHouse = null;
       state.housePlayer = null;
+      state.sleepSequence = null;
       const respawnPos = getPlayerRespawnPosition(state.player, surface);
       state.player.x = respawnPos.x;
       state.player.y = respawnPos.y;
@@ -16366,6 +17053,7 @@
       clearPoisonStatus(state.player);
       state.activeHouse = null;
       state.housePlayer = null;
+      state.sleepSequence = null;
       state.inCave = false;
       state.activeCave = null;
       state.world = state.surfaceWorld || state.world;
@@ -16807,17 +17495,26 @@
     return false;
   }
 
+  function isWorldPositionOnIsland(world, x, y, island, fallbackRadiusScale = 0.9, minRadiusPad = 2) {
+    if (!world || !island) return false;
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
+    const tx = Math.floor(x / CONFIG.tileSize);
+    const ty = Math.floor(y / CONFIG.tileSize);
+    if (!inBounds(tx, ty, world.size)) return false;
+    const owningIsland = getIslandForTile(world, tx, ty);
+    if (owningIsland) return owningIsland === island;
+    const px = x / CONFIG.tileSize;
+    const py = y / CONFIG.tileSize;
+    const radiusPad = Math.max(
+      Math.max(0, Number(minRadiusPad) || 0),
+      (Number(island.radius) || 0) * Math.max(0.1, Number(fallbackRadiusScale) || 0.9)
+    );
+    return Math.hypot(px - island.x, py - island.y) <= radiusPad;
+  }
+
   function isAnimalOnIsland(world, animal, island) {
     if (!world || !animal || !island) return false;
-    if (!Number.isFinite(animal.x) || !Number.isFinite(animal.y)) return false;
-    const tx = Math.floor(animal.x / CONFIG.tileSize);
-    const ty = Math.floor(animal.y / CONFIG.tileSize);
-    if (!inBounds(tx, ty, world.size)) return false;
-    if (getIslandForTile(world, tx, ty) === island) return true;
-    const px = animal.x / CONFIG.tileSize;
-    const py = animal.y / CONFIG.tileSize;
-    const radiusPad = Math.max(2, (Number(island.radius) || 0) * 0.9);
-    return Math.hypot(px - island.x, py - island.y) <= radiusPad;
+    return isWorldPositionOnIsland(world, animal.x, animal.y, island, 0.9, 2);
   }
 
   function countHarvestAnimalsOnIsland(world, island) {
@@ -16883,7 +17580,8 @@
     for (const island of islands) {
       if (!island) continue;
       if (isMushroomBiomeId(getIslandBiomeId(world, island))) continue;
-      const target = Math.max(baseTarget, isSpawnIsland(world, island) ? 3 : 2);
+      const islandMinimum = isSpawnIsland(world, island) ? 2 : 1;
+      const target = Math.max(baseTarget, islandMinimum);
       const existing = countHarvestAnimalsOnIsland(world, island);
       const missing = Math.max(0, target - existing);
       for (let i = 0; i < missing; i += 1) {
@@ -16945,12 +17643,141 @@
       const existing = countGreenCowsOnIsland(world, island);
       const missing = Math.max(0, minPerIsland - existing);
       for (let i = 0; i < missing; i += 1) {
-        if (world.animals.length >= hardCap) return added;
+        if (world.animals.length >= hardCap) {
+          const trimmed = trimSurfaceAnimalsToCap(
+            world,
+            Math.max(0, hardCap - 1),
+            null,
+            {
+              spawnIslandHarvestMin: SURFACE_PASSIVE_ANIMAL_CONFIG.spawnIslandHarvestMin,
+              mushroomMinPerIsland: minPerIsland,
+            }
+          );
+          if (trimmed <= 0) return added;
+        }
         if (!spawnGreenCowOnMushroomIsland(world, island, rng)) break;
         added += 1;
       }
     }
     return added;
+  }
+
+  function trimSurfaceAnimalsToCap(world, maxAnimals, players = null, options = null) {
+    if (!world || !Array.isArray(world.animals)) return 0;
+    const cap = Math.max(0, Math.floor(Number(maxAnimals) || 0));
+    if (world.animals.length <= cap) return 0;
+
+    const spawnIsland = getSpawnIsland(world, state.spawnTile);
+    const spawnIslandHarvestMin = Math.max(
+      0,
+      Math.floor(Number(options?.spawnIslandHarvestMin) || 0)
+    );
+    const mushroomMinPerIsland = Math.max(
+      1,
+      Math.floor(Number(options?.mushroomMinPerIsland) || MUSHROOM_GREEN_COW_CONFIG.minPerIsland)
+    );
+    let spawnIslandHarvestCount = spawnIsland
+      ? countHarvestAnimalsOnIsland(world, spawnIsland)
+      : 0;
+    const mushroomGreenCounts = new Map();
+    if (Array.isArray(world.islands)) {
+      for (const island of world.islands) {
+        if (!island || !isMushroomBiomeId(getIslandBiomeId(world, island))) continue;
+        mushroomGreenCounts.set(island, countGreenCowsOnIsland(world, island));
+      }
+    }
+
+    const references = [];
+    if (Array.isArray(players)) {
+      for (const player of players) {
+        if (!player || !Number.isFinite(player.x) || !Number.isFinite(player.y)) continue;
+        references.push({ x: player.x, y: player.y });
+      }
+    }
+    if (references.length === 0 && Number.isFinite(state.player?.x) && Number.isFinite(state.player?.y)) {
+      references.push({ x: state.player.x, y: state.player.y });
+    }
+    if (references.length === 0 && Number.isFinite(state.spawnTile?.x) && Number.isFinite(state.spawnTile?.y)) {
+      references.push({
+        x: (state.spawnTile.x + 0.5) * CONFIG.tileSize,
+        y: (state.spawnTile.y + 0.5) * CONFIG.tileSize,
+      });
+    }
+    if (references.length === 0) {
+      references.push({
+        x: world.size * CONFIG.tileSize * 0.5,
+        y: world.size * CONFIG.tileSize * 0.5,
+      });
+    }
+
+    const getNearestReferenceDistance = (animal) => {
+      let nearest = Infinity;
+      for (const ref of references) {
+        const dist = Math.hypot((animal.x ?? 0) - ref.x, (animal.y ?? 0) - ref.y);
+        if (dist < nearest) nearest = dist;
+      }
+      return nearest;
+    };
+
+    let removed = 0;
+    while (world.animals.length > cap) {
+      let bestCandidate = null;
+
+      for (let index = 0; index < world.animals.length; index += 1) {
+        const animal = world.animals[index];
+        if (!animal || animal.hp <= 0) continue;
+        if (!Number.isFinite(animal.x) || !Number.isFinite(animal.y)) {
+          bestCandidate = { index, type: null, island: null, score: Infinity };
+          break;
+        }
+        const type = normalizeAnimalType(animal.type);
+        const tx = Math.floor(animal.x / CONFIG.tileSize);
+        const ty = Math.floor(animal.y / CONFIG.tileSize);
+        const island = inBounds(tx, ty, world.size) ? getIslandForTile(world, tx, ty) : null;
+
+        if (
+          spawnIsland
+          && island === spawnIsland
+          && isHarvestAnimalType(type)
+          && spawnIslandHarvestCount <= spawnIslandHarvestMin
+        ) {
+          continue;
+        }
+
+        if (type === "green_cow" && island && isMushroomBiomeId(getIslandBiomeId(world, island))) {
+          const islandCount = mushroomGreenCounts.get(island) || 0;
+          if (islandCount <= mushroomMinPerIsland) continue;
+        }
+
+        const nearestDist = getNearestReferenceDistance(animal);
+        let priority = 1;
+        if (type === "green_cow") {
+          priority = 2.1;
+        } else if (isHarvestAnimalType(type)) {
+          priority = island === spawnIsland ? 1.05 : 1.9;
+        }
+        const score = priority * 100000 + nearestDist;
+
+        if (!bestCandidate || score > bestCandidate.score || (score === bestCandidate.score && index > bestCandidate.index)) {
+          bestCandidate = { index, type, island, score };
+        }
+      }
+
+      if (!bestCandidate) break;
+      world.animals.splice(bestCandidate.index, 1);
+      removed += 1;
+      if (bestCandidate.type === "green_cow" && bestCandidate.island && mushroomGreenCounts.has(bestCandidate.island)) {
+        mushroomGreenCounts.set(
+          bestCandidate.island,
+          Math.max(0, (mushroomGreenCounts.get(bestCandidate.island) || 0) - 1)
+        );
+      }
+      if (spawnIsland && bestCandidate.island === spawnIsland && isHarvestAnimalType(bestCandidate.type)) {
+        spawnIslandHarvestCount = Math.max(0, spawnIslandHarvestCount - 1);
+      }
+    }
+
+    return removed;
   }
 
   function seedSurfaceAnimals(world, desired = 20, options = null) {
@@ -17047,14 +17874,11 @@
 
   function hasMarshStalkerOnIsland(world, island) {
     if (!world || !island || !Array.isArray(world.monsters)) return false;
-    const islandCx = (island.x + 0.5) * CONFIG.tileSize;
-    const islandCy = (island.y + 0.5) * CONFIG.tileSize;
-    const searchRadius = Math.max(CONFIG.tileSize * 3, island.radius * CONFIG.tileSize * 1.08);
     return world.monsters.some(
       (monster) => monster
         && monster.hp > 0
         && monster.type === "marsh_stalker"
-        && Math.hypot(monster.x - islandCx, monster.y - islandCy) <= searchRadius
+        && isWorldPositionOnIsland(world, monster.x, monster.y, island, 1.08, 3)
     );
   }
 
@@ -17123,21 +17947,10 @@
   function countSurfaceNonGuardianMonstersOnIsland(world, island) {
     if (!world || !island || !Array.isArray(world.monsters)) return 0;
     let count = 0;
-    const radiusPad = Math.max(3, (Number(island.radius) || 0) * 0.95);
     for (const monster of world.monsters) {
       if (!monster || monster.hp <= 0) continue;
       if (isGuardianMonsterType(monster.type)) continue;
-      const tx = Math.floor(monster.x / CONFIG.tileSize);
-      const ty = Math.floor(monster.y / CONFIG.tileSize);
-      if (inBounds(tx, ty, world.size) && getIslandForTile(world, tx, ty) === island) {
-        count += 1;
-        continue;
-      }
-      const px = monster.x / CONFIG.tileSize;
-      const py = monster.y / CONFIG.tileSize;
-      if (Math.hypot(px - island.x, py - island.y) <= radiusPad) {
-        count += 1;
-      }
+      if (isWorldPositionOnIsland(world, monster.x, monster.y, island, 0.95, 3)) count += 1;
     }
     return count;
   }
@@ -17173,15 +17986,12 @@
 
   function countGuardiansOnIsland(world, island) {
     if (!world || !island || !Array.isArray(world.monsters)) return 0;
-    const centerX = (island.x + 0.5) * CONFIG.tileSize;
-    const centerY = (island.y + 0.5) * CONFIG.tileSize;
-    const searchRadius = Math.max(CONFIG.tileSize * 3.5, island.radius * CONFIG.tileSize * 1.12);
     return world.monsters.reduce((count, monster) => (
       count + Number(
         monster
           && monster.hp > 0
           && isGuardianMonsterType(monster.type)
-          && Math.hypot(monster.x - centerX, monster.y - centerY) <= searchRadius
+          && isWorldPositionOnIsland(world, monster.x, monster.y, island, 1.12, 3.5)
       )
     ), 0);
   }
@@ -17222,21 +18032,6 @@
     return true;
   }
 
-  function despawnSurfaceHostilesOnMushroom(world) {
-    if (!world || !Array.isArray(world.monsters)) return 0;
-    let removed = 0;
-    for (let i = world.monsters.length - 1; i >= 0; i -= 1) {
-      const monster = world.monsters[i];
-      if (!monster || monster.hp <= 0) continue;
-      const tx = Math.floor(monster.x / CONFIG.tileSize);
-      const ty = Math.floor(monster.y / CONFIG.tileSize);
-      if (!shouldBlockSurfaceHostilesAtTile(world, tx, ty)) continue;
-      world.monsters.splice(i, 1);
-      removed += 1;
-    }
-    return removed;
-  }
-
   function spawnSurfaceGuardiansForActiveIslands(world, players) {
     if (!world || !Array.isArray(players) || players.length === 0) return;
     const activeIslands = getSurfaceActiveIslands(world, players);
@@ -17244,7 +18039,7 @@
     if (countSurfaceGuardians(world) >= SURFACE_GUARDIAN_CONFIG.maxTotal) return;
 
     const targetIslands = activeIslands.filter((island) => {
-      if (!island || isSpawnIsland(world, island)) return false;
+      if (!island) return false;
       const biomeId = getIslandBiomeId(world, island);
       const guardianType = getGuardianTypeForBiomeId(biomeId, island);
       if (!guardianType) return false;
@@ -17948,6 +18743,13 @@
       nextY = monster.y + panic.y * step;
     }
 
+    if (
+      world === (state.surfaceWorld || state.world)
+      && shouldBlockSurfaceHostilesAtTile(world, Math.floor(nextX / CONFIG.tileSize), Math.floor(nextY / CONFIG.tileSize))
+    ) {
+      return;
+    }
+
     if (isWalkableAtWorld(world, nextX, monster.y)) monster.x = nextX;
     if (isWalkableAtWorld(world, monster.x, nextY)) monster.y = nextY;
   }
@@ -17959,7 +18761,6 @@
     if (!world.nextProjectileId) world.nextProjectileId = 1;
 
     if (isSurface) {
-      despawnSurfaceHostilesOnMushroom(world);
       if (players.length === 0) {
         // No surface players active: clear transient arrows so they do not freeze mid-flight.
         world.projectiles = [];
@@ -17998,14 +18799,16 @@
         continue;
       }
 
-      if (isSurface && isGuardianMonsterType(monster.type)) {
-        const tx = Math.floor(monster.x / CONFIG.tileSize);
-        const ty = Math.floor(monster.y / CONFIG.tileSize);
-        if (!isGuardianMonsterAllowedAtTile(world, monster, tx, ty)) {
-          world.monsters.splice(i, 1);
-          markDirty();
-          continue;
-        }
+      if (
+        isSurface
+        && shouldBlockSurfaceHostilesAtTile(
+          world,
+          Math.floor(monster.x / CONFIG.tileSize),
+          Math.floor(monster.y / CONFIG.tileSize)
+        )
+      ) {
+        world.monsters.splice(i, 1);
+        continue;
       }
 
       const { target, targetDist } = getNearestMonsterTarget(monster, players, isSurface);
@@ -18222,11 +19025,18 @@
     const passiveTargets = getSurfacePassiveAnimalTargets(world);
     const maxAnimals = passiveTargets.maxAnimals;
     const players = getPlayersForWorld(world);
+    const trimmedAnimals = trimSurfaceAnimalsToCap(world, maxAnimals, players, {
+      spawnIslandHarvestMin: passiveTargets.spawnIslandHarvestMin,
+      mushroomMinPerIsland: MUSHROOM_GREEN_COW_CONFIG.minPerIsland,
+    });
+    if (trimmedAnimals > 0) {
+      markDirty();
+    }
     const immediateSpawnIslandTopUp = ensureSpawnIslandHarvestAnimals(
       world,
       state.spawnTile,
       passiveTargets.spawnIslandHarvestMin,
-      Infinity
+      maxAnimals
     );
     if (immediateSpawnIslandTopUp > 0) {
       markDirty();
@@ -18235,15 +19045,15 @@
     if (world.animalSpawnTimer <= 0) {
       const catchupDeficit = Math.max(0, passiveTargets.baselineAnimals - world.animals.length);
       world.animalSpawnTimer = catchupDeficit > 0
-        ? (2.5 + Math.random() * 2.6)
-        : (5 + Math.random() * 4);
+        ? (4.2 + Math.random() * 3.2)
+        : (7 + Math.random() * 5);
       const activeIslands = getSurfaceActiveIslands(world, players);
       // Reserve a few slots so spawn island can always repopulate for early survival loops.
       const spawnIslandHarvestAdded = ensureSpawnIslandHarvestAnimals(
         world,
         state.spawnTile,
         passiveTargets.spawnIslandHarvestMin,
-        Infinity
+        maxAnimals
       );
       const activeIslandHarvestAdded = ensureActiveIslandHarvestAnimals(
         world,
@@ -18257,19 +19067,19 @@
       if (world.animals.length < maxAnimals) {
         const deficit = Math.max(0, passiveTargets.baselineAnimals - world.animals.length);
         const catchupBurst = clamp(
-          Math.ceil(deficit / 3),
+          Math.ceil(deficit / 4),
           1,
           SURFACE_PASSIVE_ANIMAL_CONFIG.catchupSpawnBurstMax
         );
         const targetSpawns = deficit > 0 ? catchupBurst : 1;
         let attempts = 0;
         let spawnedCount = 0;
-        const maxAttempts = targetSpawns * 3;
+        const maxAttempts = targetSpawns * 2;
         while (world.animals.length < maxAnimals && attempts < maxAttempts && spawnedCount < targetSpawns) {
           attempts += 1;
           const spawnedNearPlayers = activeIslands.length > 0
-            && spawnSurfaceAnimalFromIslands(world, 4.6, { islands: activeIslands });
-          const spawned = spawnedNearPlayers || spawnSurfaceAnimalFromIslands(world, 5);
+            && spawnSurfaceAnimalFromIslands(world, 5.2, { islands: activeIslands });
+          const spawned = spawnedNearPlayers || spawnSurfaceAnimalFromIslands(world, 5.8);
           if (!spawned) continue;
           spawnedCount += 1;
           passiveSpawned = true;
@@ -18285,11 +19095,13 @@
       const animal = world.animals[i];
       if (!animal || !Number.isFinite(animal.x) || !Number.isFinite(animal.y)) {
         world.animals.splice(i, 1);
+        correctedAnimalPlacement = true;
         continue;
       }
       if (animal.hitTimer > 0) animal.hitTimer -= dt;
       if (animal.hp <= 0) {
         world.animals.splice(i, 1);
+        correctedAnimalPlacement = true;
         continue;
       }
       const currentTx = Math.floor(animal.x / CONFIG.tileSize);
@@ -19710,6 +20522,7 @@
 
   function enterCave(cave) {
     if (!cave || state.inCave) return;
+    state.sleepSequence = null;
     state.returnPosition = { x: state.player.x, y: state.player.y };
     state.inCave = true;
     state.activeCave = cave;
@@ -19729,6 +20542,7 @@
 
   function leaveCave() {
     if (!state.inCave) return;
+    state.sleepSequence = null;
     const returnPos = state.returnPosition;
     state.inCave = false;
     state.activeCave = null;
@@ -19768,29 +20582,261 @@
     return true;
   }
 
+  function setSleepSequencePosition(sequence, x, y) {
+    if (!sequence) return;
+    if (sequence.interior) {
+      if (!state.housePlayer) return;
+      state.housePlayer.x = x;
+      state.housePlayer.y = y;
+      return;
+    }
+    if (!state.player) return;
+    state.player.x = x;
+    state.player.y = y;
+  }
+
+  function getSleepBedTarget() {
+    if (!state.player) return null;
+    const bed = state.nearBed;
+    if (!bed || bed.removed || bed.type !== "bed") return null;
+
+    if (bed.interior) {
+      const house = bed.houseRef || state.activeHouse;
+      const interior = getHouseInterior(house);
+      if (!interior || !state.housePlayer) return null;
+      const startX = state.housePlayer.x;
+      const startY = state.housePlayer.y;
+      const bedX = bed.tx + 0.5;
+      const bedY = bed.ty + 0.5;
+      const away = normalizeDirectionVector(startX - bedX, startY - bedY, 0, 1);
+      const exitDist = SLEEP_SEQUENCE.exitOffsetTiles;
+      const wallPad = 0.36;
+      const exitX = clamp(bedX + away.x * exitDist, wallPad, interior.width - wallPad);
+      const exitY = clamp(bedY + away.y * exitDist, wallPad, interior.height - wallPad);
+      return {
+        interior: true,
+        startX,
+        startY,
+        bedX,
+        bedY,
+        exitX,
+        exitY,
+      };
+    }
+
+    const startX = state.player.x;
+    const startY = state.player.y;
+    const bedX = (bed.tx + 0.5) * CONFIG.tileSize;
+    const bedY = (bed.ty + 0.5) * CONFIG.tileSize;
+    const away = normalizeDirectionVector(
+      startX - bedX,
+      startY - bedY,
+      state.player.facing.x,
+      state.player.facing.y
+    );
+    const exitDist = CONFIG.tileSize * SLEEP_SEQUENCE.exitOffsetTiles;
+    let exitX = bedX + away.x * exitDist;
+    let exitY = bedY + away.y * exitDist;
+    if (!isWalkableAt(exitX, exitY)) {
+      exitX = startX;
+      exitY = startY;
+    }
+    return {
+      interior: false,
+      startX,
+      startY,
+      bedX,
+      bedY,
+      exitX,
+      exitY,
+    };
+  }
+
+  function startSleepSequence() {
+    if (!state.player || state.sleepSequence) return;
+    const target = getSleepBedTarget();
+    if (!target) return;
+
+    const crawlDir = normalizeDirectionVector(
+      target.bedX - target.startX,
+      target.bedY - target.startY,
+      state.player.facing.x,
+      state.player.facing.y
+    );
+    const walkDir = normalizeDirectionVector(
+      target.exitX - target.bedX,
+      target.exitY - target.bedY,
+      -crawlDir.x,
+      -crawlDir.y
+    );
+
+    state.sleepSequence = {
+      interior: target.interior,
+      phase: "toBed",
+      timer: 0,
+      fadeAlpha: 0,
+      dawnRequested: false,
+      startX: target.startX,
+      startY: target.startY,
+      bedX: target.bedX,
+      bedY: target.bedY,
+      exitX: target.exitX,
+      exitY: target.exitY,
+      crawlDirX: crawlDir.x,
+      crawlDirY: crawlDir.y,
+      walkDirX: walkDir.x,
+      walkDirY: walkDir.y,
+    };
+
+    closeStationMenu();
+    closeChest();
+    closeShipRepairPanel();
+    closeInventory();
+    buildMenu.classList.add("hidden");
+    state.promptText = "";
+    state.promptTimer = 0;
+    interactPressed = false;
+    attackPressed = false;
+    keyState.clear();
+    resetTouchInput();
+  }
+
+  function requestSleepSkipToDawn() {
+    if (netIsClient()) {
+      sendToHost({ type: "sleep" });
+      return;
+    }
+    handleSleepRequest(null);
+  }
+
+  function updateSleepSequence(dt) {
+    const sequence = state.sleepSequence;
+    if (!sequence || !state.player) return false;
+    if (sequence.interior && (!state.player.inHut || !state.housePlayer)) {
+      state.sleepSequence = null;
+      return false;
+    }
+    if (!sequence.interior && state.player.inHut) {
+      state.sleepSequence = null;
+      return false;
+    }
+
+    sequence.timer += dt;
+
+    switch (sequence.phase) {
+      case "toBed": {
+        const progress = clamp(sequence.timer / SLEEP_SEQUENCE.crawlToBedDuration, 0, 1);
+        const eased = smoothstep(progress);
+        const x = lerp(sequence.startX, sequence.bedX, eased);
+        const y = lerp(sequence.startY, sequence.bedY, eased);
+        setSleepSequencePosition(sequence, x, y);
+        state.player.facing.x = sequence.crawlDirX;
+        state.player.facing.y = sequence.crawlDirY;
+        if (progress >= 1) {
+          sequence.phase = "fadeOut";
+          sequence.timer = 0;
+        }
+        break;
+      }
+      case "fadeOut": {
+        const progress = clamp(sequence.timer / SLEEP_SEQUENCE.fadeOutDuration, 0, 1);
+        sequence.fadeAlpha = progress;
+        setSleepSequencePosition(sequence, sequence.bedX, sequence.bedY);
+        if (progress >= 1) {
+          sequence.phase = "blackout";
+          sequence.timer = 0;
+          if (!sequence.dawnRequested) {
+            requestSleepSkipToDawn();
+            sequence.dawnRequested = true;
+          }
+        }
+        break;
+      }
+      case "blackout": {
+        sequence.fadeAlpha = 1;
+        setSleepSequencePosition(sequence, sequence.bedX, sequence.bedY);
+        if (sequence.timer >= SLEEP_SEQUENCE.blackoutDuration) {
+          sequence.phase = "fadeIn";
+          sequence.timer = 0;
+        }
+        break;
+      }
+      case "fadeIn": {
+        const progress = clamp(sequence.timer / SLEEP_SEQUENCE.fadeInDuration, 0, 1);
+        sequence.fadeAlpha = 1 - progress;
+        setSleepSequencePosition(sequence, sequence.bedX, sequence.bedY);
+        if (progress >= 1) {
+          sequence.phase = "walkOff";
+          sequence.timer = 0;
+        }
+        break;
+      }
+      case "walkOff": {
+        const progress = clamp(sequence.timer / SLEEP_SEQUENCE.walkOffBedDuration, 0, 1);
+        const eased = smoothstep(progress);
+        const x = lerp(sequence.bedX, sequence.exitX, eased);
+        const y = lerp(sequence.bedY, sequence.exitY, eased);
+        setSleepSequencePosition(sequence, x, y);
+        state.player.facing.x = sequence.walkDirX;
+        state.player.facing.y = sequence.walkDirY;
+        if (progress >= 1) {
+          state.sleepSequence = null;
+          if (net.enabled) sendPlayerUpdate();
+        }
+        break;
+      }
+      default:
+        state.sleepSequence = null;
+        break;
+    }
+
+    return !!state.sleepSequence;
+  }
+
+  function getActiveSleepCrawlDirection(inInterior = false) {
+    const sequence = state.sleepSequence;
+    if (!sequence || sequence.interior !== inInterior) return null;
+    if (
+      sequence.phase !== "toBed"
+      && sequence.phase !== "fadeOut"
+      && sequence.phase !== "blackout"
+      && sequence.phase !== "fadeIn"
+    ) {
+      return null;
+    }
+    return normalizeDirectionVector(
+      sequence.crawlDirX,
+      sequence.crawlDirY,
+      state.player?.facing?.x ?? 1,
+      state.player?.facing?.y ?? 0
+    );
+  }
+
   function skipNightBySleep() {
     if (!state.isNight) {
       setPrompt("Can only sleep at night", 0.9);
       return;
     }
-    if (netIsClient()) {
-      sendToHost({ type: "sleep" });
-      setPrompt("Trying to sleep...", 1.1);
+    if (state.sleepSequence) {
       return;
     }
-    state.timeOfDay = 0;
-    state.isNight = false;
-    state.surfaceSpawnTimer = MONSTER.spawnInterval;
-    updateTimeUI();
-    if (state.surfaceWorld) {
-      igniteSurfaceMonstersForDay(state.surfaceWorld);
+    if (!state.nearBed) {
+      setPrompt("Need a bed nearby", 0.9);
+      return;
     }
-    setPrompt("You slept until dawn", 1.2);
-    markDirty();
+    startSleepSequence();
   }
 
   function updateInteraction() {
     if (state.gameWon) {
+      interactPressed = false;
+      attackPressed = false;
+      return;
+    }
+    if (state.sleepSequence) {
+      state.targetResource = null;
+      state.targetMonster = null;
+      state.targetAnimal = null;
       interactPressed = false;
       attackPressed = false;
       return;
@@ -20079,7 +21125,10 @@
     if (net.enabled && !net.isHost && !net.ready) {
       setPrompt("Connecting...", 0.5);
     }
-    updatePlayer(dt);
+    const sleeping = updateSleepSequence(dt);
+    if (!sleeping) {
+      updatePlayer(dt);
+    }
     updateStructureEffects(dt);
     updateCheckpoint(dt);
     updateWinSequence(dt);
@@ -20288,6 +21337,50 @@
     }
   }
 
+  function drawCrawlingPlayerAvatar(screenX, screenY, bodyColor, direction, name = null) {
+    const dir = normalizeDirectionVector(direction?.x ?? 1, direction?.y ?? 0, 1, 0);
+    const angle = Math.atan2(dir.y, dir.x);
+    ctx.save();
+    ctx.translate(screenX, screenY + 2);
+    ctx.rotate(angle);
+
+    ctx.fillStyle = "rgba(0,0,0,0.22)";
+    ctx.beginPath();
+    ctx.ellipse(-1, 9, 11, 4, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = bodyColor;
+    ctx.fillRect(-9, -1, 16, 8);
+    ctx.fillStyle = tintColor(bodyColor, -0.24);
+    ctx.fillRect(-9, 5.8, 16, 2.6);
+    ctx.fillStyle = tintColor(bodyColor, 0.2);
+    ctx.fillRect(-7, 0, 12, 3);
+
+    ctx.fillStyle = "#f2c38b";
+    ctx.beginPath();
+    ctx.arc(8, 0, 4.8, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#3b2a1a";
+    ctx.beginPath();
+    ctx.arc(8, -2.2, 3.8, Math.PI, 0);
+    ctx.fill();
+
+    ctx.fillStyle = "#4a3a28";
+    ctx.fillRect(-7, 6.5, 4, 3.6);
+    ctx.fillRect(0, 6.5, 4, 3.6);
+
+    ctx.fillStyle = "#6b8b4c";
+    ctx.fillRect(5.8, 1.4, 3.1, 4.8);
+    ctx.restore();
+
+    if (name) {
+      ctx.font = "12px Trebuchet MS";
+      ctx.fillStyle = "rgba(255, 255, 255, 0.9)";
+      ctx.textAlign = "center";
+      ctx.fillText(name, screenX, screenY - 18);
+    }
+  }
+
   function drawPlayerAvatar(player, camera, color, name) {
     const px = player.renderX ?? player.x;
     const py = player.renderY ?? player.y;
@@ -20339,6 +21432,14 @@
       if (t >= WIN_SEQUENCE.ladderDropEnd && t < WIN_SEQUENCE.textDelay) {
         return;
       }
+    }
+    const crawlDir = getActiveSleepCrawlDirection(false);
+    if (crawlDir) {
+      const px = state.player.renderX ?? state.player.x;
+      const py = state.player.renderY ?? state.player.y;
+      const screen = worldToScreen(px, py, camera);
+      drawCrawlingPlayerAvatar(screen.x, screen.y, "#2f4b6c", crawlDir, net.localName);
+      return;
     }
     drawPlayerAvatar(state.player, camera, "#2f4b6c", net.localName);
   }
@@ -21356,6 +22457,18 @@
     void camera;
   }
 
+  function drawSleepTransitionOverlay() {
+    const sequence = state.sleepSequence;
+    if (!sequence) return;
+    const alpha = clamp(Number(sequence.fadeAlpha) || 0, 0, 1);
+    if (alpha <= 0.001) return;
+    ctx.save();
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = `rgba(2, 5, 10, ${alpha})`;
+    ctx.fillRect(0, 0, viewWidth, viewHeight);
+    ctx.restore();
+  }
+
   function drawBeaconBeam(camera) {
     if (!state.gameWon || state.inCave) return;
     if (state.winTimer > WIN_SEQUENCE.beamDuration) return;
@@ -21589,19 +22702,24 @@
 
     const playerPx = layout.originX + state.housePlayer.x * layout.tileSize;
     const playerPy = layout.originY + state.housePlayer.y * layout.tileSize;
-    ctx.fillStyle = "rgba(0,0,0,0.2)";
-    ctx.beginPath();
-    ctx.ellipse(playerPx, playerPy + 12, 10, 4, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = "#f2c38b";
-    ctx.beginPath();
-    ctx.arc(playerPx, playerPy - 4, 6, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = "#2f4b6c";
-    ctx.fillRect(playerPx - 7, playerPy + 2, 14, 12);
-    ctx.fillStyle = "#4a3a28";
-    ctx.fillRect(playerPx - 6, playerPy + 14, 5, 6);
-    ctx.fillRect(playerPx + 1, playerPy + 14, 5, 6);
+    const crawlDir = getActiveSleepCrawlDirection(true);
+    if (crawlDir) {
+      drawCrawlingPlayerAvatar(playerPx, playerPy + 2, "#2f4b6c", crawlDir);
+    } else {
+      ctx.fillStyle = "rgba(0,0,0,0.2)";
+      ctx.beginPath();
+      ctx.ellipse(playerPx, playerPy + 12, 10, 4, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#f2c38b";
+      ctx.beginPath();
+      ctx.arc(playerPx, playerPy - 4, 6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#2f4b6c";
+      ctx.fillRect(playerPx - 7, playerPy + 2, 14, 12);
+      ctx.fillStyle = "#4a3a28";
+      ctx.fillRect(playerPx - 6, playerPy + 14, 5, 6);
+      ctx.fillRect(playerPx + 1, playerPy + 14, 5, 6);
+    }
 
     const currentHouseKey = getHouseKey(state.activeHouse);
     for (const remote of net.players.values()) {
@@ -21632,6 +22750,7 @@
     }
     drawGuidanceMapOverlay();
     drawDebugWorldMiniMapOverlay();
+    drawSleepTransitionOverlay();
   }
 
   function drawGuidanceMapOverlay() {
@@ -23083,6 +24202,7 @@
     drawRescueSequence(camera);
     drawGuidanceMapOverlay();
     drawDebugWorldMiniMapOverlay();
+    drawSleepTransitionOverlay();
   }
 
   function gameLoop() {
@@ -23121,14 +24241,59 @@
     requestAnimationFrame(frame);
   }
 
+  function isCoarsePointerDevice() {
+    return (typeof window.matchMedia === "function" && window.matchMedia("(pointer: coarse)").matches)
+      || (navigator.maxTouchPoints || 0) > 0;
+  }
+
+  function getViewportSize() {
+    const vv = window.visualViewport;
+    const width = Math.round(vv?.width || window.innerWidth || document.documentElement.clientWidth || 0);
+    const height = Math.round(vv?.height || window.innerHeight || document.documentElement.clientHeight || 0);
+    return {
+      width: Math.max(1, width),
+      height: Math.max(1, height),
+    };
+  }
+
+  function getRenderDpr(width, height) {
+    const nativeDpr = Math.max(1, window.devicePixelRatio || 1);
+    const coarse = isCoarsePointerDevice();
+    const dprCap = coarse ? MOBILE_RENDER_DPR_CAP : DESKTOP_RENDER_DPR_CAP;
+    const maxPixels = coarse ? MOBILE_RENDER_MAX_PIXELS : DESKTOP_RENDER_MAX_PIXELS;
+    let nextDpr = Math.min(nativeDpr, dprCap);
+    const estimatedPixels = width * height * nextDpr * nextDpr;
+    if (estimatedPixels > maxPixels && width > 0 && height > 0) {
+      nextDpr = Math.sqrt(maxPixels / (width * height));
+    }
+    return clamp(nextDpr, 1, nativeDpr);
+  }
+
+  function applyViewportCssVars(width, height) {
+    const root = document.documentElement;
+    root.style.setProperty("--app-vw", `${Math.max(1, Math.round(width))}px`);
+    root.style.setProperty("--app-vh", `${Math.max(1, Math.round(height))}px`);
+  }
+
   function resize() {
-    dpr = window.devicePixelRatio || 1;
-    viewWidth = window.innerWidth;
-    viewHeight = window.innerHeight;
-    canvas.width = viewWidth * dpr;
-    canvas.height = viewHeight * dpr;
+    const viewport = getViewportSize();
+    viewWidth = viewport.width;
+    viewHeight = viewport.height;
+    dpr = getRenderDpr(viewWidth, viewHeight);
+    canvas.width = Math.max(1, Math.round(viewWidth * dpr));
+    canvas.height = Math.max(1, Math.round(viewHeight * dpr));
     canvas.style.width = `${viewWidth}px`;
     canvas.style.height = `${viewHeight}px`;
+    applyViewportCssVars(viewWidth, viewHeight);
+    scheduleStoragePanelLayout();
+  }
+
+  function requestResize() {
+    if (resizeRaf) return;
+    resizeRaf = requestAnimationFrame(() => {
+      resizeRaf = 0;
+      resize();
+    });
   }
 
   function isTouchPointerType(pointerType) {
@@ -23162,6 +24327,17 @@
     resetStickVisualPosition();
   }
 
+  function clearTransientInputState() {
+    interactPressed = false;
+    attackPressed = false;
+    keyState.clear();
+    pointer.active = false;
+    if (state.debugIslandDrag) {
+      state.debugIslandDrag = null;
+    }
+    resetTouchInput();
+  }
+
   function handleStickDown(event) {
     if (touch.active && event.pointerId !== touch.pointerId) return;
     ensureAudioContext();
@@ -23178,7 +24354,11 @@
     }
     updateStick(event.clientX, event.clientY);
     if (event.currentTarget && typeof event.currentTarget.setPointerCapture === "function") {
-      event.currentTarget.setPointerCapture(event.pointerId);
+      try {
+        event.currentTarget.setPointerCapture(event.pointerId);
+      } catch (err) {
+        // ignore pointer capture failures on browsers that gate this call
+      }
     }
     event.preventDefault();
   }
@@ -23209,7 +24389,11 @@
       && event.currentTarget.hasPointerCapture(event.pointerId)
       && typeof event.currentTarget.releasePointerCapture === "function"
     ) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
+      try {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      } catch (err) {
+        // ignore pointer capture release failures
+      }
     }
     resetTouchInput();
     event.preventDefault();
@@ -23228,7 +24412,16 @@
     }
   }
 
-  function handleCanvasLeave() {
+  function handleCanvasLeave(event) {
+    if (
+      state.debugIslandDrag
+      && event
+      && Number.isFinite(event.pointerId)
+      && state.debugIslandDrag.pointerId !== null
+      && state.debugIslandDrag.pointerId !== event.pointerId
+    ) {
+      return;
+    }
     pointer.active = false;
   }
 
@@ -23247,6 +24440,9 @@
     }
     if (commitDebugIslandDrag(event)) {
       event.preventDefault();
+    }
+    if (isTouchPointerType(event.pointerType)) {
+      pointer.active = false;
     }
   }
 
@@ -23267,11 +24463,13 @@
       state.debugIslandDrag = null;
       event.preventDefault();
     }
+    pointer.active = false;
   }
 
   function shouldProcessMobileTapAction(event) {
     if (!event || !isTouchPointerType(event.pointerType)) return false;
     if (!state.player || !state.world || state.gameWon) return false;
+    if (state.sleepSequence) return false;
     if (inventoryOpen || state.activeStation || state.activeChest) return false;
     if (state.player.inHut) return false;
     return true;
@@ -23421,6 +24619,16 @@
 
     let lastTouchEndMs = 0;
     document.addEventListener(
+      "touchstart",
+      (event) => {
+        if ((event.touches?.length || 0) > 1) {
+          event.preventDefault();
+        }
+      },
+      { passive: false }
+    );
+
+    document.addEventListener(
       "touchend",
       (event) => {
         const now = performance.now();
@@ -23435,7 +24643,25 @@
     document.addEventListener(
       "touchmove",
       (event) => {
-        if ((event.touches?.length || 0) > 1) {
+        if ((event.touches?.length || 0) > 1 || (typeof event.scale === "number" && event.scale !== 1)) {
+          event.preventDefault();
+        }
+      },
+      { passive: false }
+    );
+
+    document.addEventListener(
+      "dblclick",
+      (event) => {
+        event.preventDefault();
+      },
+      { passive: false }
+    );
+
+    document.addEventListener(
+      "wheel",
+      (event) => {
+        if (event.ctrlKey) {
           event.preventDefault();
         }
       },
@@ -23465,9 +24691,23 @@
     updateInfiniteResourcesButton();
     if (settingsPanel) settingsPanel.classList.add("hidden");
 
-    window.addEventListener("resize", resize);
+    window.addEventListener("resize", requestResize);
+    window.addEventListener("orientationchange", requestResize);
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener("resize", requestResize);
+      window.visualViewport.addEventListener("scroll", requestResize);
+    }
     window.addEventListener("keydown", handleKeyDown);
     window.addEventListener("keyup", handleKeyUp);
+    window.addEventListener("blur", clearTransientInputState);
+    window.addEventListener("pagehide", clearTransientInputState);
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState !== "visible") {
+        clearTransientInputState();
+      } else {
+        requestResize();
+      }
+    });
     window.addEventListener("beforeunload", saveGame);
 
     const stickInputTarget = movePadEl || stickEl;
