@@ -332,8 +332,8 @@
 
   const NET_CONFIG = {
     snapshotInterval: 0.3,
-    motionInterval: 0.08,
-    playerSendInterval: 0.05,
+    motionInterval: 0.05,
+    playerSendInterval: 0.04,
     renderSmooth: 12,
     houseSmooth: 18,
     monsterSmooth: 10,
@@ -4852,6 +4852,10 @@
         dir: { x: 0, y: 0 },
         renderX: preserveHostCoordinates ? validPos.x : (prev?.renderX ?? validPos.x),
         renderY: preserveHostCoordinates ? validPos.y : (prev?.renderY ?? validPos.y),
+        _drawFacingX: Number.isFinite(prev?._drawFacingX) ? (prev._drawFacingX < 0 ? -1 : 1) : undefined,
+        _prevRenderX: Number.isFinite(prev?._prevRenderX)
+          ? prev._prevRenderX
+          : (preserveHostCoordinates ? validPos.x : (prev?.renderX ?? validPos.x)),
       };
     }).filter(Boolean);
     if (world) {
@@ -6926,14 +6930,38 @@
     return best;
   }
 
+  function getSpawnIsland(world, spawnTile = state.spawnTile) {
+    if (!world || !Array.isArray(world.islands) || world.islands.length === 0) return null;
+    const spawnTx = Number.isFinite(spawnTile?.x) ? Math.floor(spawnTile.x) : null;
+    const spawnTy = Number.isFinite(spawnTile?.y) ? Math.floor(spawnTile.y) : null;
+    if (spawnTx != null && spawnTy != null) {
+      const byTile = getIslandForTile(world, spawnTx, spawnTy);
+      if (byTile) return byTile;
+    }
+    const starter = world.islands.find((entry) => entry?.starter);
+    if (starter) return starter;
+    if (spawnTx != null && spawnTy != null) {
+      const px = spawnTx + 0.5;
+      const py = spawnTy + 0.5;
+      let closest = null;
+      let bestScore = Infinity;
+      for (const island of world.islands) {
+        if (!island) continue;
+        const score = Math.hypot(px - island.x, py - island.y) - island.radius;
+        if (score < bestScore) {
+          closest = island;
+          bestScore = score;
+        }
+      }
+      if (closest) return closest;
+    }
+    return world.islands[0] || null;
+  }
+
   function isSpawnIsland(world, island) {
     if (!world || !island) return false;
     if (island.starter) return true;
-    if (state.spawnTile && Number.isFinite(state.spawnTile.x) && Number.isFinite(state.spawnTile.y)) {
-      const spawnIsland = getIslandForTile(world, state.spawnTile.x, state.spawnTile.y);
-      if (spawnIsland === island) return true;
-    }
-    return false;
+    return getSpawnIsland(world, state.spawnTile) === island;
   }
 
   function isPlainsBiomeId(biomeId) {
@@ -7766,7 +7794,7 @@
     if (shiftSession && !netIsClient() && Array.isArray(world.animals)) {
       ensureSeedShipFeatures(world);
       ensureMushroomIslandGreenCows(world, 32);
-      ensureSpawnIslandHarvestAnimals(world, state.spawnTile, 4, 32);
+      ensureSpawnIslandHarvestAnimals(world, state.spawnTile, 4, Infinity);
     }
 
     return true;
@@ -10198,6 +10226,10 @@
             dir: { x: 0, y: 0 },
             renderX: preserveHostCoordinates ? finalPos.x : (prev?.renderX ?? finalPos.x),
             renderY: preserveHostCoordinates ? finalPos.y : (prev?.renderY ?? finalPos.y),
+            _drawFacingX: Number.isFinite(prev?._drawFacingX) ? (prev._drawFacingX < 0 ? -1 : 1) : undefined,
+            _prevRenderX: Number.isFinite(prev?._prevRenderX)
+              ? prev._prevRenderX
+              : (preserveHostCoordinates ? finalPos.x : (prev?.renderX ?? finalPos.x)),
           };
         })
         .filter(Boolean)
@@ -12275,7 +12307,7 @@
     world.nextVillagerId = world.nextVillagerId || 1;
     seedSurfaceAnimals(world, 24);
     const spawn = findSpawnTile(world);
-    ensureSpawnIslandHarvestAnimals(world, spawn, 4, 32);
+    ensureSpawnIslandHarvestAnimals(world, spawn, 4, Infinity);
     state.spawnTile = spawn;
     state.timeOfDay = 0;
     state.isNight = false;
@@ -12449,7 +12481,7 @@
         }
       }
       const spawnTile = findSpawnTile(world);
-      const harvestAnimalsAdded = ensureSpawnIslandHarvestAnimals(world, spawnTile, 4, 32);
+      const harvestAnimalsAdded = ensureSpawnIslandHarvestAnimals(world, spawnTile, 4, Infinity);
       state.player = {
         x: preparedSave.player?.x ?? (spawnTile.x + 0.5) * CONFIG.tileSize,
         y: preparedSave.player?.y ?? (spawnTile.y + 0.5) * CONFIG.tileSize,
@@ -16748,11 +16780,7 @@
 
   function ensureSpawnIslandHarvestAnimals(world, spawnTile, minCount = 4, maxAnimals = Infinity) {
     if (!world || !Array.isArray(world.animals) || !Array.isArray(world.islands)) return 0;
-    const spawnTx = Number.isFinite(spawnTile?.x) ? Math.floor(spawnTile.x) : null;
-    const spawnTy = Number.isFinite(spawnTile?.y) ? Math.floor(spawnTile.y) : null;
-    const spawnIsland = (spawnTx != null && spawnTy != null)
-      ? getIslandForTile(world, spawnTx, spawnTy)
-      : (world.islands.find((island) => island?.starter) || null);
+    const spawnIsland = getSpawnIsland(world, spawnTile);
     if (!spawnIsland) return 0;
     const hardCap = Number.isFinite(maxAnimals) ? maxAnimals : Infinity;
     const target = Math.max(0, Math.floor(minCount) || 0);
@@ -17026,11 +17054,7 @@
   function ensureSpawnIslandNightMonsters(world, players, minCount = 1) {
     if (!world || !Array.isArray(players) || players.length === 0) return 0;
     if (!state.isNight) return 0;
-    const spawnTx = Number.isFinite(state.spawnTile?.x) ? Math.floor(state.spawnTile.x) : null;
-    const spawnTy = Number.isFinite(state.spawnTile?.y) ? Math.floor(state.spawnTile.y) : null;
-    const spawnIsland = (spawnTx != null && spawnTy != null)
-      ? getIslandForTile(world, spawnTx, spawnTy)
-      : (world.islands?.find((island) => island?.starter) || null);
+    const spawnIsland = getSpawnIsland(world, state.spawnTile);
     if (!spawnIsland) return 0;
     if (isMushroomBiomeId(getIslandBiomeId(world, spawnIsland))) return 0;
 
@@ -18106,12 +18130,17 @@
     if (!world || !Array.isArray(world.animals)) return;
     const maxAnimals = 32;
     const players = getPlayersForWorld(world);
+    const immediateSpawnIslandTopUp = ensureSpawnIslandHarvestAnimals(world, state.spawnTile, 3, Infinity);
+    if (immediateSpawnIslandTopUp > 0) {
+      markDirty();
+    }
     world.animalSpawnTimer -= dt;
     if (world.animalSpawnTimer <= 0) {
       world.animalSpawnTimer = 5 + Math.random() * 4;
       const activeIslands = getSurfaceActiveIslands(world, players);
+      // Reserve a few slots so spawn island can always repopulate for early survival loops.
+      const spawnIslandHarvestAdded = ensureSpawnIslandHarvestAnimals(world, state.spawnTile, 4, Infinity);
       const activeIslandHarvestAdded = ensureActiveIslandHarvestAnimals(world, activeIslands, 2, maxAnimals);
-      const spawnIslandHarvestAdded = ensureSpawnIslandHarvestAnimals(world, state.spawnTile, 4, maxAnimals);
       const greenCowAdded = ensureMushroomIslandGreenCows(world, maxAnimals);
       let passiveSpawned = false;
       if (world.animals.length < maxAnimals) {
@@ -20202,6 +20231,22 @@
     }
   }
 
+  function resolveEntityFacingX(entity, currentX) {
+    if (!entity || !Number.isFinite(currentX)) return 1;
+    const prevX = Number.isFinite(entity._prevRenderX) ? entity._prevRenderX : currentX;
+    const deltaX = currentX - prevX;
+    let facingX = Number.isFinite(entity._drawFacingX) ? entity._drawFacingX : 0;
+    if (Math.abs(deltaX) > 0.18) {
+      facingX = deltaX >= 0 ? 1 : -1;
+    } else if (!facingX) {
+      const seeded = Number(entity.facingX);
+      facingX = seeded < 0 ? -1 : 1;
+    }
+    entity._drawFacingX = facingX < 0 ? -1 : 1;
+    entity._prevRenderX = currentX;
+    return entity._drawFacingX;
+  }
+
   function drawMonsterBurning(monster, screen) {
     if (!monster || !monster.dayBurning || (monster.burnTimer ?? 0) <= 0) return;
     const duration = Math.max(0.01, Number(monster.burnDuration) || MONSTER_DAY_BURN.durationMax);
@@ -20251,6 +20296,7 @@
   function drawMonster(monster, camera) {
     const mx = monster.renderX ?? monster.x;
     const my = monster.renderY ?? monster.y;
+    const facingX = resolveEntityFacingX(monster, mx);
     const screen = worldToScreen(mx, my, camera);
     if (
       screen.x < -40 ||
@@ -20288,93 +20334,98 @@
     } else if (type === "polar_bear") {
       ctx.fillStyle = tintColor(baseColor, -0.08);
       ctx.beginPath();
-      ctx.ellipse(screen.x - 1, screen.y + 1, 13, 9.5, 0, 0, Math.PI * 2);
+      ctx.ellipse(screen.x - facingX * 1.1, screen.y + 1, 13, 9.5, 0, 0, Math.PI * 2);
       ctx.fill();
       ctx.fillStyle = baseColor;
       ctx.beginPath();
-      ctx.arc(screen.x + 9, screen.y - 2, 6.5, 0, Math.PI * 2);
+      ctx.arc(screen.x + facingX * 8.3, screen.y - 2, 6.5, 0, Math.PI * 2);
       ctx.fill();
       ctx.fillStyle = "#f7fcff";
       ctx.beginPath();
-      ctx.arc(screen.x - 4, screen.y - 4, 5, 0, Math.PI * 2);
-      ctx.arc(screen.x + 2, screen.y - 5, 4.5, 0, Math.PI * 2);
+      ctx.arc(screen.x - facingX * 3.4, screen.y - 4, 5, 0, Math.PI * 2);
+      ctx.arc(screen.x + facingX * 1.6, screen.y - 5, 4.5, 0, Math.PI * 2);
       ctx.fill();
       ctx.fillStyle = "#2a313b";
       ctx.beginPath();
-      ctx.arc(screen.x + 11, screen.y - 3, 1.4, 0, Math.PI * 2);
+      ctx.arc(screen.x + facingX * 10.7, screen.y - 3, 1.4, 0, Math.PI * 2);
       ctx.fill();
       ctx.fillStyle = "#dce6f1";
-      ctx.fillRect(screen.x - 7, screen.y + 6, 3, 6);
-      ctx.fillRect(screen.x + 1, screen.y + 6, 3, 6);
+      ctx.fillRect(screen.x - facingX * 6.8, screen.y + 6, 3, 6);
+      ctx.fillRect(screen.x + facingX * 0.8, screen.y + 6, 3, 6);
       ctx.strokeStyle = "rgba(27, 32, 40, 0.48)";
       ctx.lineWidth = 1.2;
       ctx.beginPath();
-      ctx.moveTo(screen.x + 13, screen.y + 1);
-      ctx.lineTo(screen.x + 16, screen.y + 3);
+      ctx.moveTo(screen.x - facingX * 12, screen.y + 1);
+      ctx.lineTo(screen.x - facingX * 15.3, screen.y + 3);
       ctx.stroke();
     } else if (type === "lion") {
       ctx.fillStyle = tintColor(baseColor, -0.16);
       ctx.beginPath();
-      ctx.ellipse(screen.x - 2, screen.y + 1, 12.5, 8.5, 0, 0, Math.PI * 2);
+      ctx.ellipse(screen.x - facingX * 1.8, screen.y + 1, 12.5, 8.5, 0, 0, Math.PI * 2);
       ctx.fill();
       ctx.fillStyle = "#8f5f2f";
       ctx.beginPath();
-      ctx.arc(screen.x + 8, screen.y - 2, 7.4, 0, Math.PI * 2);
+      ctx.arc(screen.x + facingX * 7.2, screen.y - 2, 7.4, 0, Math.PI * 2);
       ctx.fill();
       ctx.fillStyle = baseColor;
       ctx.beginPath();
-      ctx.arc(screen.x + 8.5, screen.y - 2, 4.8, 0, Math.PI * 2);
+      ctx.arc(screen.x + facingX * 7.8, screen.y - 2, 4.8, 0, Math.PI * 2);
       ctx.fill();
       ctx.fillStyle = "#ffe0aa";
       ctx.beginPath();
-      ctx.arc(screen.x + 11, screen.y - 2.5, 1.6, 0, Math.PI * 2);
+      ctx.arc(screen.x + facingX * 10.4, screen.y - 2.5, 1.6, 0, Math.PI * 2);
       ctx.fill();
       ctx.fillStyle = "#2e2216";
       ctx.beginPath();
-      ctx.arc(screen.x + 10.2, screen.y - 3.6, 1.1, 0, Math.PI * 2);
-      ctx.arc(screen.x + 12.2, screen.y - 2.9, 1.1, 0, Math.PI * 2);
+      ctx.arc(screen.x + facingX * 9.6, screen.y - 3.6, 1.1, 0, Math.PI * 2);
+      ctx.arc(screen.x + facingX * 11.6, screen.y - 2.9, 1.1, 0, Math.PI * 2);
       ctx.fill();
       ctx.strokeStyle = "#6f4321";
       ctx.lineWidth = 1.5;
       ctx.beginPath();
-      ctx.moveTo(screen.x - 12, screen.y + 1);
-      ctx.quadraticCurveTo(screen.x - 17, screen.y + 0, screen.x - 17, screen.y + 6);
+      ctx.moveTo(screen.x - facingX * 11.4, screen.y + 1);
+      ctx.quadraticCurveTo(
+        screen.x - facingX * 16.2,
+        screen.y + 0,
+        screen.x - facingX * 16.2,
+        screen.y + 6
+      );
       ctx.stroke();
       ctx.fillStyle = tintColor(baseColor, -0.24);
-      ctx.fillRect(screen.x - 8, screen.y + 6, 3, 5);
-      ctx.fillRect(screen.x + 0, screen.y + 6, 3, 5);
+      ctx.fillRect(screen.x - facingX * 7.2, screen.y + 6, 3, 5);
+      ctx.fillRect(screen.x + facingX * 0.4, screen.y + 6, 3, 5);
     } else if (type === "wolf") {
       ctx.fillStyle = tintColor(baseColor, -0.14);
       ctx.beginPath();
-      ctx.ellipse(screen.x - 1, screen.y + 2, 11.5, 7.2, 0, 0, Math.PI * 2);
+      ctx.ellipse(screen.x - facingX * 1.1, screen.y + 2, 11.5, 7.2, 0, 0, Math.PI * 2);
       ctx.fill();
       ctx.fillStyle = baseColor;
       ctx.beginPath();
-      ctx.arc(screen.x + 8.5, screen.y - 1.6, 5.2, 0, Math.PI * 2);
+      ctx.arc(screen.x + facingX * 7.6, screen.y - 1.6, 5.2, 0, Math.PI * 2);
       ctx.fill();
       ctx.fillStyle = tintColor(baseColor, -0.34);
       ctx.beginPath();
-      ctx.moveTo(screen.x + 6, screen.y - 6);
-      ctx.lineTo(screen.x + 7.5, screen.y - 10);
-      ctx.lineTo(screen.x + 9.2, screen.y - 6);
+      ctx.moveTo(screen.x + facingX * 5.2, screen.y - 6);
+      ctx.lineTo(screen.x + facingX * 6.6, screen.y - 10);
+      ctx.lineTo(screen.x + facingX * 8.4, screen.y - 6);
       ctx.closePath();
       ctx.fill();
       ctx.beginPath();
-      ctx.moveTo(screen.x + 10, screen.y - 5.7);
-      ctx.lineTo(screen.x + 11.2, screen.y - 10);
-      ctx.lineTo(screen.x + 13.2, screen.y - 5.9);
+      ctx.moveTo(screen.x + facingX * 9.2, screen.y - 5.7);
+      ctx.lineTo(screen.x + facingX * 10.4, screen.y - 10);
+      ctx.lineTo(screen.x + facingX * 12.2, screen.y - 5.9);
       ctx.closePath();
       ctx.fill();
       ctx.fillStyle = "#d84f4f";
       ctx.beginPath();
-      ctx.arc(screen.x + 9, screen.y - 2.4, 1.2, 0, Math.PI * 2);
-      ctx.arc(screen.x + 11.6, screen.y - 2.1, 1.2, 0, Math.PI * 2);
+      ctx.arc(screen.x + facingX * 8.2, screen.y - 2.4, 1.2, 0, Math.PI * 2);
+      ctx.arc(screen.x + facingX * 10.8, screen.y - 2.1, 1.2, 0, Math.PI * 2);
       ctx.fill();
       ctx.strokeStyle = tintColor(baseColor, -0.42);
       ctx.lineWidth = 1.3;
       ctx.beginPath();
-      ctx.moveTo(screen.x - 10, screen.y + 1);
-      ctx.lineTo(screen.x - 15, screen.y - 1);
+      ctx.moveTo(screen.x - facingX * 9.8, screen.y + 1);
+      ctx.lineTo(screen.x - facingX * 14.4, screen.y - 1);
       ctx.stroke();
     } else if (type === "brute") {
       ctx.fillStyle = baseColor;
@@ -20568,6 +20619,7 @@
   function drawAnimal(animal, camera) {
     const drawX = animal.renderX ?? animal.x;
     const drawY = animal.renderY ?? animal.y;
+    const facingX = resolveEntityFacingX(animal, drawX);
     const screen = worldToScreen(drawX, drawY, camera);
     if (
       screen.x < -40 ||
@@ -20594,59 +20646,59 @@
     ctx.fill();
     ctx.fillStyle = tintColor(bodyColor, -0.2);
     ctx.beginPath();
-    ctx.arc(screen.x + 8, screen.y - 2, headR, 0, Math.PI * 2);
+    ctx.arc(screen.x + facingX * 7.3, screen.y - 2, headR, 0, Math.PI * 2);
     ctx.fill();
 
     if (type === "boar") {
       ctx.fillStyle = tintColor(bodyColor, -0.32);
-      ctx.fillRect(screen.x - 7, screen.y + 4, 2, 6);
-      ctx.fillRect(screen.x + 2, screen.y + 4, 2, 6);
+      ctx.fillRect(screen.x - facingX * 6.6, screen.y + 4, 2, 6);
+      ctx.fillRect(screen.x + facingX * 1.8, screen.y + 4, 2, 6);
       ctx.fillStyle = "#e9d8bf";
       ctx.beginPath();
-      ctx.moveTo(screen.x + 11, screen.y - 1);
-      ctx.lineTo(screen.x + 14, screen.y + 0.5);
-      ctx.lineTo(screen.x + 11, screen.y + 2);
+      ctx.moveTo(screen.x + facingX * 10.3, screen.y - 1);
+      ctx.lineTo(screen.x + facingX * 13.1, screen.y + 0.5);
+      ctx.lineTo(screen.x + facingX * 10.3, screen.y + 2);
       ctx.closePath();
       ctx.fill();
     } else if (type === "goat") {
       ctx.fillStyle = "#c8bca5";
       ctx.beginPath();
-      ctx.moveTo(screen.x + 8, screen.y - 6);
-      ctx.lineTo(screen.x + 10, screen.y - 10);
-      ctx.lineTo(screen.x + 11, screen.y - 5);
+      ctx.moveTo(screen.x + facingX * 7.6, screen.y - 6);
+      ctx.lineTo(screen.x + facingX * 9.4, screen.y - 10);
+      ctx.lineTo(screen.x + facingX * 10.6, screen.y - 5);
       ctx.closePath();
       ctx.fill();
       ctx.beginPath();
-      ctx.moveTo(screen.x + 4, screen.y - 6);
-      ctx.lineTo(screen.x + 5, screen.y - 10);
-      ctx.lineTo(screen.x + 7, screen.y - 5);
+      ctx.moveTo(screen.x + facingX * 3.7, screen.y - 6);
+      ctx.lineTo(screen.x + facingX * 4.8, screen.y - 10);
+      ctx.lineTo(screen.x + facingX * 6.6, screen.y - 5);
       ctx.closePath();
       ctx.fill();
     } else if (isGreenCow) {
       ctx.fillStyle = "rgba(95, 52, 116, 0.34)";
       ctx.beginPath();
-      ctx.ellipse(screen.x - 3, screen.y - 1, 4, 2.6, 0.2, 0, Math.PI * 2);
-      ctx.ellipse(screen.x + 4, screen.y + 2, 3, 2.1, -0.25, 0, Math.PI * 2);
+      ctx.ellipse(screen.x - facingX * 3, screen.y - 1, 4, 2.6, 0.2 * facingX, 0, Math.PI * 2);
+      ctx.ellipse(screen.x + facingX * 4, screen.y + 2, 3, 2.1, -0.25 * facingX, 0, Math.PI * 2);
       ctx.fill();
       ctx.fillStyle = "#e4f4dd";
       ctx.beginPath();
-      ctx.arc(screen.x + 9, screen.y - 3, 1.3, 0, Math.PI * 2);
-      ctx.arc(screen.x + 7, screen.y - 1, 1.1, 0, Math.PI * 2);
+      ctx.arc(screen.x + facingX * 8.6, screen.y - 3, 1.3, 0, Math.PI * 2);
+      ctx.arc(screen.x + facingX * 6.8, screen.y - 1, 1.1, 0, Math.PI * 2);
       ctx.fill();
       ctx.fillStyle = "#cf5fa9";
       ctx.beginPath();
-      ctx.ellipse(screen.x + 2, screen.y - 10, 6.2, 2.8, 0, 0, Math.PI * 2);
+      ctx.ellipse(screen.x + facingX * 2, screen.y - 10, 6.2, 2.8, 0, 0, Math.PI * 2);
       ctx.fill();
       ctx.fillStyle = "rgba(252, 239, 255, 0.8)";
       ctx.beginPath();
-      ctx.arc(screen.x + 0.5, screen.y - 10, 0.9, 0, Math.PI * 2);
-      ctx.arc(screen.x + 3.4, screen.y - 9.5, 0.8, 0, Math.PI * 2);
+      ctx.arc(screen.x + facingX * 0.5, screen.y - 10, 0.9, 0, Math.PI * 2);
+      ctx.arc(screen.x + facingX * 3.4, screen.y - 9.5, 0.8, 0, Math.PI * 2);
       ctx.fill();
     }
 
     ctx.fillStyle = "#2b2118";
     ctx.beginPath();
-    ctx.arc(screen.x + 10, screen.y - 3, isGreenCow ? 1.7 : 1.5, 0, Math.PI * 2);
+    ctx.arc(screen.x + facingX * 9.4, screen.y - 3, isGreenCow ? 1.7 : 1.5, 0, Math.PI * 2);
     ctx.fill();
     if (animal.hitTimer > 0) {
       ctx.strokeStyle = "rgba(255,255,255,0.65)";
