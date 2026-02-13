@@ -1272,6 +1272,20 @@
     minSpacingTiles: 3.25,
   });
 
+  const SURFACE_PASSIVE_ANIMAL_CONFIG = Object.freeze({
+    baselineMin: 24,
+    baselineMax: 112,
+    baselineIslandFactor: 1.6,
+    baselineIslandOffset: 7,
+    maxBase: 34,
+    maxIslandFactor: 2.75,
+    maxIslandOffset: 4,
+    maxCap: 140,
+    spawnIslandHarvestMin: 4,
+    activeIslandHarvestMin: 2,
+    catchupSpawnBurstMax: 6,
+  });
+
   const AMBIENT_FISH_CONFIG = Object.freeze({
     maxFish: 16,
     spawnIntervalMin: 1.5,
@@ -7792,9 +7806,15 @@
     }
 
     if (shiftSession && !netIsClient() && Array.isArray(world.animals)) {
+      const passiveTargets = getSurfacePassiveAnimalTargets(world);
       ensureSeedShipFeatures(world);
-      ensureMushroomIslandGreenCows(world, 32);
-      ensureSpawnIslandHarvestAnimals(world, state.spawnTile, 4, Infinity);
+      ensureMushroomIslandGreenCows(world, passiveTargets.maxAnimals);
+      ensureSpawnIslandHarvestAnimals(
+        world,
+        state.spawnTile,
+        passiveTargets.spawnIslandHarvestMin,
+        Infinity
+      );
     }
 
     return true;
@@ -7861,6 +7881,44 @@
     const scale = Number(biome.animalSpawnScale);
     if (!Number.isFinite(scale)) return 1;
     return clamp(scale, 0, 1);
+  }
+
+  function getSurfacePassiveAnimalTargets(world) {
+    if (!world || !Array.isArray(world.islands)) {
+      return {
+        baselineAnimals: SURFACE_PASSIVE_ANIMAL_CONFIG.baselineMin,
+        maxAnimals: SURFACE_PASSIVE_ANIMAL_CONFIG.maxBase,
+        spawnIslandHarvestMin: SURFACE_PASSIVE_ANIMAL_CONFIG.spawnIslandHarvestMin,
+        activeIslandHarvestMin: SURFACE_PASSIVE_ANIMAL_CONFIG.activeIslandHarvestMin,
+      };
+    }
+    const nonMushroomIslands = world.islands.reduce((count, island) => (
+      count + Number(island && !isMushroomBiomeId(getIslandBiomeId(world, island)))
+    ), 0);
+    const baselineAnimals = clamp(
+      Math.round(
+        SURFACE_PASSIVE_ANIMAL_CONFIG.baselineMin
+        + Math.max(0, nonMushroomIslands - SURFACE_PASSIVE_ANIMAL_CONFIG.baselineIslandOffset)
+          * SURFACE_PASSIVE_ANIMAL_CONFIG.baselineIslandFactor
+      ),
+      SURFACE_PASSIVE_ANIMAL_CONFIG.baselineMin,
+      SURFACE_PASSIVE_ANIMAL_CONFIG.baselineMax
+    );
+    const maxAnimals = clamp(
+      Math.round(
+        SURFACE_PASSIVE_ANIMAL_CONFIG.maxBase
+        + Math.max(0, nonMushroomIslands - SURFACE_PASSIVE_ANIMAL_CONFIG.maxIslandOffset)
+          * SURFACE_PASSIVE_ANIMAL_CONFIG.maxIslandFactor
+      ),
+      SURFACE_PASSIVE_ANIMAL_CONFIG.maxBase,
+      SURFACE_PASSIVE_ANIMAL_CONFIG.maxCap
+    );
+    return {
+      baselineAnimals: Math.min(baselineAnimals, maxAnimals),
+      maxAnimals,
+      spawnIslandHarvestMin: SURFACE_PASSIVE_ANIMAL_CONFIG.spawnIslandHarvestMin,
+      activeIslandHarvestMin: SURFACE_PASSIVE_ANIMAL_CONFIG.activeIslandHarvestMin,
+    };
   }
 
   function getMonsterVariant(type) {
@@ -12303,11 +12361,19 @@
     world.animals = world.animals || [];
     world.nextAnimalId = world.nextAnimalId || 1;
     world.animalSpawnTimer = 3;
+    const passiveTargets = getSurfacePassiveAnimalTargets(world);
+    const initialAnimalRng = makeRng(((world.seedInt ?? seedToInt(world.seed || normalizedSeed)) ^ 0x53a9f11d) >>> 0);
     world.villagers = world.villagers || [];
     world.nextVillagerId = world.nextVillagerId || 1;
-    seedSurfaceAnimals(world, 24);
+    seedSurfaceAnimals(world, passiveTargets.baselineAnimals, { rng: initialAnimalRng, minSpacingTiles: 4.8 });
     const spawn = findSpawnTile(world);
-    ensureSpawnIslandHarvestAnimals(world, spawn, 4, Infinity);
+    ensureSpawnIslandHarvestAnimals(
+      world,
+      spawn,
+      passiveTargets.spawnIslandHarvestMin,
+      Infinity,
+      initialAnimalRng
+    );
     state.spawnTile = spawn;
     state.timeOfDay = 0;
     state.isNight = false;
@@ -12361,7 +12427,7 @@
     seedSurfaceVillages(world);
     ensureGuaranteedOuterWildRobot(world);
     ensureSeedShipFeatures(world);
-    ensureMushroomIslandGreenCows(world);
+    ensureMushroomIslandGreenCows(world, passiveTargets.maxAnimals, initialAnimalRng);
 
     state.dirty = true;
     saveStatus.textContent = "Saving...";
@@ -12386,6 +12452,8 @@
         ? saved
         : sanitizeSaveForCurrentLayout(saved, targetSeed);
       const world = generateWorld(preparedSave.seed);
+      const passiveTargets = getSurfacePassiveAnimalTargets(world);
+      const restoreAnimalRng = makeRng(((world.seedInt ?? seedToInt(world.seed || preparedSave.seed || targetSeed)) ^ 0x6f47b3c1) >>> 0);
       normalizeSurfaceResources(world);
       if (Array.isArray(preparedSave.islandLayout)) {
         applySurfaceIslandLayout(world, preparedSave.islandLayout, { shiftSession: false });
@@ -12409,7 +12477,7 @@
       world.villagers = world.villagers || [];
       world.nextVillagerId = world.nextVillagerId || 1;
       if (world.animals.length === 0) {
-        seedSurfaceAnimals(world, 24);
+        seedSurfaceAnimals(world, passiveTargets.baselineAnimals, { rng: restoreAnimalRng, minSpacingTiles: 4.8 });
       }
       ensureSurfaceCaves(world, preparedSave.caves);
 
@@ -12481,7 +12549,13 @@
         }
       }
       const spawnTile = findSpawnTile(world);
-      const harvestAnimalsAdded = ensureSpawnIslandHarvestAnimals(world, spawnTile, 4, Infinity);
+      const harvestAnimalsAdded = ensureSpawnIslandHarvestAnimals(
+        world,
+        spawnTile,
+        passiveTargets.spawnIslandHarvestMin,
+        Infinity,
+        restoreAnimalRng
+      );
       state.player = {
         x: preparedSave.player?.x ?? (spawnTile.x + 0.5) * CONFIG.tileSize,
         y: preparedSave.player?.y ?? (spawnTile.y + 0.5) * CONFIG.tileSize,
@@ -12564,7 +12638,7 @@
       const villagersAdded = ensureVillageVillagers(world);
       const wildRobotAdded = ensureGuaranteedOuterWildRobot(world);
       const shipFeaturesAdded = ensureSeedShipFeatures(world);
-      const mushroomCowsAdded = ensureMushroomIslandGreenCows(world);
+      const mushroomCowsAdded = ensureMushroomIslandGreenCows(world, passiveTargets.maxAnimals, restoreAnimalRng);
 
       state.targetResource = null;
       state.activeStation = null;
@@ -16637,6 +16711,7 @@
 
   function pickAnimalSpawnTileOnIsland(world, island, options = {}) {
     if (!world || !island) return null;
+    const rng = typeof options.rng === "function" ? options.rng : Math.random;
     const attempts = Math.max(1, Math.floor(Number(options.attempts) || 20));
     const radiusScale = clamp(Number(options.radiusScale) || 0.82, 0.15, 1);
     const minRadiusScale = clamp(Number(options.minRadiusScale) || 0.12, 0, 0.95);
@@ -16663,8 +16738,8 @@
       return true;
     };
     for (let attempt = 0; attempt < attempts; attempt += 1) {
-      const angle = Math.random() * Math.PI * 2;
-      const dist = minRadius + Math.random() * Math.max(1, maxRadius - minRadius);
+      const angle = rng() * Math.PI * 2;
+      const dist = minRadius + rng() * Math.max(1, maxRadius - minRadius);
       const tx = Math.floor(island.x + Math.cos(angle) * dist);
       const ty = Math.floor(island.y + Math.sin(angle) * dist);
       if (canUseTile(tx, ty)) return { tx, ty };
@@ -16684,13 +16759,14 @@
       }
     }
     if (candidates.length > 0) {
-      return candidates[Math.floor(Math.random() * candidates.length)];
+      return candidates[Math.floor(rng() * candidates.length)];
     }
     return null;
   }
 
   function spawnSurfaceAnimalFromIslands(world, minSpacingTiles = 5, options = null) {
     if (!world || !Array.isArray(world.islands) || world.islands.length === 0) return false;
+    const rng = typeof options?.rng === "function" ? options.rng : Math.random;
     const preferredIslands = Array.isArray(options?.islands) && options.islands.length > 0
       ? options.islands.filter(Boolean)
       : world.islands;
@@ -16698,7 +16774,7 @@
     const forcedType = typeof options?.forceType === "string" ? normalizeAnimalType(options.forceType) : null;
     const islandAttempts = Math.max(8, Math.min(36, preferredIslands.length * 3));
     for (let attempt = 0; attempt < islandAttempts; attempt += 1) {
-      const island = preferredIslands[Math.floor(Math.random() * preferredIslands.length)];
+      const island = preferredIslands[Math.floor(rng() * preferredIslands.length)];
       if (!island) continue;
       const strictTile = pickAnimalSpawnTileOnIsland(world, island, {
         attempts: 10,
@@ -16707,6 +16783,7 @@
         minSpacingTiles,
         enforceIslandOwnership: true,
         animalType: forcedType,
+        rng,
       });
       // Fallback lets passive animals continue to spawn even when debug island merges
       // make strict island ownership ambiguous.
@@ -16717,11 +16794,12 @@
         minSpacingTiles,
         enforceIslandOwnership: false,
         animalType: forcedType,
+        rng,
       });
       if (!tile) continue;
       const spawnScale = getSurfaceAnimalSpawnScale(world, tile.tx, tile.ty);
-      if (spawnScale <= 0 || Math.random() > spawnScale) continue;
-      const animalType = forcedType || pickSurfaceAnimalType(world, tile.tx, tile.ty);
+      if (spawnScale <= 0 || rng() > spawnScale) continue;
+      const animalType = forcedType || pickSurfaceAnimalType(world, tile.tx, tile.ty, rng);
       if (!canSpawnAnimalAt(world, tile.tx, tile.ty, animalType)) continue;
       spawnAnimal(world, tile.tx, tile.ty, animalType);
       return true;
@@ -16753,9 +16831,9 @@
     return count;
   }
 
-  function spawnHarvestAnimalOnIsland(world, island, minSpacingTiles = 2.75) {
+  function spawnHarvestAnimalOnIsland(world, island, minSpacingTiles = 2.75, rng = Math.random) {
     if (!world || !island) return false;
-    const harvestType = pickHarvestAnimalType();
+    const harvestType = pickHarvestAnimalType(rng);
     const strictTile = pickAnimalSpawnTileOnIsland(world, island, {
       attempts: 20,
       radiusScale: 0.86,
@@ -16763,6 +16841,7 @@
       minSpacingTiles,
       enforceIslandOwnership: true,
       animalType: harvestType,
+      rng,
     });
     const relaxedTile = strictTile || pickAnimalSpawnTileOnIsland(world, island, {
       attempts: 16,
@@ -16771,6 +16850,7 @@
       minSpacingTiles,
       enforceIslandOwnership: false,
       animalType: harvestType,
+      rng,
     });
     if (!relaxedTile) return false;
     if (!canSpawnAnimalAt(world, relaxedTile.tx, relaxedTile.ty, harvestType)) return false;
@@ -16778,7 +16858,7 @@
     return true;
   }
 
-  function ensureSpawnIslandHarvestAnimals(world, spawnTile, minCount = 4, maxAnimals = Infinity) {
+  function ensureSpawnIslandHarvestAnimals(world, spawnTile, minCount = 4, maxAnimals = Infinity, rng = Math.random) {
     if (!world || !Array.isArray(world.animals) || !Array.isArray(world.islands)) return 0;
     const spawnIsland = getSpawnIsland(world, spawnTile);
     if (!spawnIsland) return 0;
@@ -16789,13 +16869,13 @@
     let added = 0;
     for (let i = 0; i < missing; i += 1) {
       if (world.animals.length >= hardCap) break;
-      if (!spawnHarvestAnimalOnIsland(world, spawnIsland, 2.75)) break;
+      if (!spawnHarvestAnimalOnIsland(world, spawnIsland, 2.75, rng)) break;
       added += 1;
     }
     return added;
   }
 
-  function ensureActiveIslandHarvestAnimals(world, islands, minCountPerIsland = 2, maxAnimals = Infinity) {
+  function ensureActiveIslandHarvestAnimals(world, islands, minCountPerIsland = 2, maxAnimals = Infinity, rng = Math.random) {
     if (!world || !Array.isArray(world.animals) || !Array.isArray(islands) || islands.length === 0) return 0;
     const hardCap = Number.isFinite(maxAnimals) ? maxAnimals : Infinity;
     const baseTarget = Math.max(1, Math.floor(minCountPerIsland) || 1);
@@ -16808,7 +16888,7 @@
       const missing = Math.max(0, target - existing);
       for (let i = 0; i < missing; i += 1) {
         if (world.animals.length >= hardCap) return added;
-        if (!spawnHarvestAnimalOnIsland(world, island, 2.6)) break;
+        if (!spawnHarvestAnimalOnIsland(world, island, 2.6, rng)) break;
         added += 1;
       }
     }
@@ -16825,7 +16905,7 @@
     return count;
   }
 
-  function spawnGreenCowOnMushroomIsland(world, island) {
+  function spawnGreenCowOnMushroomIsland(world, island, rng = Math.random) {
     if (!world || !island) return false;
     const strictTile = pickAnimalSpawnTileOnIsland(world, island, {
       attempts: MUSHROOM_GREEN_COW_CONFIG.ensureAttemptsPerCow,
@@ -16835,6 +16915,7 @@
       requireMushroomTile: true,
       enforceIslandOwnership: true,
       animalType: "green_cow",
+      rng,
     });
     const relaxedTile = strictTile || pickAnimalSpawnTileOnIsland(world, island, {
       attempts: Math.max(12, Math.floor(MUSHROOM_GREEN_COW_CONFIG.ensureAttemptsPerCow * 0.7)),
@@ -16844,6 +16925,7 @@
       requireMushroomTile: true,
       enforceIslandOwnership: false,
       animalType: "green_cow",
+      rng,
     });
     if (!relaxedTile) return false;
     if (!canSpawnAnimalAt(world, relaxedTile.tx, relaxedTile.ty, "green_cow")) return false;
@@ -16851,7 +16933,7 @@
     return true;
   }
 
-  function ensureMushroomIslandGreenCows(world, maxAnimals = Infinity) {
+  function ensureMushroomIslandGreenCows(world, maxAnimals = Infinity, rng = Math.random) {
     if (!world || !Array.isArray(world.islands) || !Array.isArray(world.animals)) return 0;
     const minPerIsland = Math.max(1, Math.floor(MUSHROOM_GREEN_COW_CONFIG.minPerIsland) || 1);
     const hardCap = Number.isFinite(maxAnimals) ? maxAnimals : Infinity;
@@ -16864,20 +16946,29 @@
       const missing = Math.max(0, minPerIsland - existing);
       for (let i = 0; i < missing; i += 1) {
         if (world.animals.length >= hardCap) return added;
-        if (!spawnGreenCowOnMushroomIsland(world, island)) break;
+        if (!spawnGreenCowOnMushroomIsland(world, island, rng)) break;
         added += 1;
       }
     }
     return added;
   }
 
-  function seedSurfaceAnimals(world, desired = 20) {
+  function seedSurfaceAnimals(world, desired = 20, options = null) {
     if (!world) return;
     if (!world.animals) world.animals = [];
+    const rng = typeof options?.rng === "function" ? options.rng : Math.random;
+    const minSpacingTiles = Math.max(0, Number(options?.minSpacingTiles) || 5);
+    const spawnOptions = { rng };
+    if (Array.isArray(options?.islands)) {
+      spawnOptions.islands = options.islands;
+    }
+    if (typeof options?.forceType === "string") {
+      spawnOptions.forceType = options.forceType;
+    }
     let attempts = 0;
     while (world.animals.length < desired && attempts < desired * 50) {
       attempts += 1;
-      if (!spawnSurfaceAnimalFromIslands(world, 5)) continue;
+      if (!spawnSurfaceAnimalFromIslands(world, minSpacingTiles, spawnOptions)) continue;
     }
   }
 
@@ -17276,7 +17367,7 @@
     if (state.player.attackTimer > 0) return;
     const combatWorld = getCombatWorld();
     if (!combatWorld) return;
-    const preferRenderTargets = netIsClient();
+    const preferRenderTargets = false;
     const hasPreferredPos = preferredTargetPos
       && Number.isFinite(preferredTargetPos.x)
       && Number.isFinite(preferredTargetPos.y);
@@ -17331,7 +17422,7 @@
       }
       const selectedTarget = targetMonster || targetAnimal;
       const selectedTargetPos = selectedTarget
-        ? getEntityWorldPosition(selectedTarget, true)
+        ? getEntityWorldPosition(selectedTarget, false)
         : null;
       const aimX = hasPreferredPos
         ? preferredTargetPos.x
@@ -18128,27 +18219,60 @@
     if (netIsClient()) return;
     const world = state.surfaceWorld || state.world;
     if (!world || !Array.isArray(world.animals)) return;
-    const maxAnimals = 32;
+    const passiveTargets = getSurfacePassiveAnimalTargets(world);
+    const maxAnimals = passiveTargets.maxAnimals;
     const players = getPlayersForWorld(world);
-    const immediateSpawnIslandTopUp = ensureSpawnIslandHarvestAnimals(world, state.spawnTile, 3, Infinity);
+    const immediateSpawnIslandTopUp = ensureSpawnIslandHarvestAnimals(
+      world,
+      state.spawnTile,
+      passiveTargets.spawnIslandHarvestMin,
+      Infinity
+    );
     if (immediateSpawnIslandTopUp > 0) {
       markDirty();
     }
     world.animalSpawnTimer -= dt;
     if (world.animalSpawnTimer <= 0) {
-      world.animalSpawnTimer = 5 + Math.random() * 4;
+      const catchupDeficit = Math.max(0, passiveTargets.baselineAnimals - world.animals.length);
+      world.animalSpawnTimer = catchupDeficit > 0
+        ? (2.5 + Math.random() * 2.6)
+        : (5 + Math.random() * 4);
       const activeIslands = getSurfaceActiveIslands(world, players);
       // Reserve a few slots so spawn island can always repopulate for early survival loops.
-      const spawnIslandHarvestAdded = ensureSpawnIslandHarvestAnimals(world, state.spawnTile, 4, Infinity);
-      const activeIslandHarvestAdded = ensureActiveIslandHarvestAnimals(world, activeIslands, 2, maxAnimals);
+      const spawnIslandHarvestAdded = ensureSpawnIslandHarvestAnimals(
+        world,
+        state.spawnTile,
+        passiveTargets.spawnIslandHarvestMin,
+        Infinity
+      );
+      const activeIslandHarvestAdded = ensureActiveIslandHarvestAnimals(
+        world,
+        activeIslands,
+        passiveTargets.activeIslandHarvestMin,
+        maxAnimals
+      );
       const greenCowAdded = ensureMushroomIslandGreenCows(world, maxAnimals);
       let passiveSpawned = false;
+
       if (world.animals.length < maxAnimals) {
-        const spawnedNearPlayers = activeIslands.length > 0
-          && spawnSurfaceAnimalFromIslands(world, 4.6, { islands: activeIslands });
-        passiveSpawned = !!spawnedNearPlayers;
-        if (!spawnedNearPlayers) {
-          passiveSpawned = spawnSurfaceAnimalFromIslands(world, 5);
+        const deficit = Math.max(0, passiveTargets.baselineAnimals - world.animals.length);
+        const catchupBurst = clamp(
+          Math.ceil(deficit / 3),
+          1,
+          SURFACE_PASSIVE_ANIMAL_CONFIG.catchupSpawnBurstMax
+        );
+        const targetSpawns = deficit > 0 ? catchupBurst : 1;
+        let attempts = 0;
+        let spawnedCount = 0;
+        const maxAttempts = targetSpawns * 3;
+        while (world.animals.length < maxAnimals && attempts < maxAttempts && spawnedCount < targetSpawns) {
+          attempts += 1;
+          const spawnedNearPlayers = activeIslands.length > 0
+            && spawnSurfaceAnimalFromIslands(world, 4.6, { islands: activeIslands });
+          const spawned = spawnedNearPlayers || spawnSurfaceAnimalFromIslands(world, 5);
+          if (!spawned) continue;
+          spawnedCount += 1;
+          passiveSpawned = true;
         }
       }
       if (greenCowAdded > 0 || spawnIslandHarvestAdded > 0 || activeIslandHarvestAdded > 0 || passiveSpawned) {
@@ -19674,14 +19798,13 @@
 
     const inHouse = !!(state.player.inHut && state.activeHouse);
     const combatWorld = getCombatWorld();
-    const preferRenderTargets = netIsClient();
     state.targetResource = inHouse ? null : findNearestResource(combatWorld, state.player);
     state.targetMonster = inHouse
       ? null
-      : findNearestMonster(combatWorld, state.player, PLAYER_ATTACK_REACH, preferRenderTargets);
+      : findNearestMonster(combatWorld, state.player, PLAYER_ATTACK_REACH, false);
     state.targetAnimal = inHouse
       ? null
-      : findNearestAnimalAt(combatWorld, state.player, PLAYER_ATTACK_REACH, preferRenderTargets);
+      : findNearestAnimalAt(combatWorld, state.player, PLAYER_ATTACK_REACH, false);
     const resourceGate = state.targetResource ? canHarvestResource(state.targetResource) : { ok: true, reason: "" };
     const swordUnlocked = canDamageMonsters(state.player);
     const localShipSeat = getShipSeatInfoForPlayer(getLocalShipPlayerId());
@@ -20294,8 +20417,9 @@
   }
 
   function drawMonster(monster, camera) {
-    const mx = monster.renderX ?? monster.x;
-    const my = monster.renderY ?? monster.y;
+    const mx = Number.isFinite(monster?.x) ? monster.x : monster?.renderX;
+    const my = Number.isFinite(monster?.y) ? monster.y : monster?.renderY;
+    if (!Number.isFinite(mx) || !Number.isFinite(my)) return;
     const facingX = resolveEntityFacingX(monster, mx);
     const screen = worldToScreen(mx, my, camera);
     if (
@@ -20534,8 +20658,9 @@
 
   function drawProjectile(projectile, camera) {
     if (!projectile || projectile.type !== "arrow") return;
-    const px = projectile.renderX ?? projectile.x;
-    const py = projectile.renderY ?? projectile.y;
+    const px = Number.isFinite(projectile.x) ? projectile.x : projectile.renderX;
+    const py = Number.isFinite(projectile.y) ? projectile.y : projectile.renderY;
+    if (!Number.isFinite(px) || !Number.isFinite(py)) return;
     const screen = worldToScreen(px, py, camera);
     if (
       screen.x < -30 ||
@@ -20617,8 +20742,9 @@
   }
 
   function drawAnimal(animal, camera) {
-    const drawX = animal.renderX ?? animal.x;
-    const drawY = animal.renderY ?? animal.y;
+    const drawX = Number.isFinite(animal?.x) ? animal.x : animal?.renderX;
+    const drawY = Number.isFinite(animal?.y) ? animal.y : animal?.renderY;
+    if (!Number.isFinite(drawX) || !Number.isFinite(drawY)) return;
     const facingX = resolveEntityFacingX(animal, drawX);
     const screen = worldToScreen(drawX, drawY, camera);
     if (
@@ -22854,7 +22980,7 @@
     }
 
     if (state.targetMonster) {
-      const targetPos = getEntityWorldPosition(state.targetMonster, netIsClient());
+      const targetPos = getEntityWorldPosition(state.targetMonster, false);
       if (targetPos) {
         const screen = worldToScreen(targetPos.x, targetPos.y, camera);
         ctx.strokeStyle = "rgba(255, 80, 80, 0.8)";
@@ -22866,7 +22992,7 @@
     }
 
     if (state.targetAnimal) {
-      const targetPos = getEntityWorldPosition(state.targetAnimal, netIsClient());
+      const targetPos = getEntityWorldPosition(state.targetAnimal, false);
       if (targetPos) {
         const screen = worldToScreen(targetPos.x, targetPos.y, camera);
         ctx.strokeStyle = "rgba(255, 180, 100, 0.8)";
@@ -23163,7 +23289,7 @@
   function tryMobileTapAction(screenX, screenY) {
     const combatWorld = getCombatWorld();
     if (!combatWorld || !state.player) return false;
-    const preferRenderTargets = netIsClient();
+    const preferRenderTargets = false;
 
     const worldPos = screenToWorld(screenX, screenY);
     const tapRange = CONFIG.tileSize * 0.92;
