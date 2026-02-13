@@ -1347,6 +1347,43 @@
   });
   const MENU_THEME_GAIN = 1.45;
   const MUSIC_GAIN_BOOST = 2.35;
+  const BACKGROUND_MUSIC_ENABLED = true;
+  const BACKGROUND_MUSIC_SRC = "assets/background-track.wav";
+  const BACKGROUND_MUSIC_TRACK_GAIN = 0.38;
+  const PLAYER_HIT_SFX_SRC = "assets/player-hit.mp3";
+  const PLAYER_HIT_SFX_TRIM_THRESHOLD = 0.012;
+  const PLAYER_HIT_SFX_MAX_SCAN_SECONDS = 1.6;
+  const PLAYER_HIT_SFX_MIN_PRE_ROLL_SECONDS = 0.002;
+  const GREEN_COW_MOO_SFX_SRC = "assets/green-cow-moo.mp3";
+  const GREEN_COW_MOO_SFX_TRIM_THRESHOLD = 0.009;
+  const GREEN_COW_MOO_SFX_MAX_SCAN_SECONDS = 2.4;
+  const GREEN_COW_MOO_SFX_MIN_PRE_ROLL_SECONDS = 0.003;
+  const GREEN_COW_MOO_SFX_GAIN = 0.7;
+  const GOAT_BLEAT_SFX_SRC = "assets/goat-bleat.mp3";
+  const GOAT_BLEAT_SFX_TRIM_THRESHOLD = 0.008;
+  const GOAT_BLEAT_SFX_MAX_SCAN_SECONDS = 2.4;
+  const GOAT_BLEAT_SFX_MIN_PRE_ROLL_SECONDS = 0.003;
+  const GOAT_BLEAT_SFX_GAIN = 0.76;
+  const BOAR_GRUNT_SFX_SRC = "assets/boar-grunt.mp3";
+  const BOAR_GRUNT_SFX_TRIM_THRESHOLD = 0.008;
+  const BOAR_GRUNT_SFX_MAX_SCAN_SECONDS = 2.0;
+  const BOAR_GRUNT_SFX_MIN_PRE_ROLL_SECONDS = 0.003;
+  const BOAR_GRUNT_SFX_GAIN = 0.74;
+  const LION_AGGRO_SFX_SRC = "assets/lion-aggro.mp3";
+  const LION_AGGRO_SFX_TRIM_THRESHOLD = 0.008;
+  const LION_AGGRO_SFX_MAX_SCAN_SECONDS = 2.2;
+  const LION_AGGRO_SFX_MIN_PRE_ROLL_SECONDS = 0.002;
+  const LION_AGGRO_SFX_GAIN = 0.72;
+  const WOLF_CHASE_SFX_SRC = "assets/wolf-chase.mp3";
+  const WOLF_CHASE_SFX_TRIM_THRESHOLD = 0.008;
+  const WOLF_CHASE_SFX_MAX_SCAN_SECONDS = 2.1;
+  const WOLF_CHASE_SFX_MIN_PRE_ROLL_SECONDS = 0.002;
+  const WOLF_CHASE_SFX_GAIN = 0.7;
+  const POLAR_BEAR_CHASE_SFX_SRC = "assets/polar-bear-chase.mp3";
+  const POLAR_BEAR_CHASE_SFX_TRIM_THRESHOLD = 0.008;
+  const POLAR_BEAR_CHASE_SFX_MAX_SCAN_SECONDS = 2.2;
+  const POLAR_BEAR_CHASE_SFX_MIN_PRE_ROLL_SECONDS = 0.002;
+  const POLAR_BEAR_CHASE_SFX_GAIN = 0.74;
   const MONSTER_AUDIO_LIMIT = Object.freeze({
     perFrameMax: 4,
     idleCooldownMs: 90,
@@ -1542,6 +1579,30 @@
     caveAmbienceFilter: null,
     caveAmbienceLfo: null,
     caveAmbienceLfoGain: null,
+    bgmElement: null,
+    bgmSource: null,
+    playerHitBuffer: null,
+    playerHitTrimStart: 0,
+    playerHitLoadPromise: null,
+    greenCowMooBuffer: null,
+    greenCowMooTrimStart: 0,
+    greenCowMooLoadPromise: null,
+    goatBleatBuffer: null,
+    goatBleatTrimStart: 0,
+    goatBleatLoadPromise: null,
+    boarGruntBuffer: null,
+    boarGruntTrimStart: 0,
+    boarGruntLoadPromise: null,
+    lionAggroBuffer: null,
+    lionAggroTrimStart: 0,
+    lionAggroLoadPromise: null,
+    wolfChaseBuffer: null,
+    wolfChaseTrimStart: 0,
+    wolfChaseLoadPromise: null,
+    polarBearChaseBuffer: null,
+    polarBearChaseTrimStart: 0,
+    polarBearChaseLoadPromise: null,
+    monsterChaseVoices: new Map(),
     noiseBuffer: null,
     chordIndex: 0,
     chordTimer: 0,
@@ -1753,7 +1814,9 @@
   }
 
   function applyAudioLevels() {
-    const music = clampVolume(state.musicVolume, SETTINGS_DEFAULTS.musicVolume);
+    const music = BACKGROUND_MUSIC_ENABLED
+      ? clampVolume(state.musicVolume, SETTINGS_DEFAULTS.musicVolume)
+      : 0;
     const sfx = clampVolume(state.sfxVolume, SETTINGS_DEFAULTS.sfxVolume);
     if (audio.musicBus) {
       audio.musicBus.gain.setTargetAtTime(
@@ -1764,6 +1827,10 @@
     }
     if (audio.sfxBus) {
       audio.sfxBus.gain.setTargetAtTime(sfx, audio.ctx?.currentTime || 0, 0.04);
+    }
+    if (audio.bgmElement) {
+      audio.bgmElement.muted = !BACKGROUND_MUSIC_ENABLED;
+      audio.bgmElement.volume = BACKGROUND_MUSIC_TRACK_GAIN;
     }
   }
 
@@ -1907,11 +1974,545 @@
       audio.sfxBus = sfxBus;
       audio.enabled = true;
       applyAudioLevels();
+      updateBackgroundMusicPlayback();
+      ensurePlayerHitSampleLoaded();
+      ensureGreenCowMooSampleLoaded();
+      ensureGoatBleatSampleLoaded();
+      ensureBoarGruntSampleLoaded();
+      ensureLionAggroSampleLoaded();
+      ensureWolfChaseSampleLoaded();
+      ensurePolarBearChaseSampleLoaded();
     }
     if (audio.ctx.state === "suspended") {
       audio.ctx.resume().catch(() => {});
     }
+    updateBackgroundMusicPlayback();
+    ensurePlayerHitSampleLoaded();
+    ensureGreenCowMooSampleLoaded();
+    ensureGoatBleatSampleLoaded();
+    ensureBoarGruntSampleLoaded();
+    ensureLionAggroSampleLoaded();
+    ensureWolfChaseSampleLoaded();
+    ensurePolarBearChaseSampleLoaded();
     return audio.ctx;
+  }
+
+  function ensureBackgroundMusicSource() {
+    if (!BACKGROUND_MUSIC_ENABLED) return false;
+    if (!audio.ctx || !audio.musicBus) return false;
+    if (!audio.bgmElement) {
+      const element = new Audio(BACKGROUND_MUSIC_SRC);
+      element.loop = true;
+      element.preload = "auto";
+      element.volume = BACKGROUND_MUSIC_TRACK_GAIN;
+      audio.bgmElement = element;
+    }
+    if (!audio.bgmSource) {
+      try {
+        audio.bgmSource = audio.ctx.createMediaElementSource(audio.bgmElement);
+        audio.bgmSource.connect(audio.musicBus);
+      } catch (err) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  function updateBackgroundMusicPlayback() {
+    if (!BACKGROUND_MUSIC_ENABLED) {
+      if (audio.bgmElement && !audio.bgmElement.paused) {
+        audio.bgmElement.pause();
+      }
+      return;
+    }
+    if (!ensureBackgroundMusicSource()) return;
+    applyAudioLevels();
+    if (audio.bgmElement.paused) {
+      const playPromise = audio.bgmElement.play();
+      if (playPromise && typeof playPromise.catch === "function") {
+        playPromise.catch(() => {});
+      }
+    }
+  }
+
+  async function decodeAudioBuffer(ctx, arrayBuffer) {
+    try {
+      const promise = ctx.decodeAudioData(arrayBuffer.slice(0));
+      if (promise && typeof promise.then === "function") {
+        return await promise;
+      }
+    } catch (err) {
+      // fall back to callback API
+    }
+    return await new Promise((resolve, reject) => {
+      try {
+        ctx.decodeAudioData(arrayBuffer.slice(0), resolve, reject);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  async function loadAudioArrayBuffer(url) {
+    try {
+      const response = await fetch(url);
+      if (response.ok) return await response.arrayBuffer();
+    } catch (err) {
+      // fall back to XHR for file:// compatibility
+    }
+    return await new Promise((resolve, reject) => {
+      try {
+        const request = new XMLHttpRequest();
+        request.open("GET", url, true);
+        request.responseType = "arraybuffer";
+        request.onload = () => {
+          if ((request.status >= 200 && request.status < 300) || request.status === 0) {
+            resolve(request.response);
+            return;
+          }
+          reject(new Error(`HTTP ${request.status}`));
+        };
+        request.onerror = () => reject(new Error("XHR audio load failed"));
+        request.send();
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  function detectLeadingSignalStartSeconds(buffer, options = null) {
+    if (!buffer || !Number.isFinite(buffer.length) || buffer.length <= 0) return 0;
+    const sampleRate = Math.max(1, Number(buffer.sampleRate) || 44100);
+    const threshold = clamp(
+      Number(options?.threshold) || PLAYER_HIT_SFX_TRIM_THRESHOLD,
+      0.00001,
+      1
+    );
+    const maxScanSeconds = Math.max(
+      0.05,
+      Number(options?.maxScanSeconds) || PLAYER_HIT_SFX_MAX_SCAN_SECONDS
+    );
+    const preRollSeconds = Math.max(
+      0,
+      Number(options?.preRollSeconds) || PLAYER_HIT_SFX_MIN_PRE_ROLL_SECONDS
+    );
+    const maxScanFrames = Math.min(
+      buffer.length,
+      Math.max(1, Math.floor(sampleRate * maxScanSeconds))
+    );
+    const channels = Math.max(1, Number(buffer.numberOfChannels) || 1);
+    const data = [];
+    for (let c = 0; c < channels; c += 1) {
+      data.push(buffer.getChannelData(c));
+    }
+
+    let firstFrame = -1;
+    for (let i = 0; i < maxScanFrames; i += 1) {
+      let peak = 0;
+      for (let c = 0; c < data.length; c += 1) {
+        const sample = Math.abs(data[c][i] || 0);
+        if (sample > peak) peak = sample;
+      }
+      if (peak >= threshold) {
+        firstFrame = i;
+        break;
+      }
+    }
+    if (firstFrame < 0) return 0;
+    const preRollFrames = Math.floor(sampleRate * preRollSeconds);
+    const startFrame = Math.max(0, firstFrame - preRollFrames);
+    return startFrame / sampleRate;
+  }
+
+  function ensurePlayerHitSampleLoaded() {
+    if (!audio.ctx) return;
+    if (audio.playerHitBuffer || audio.playerHitLoadPromise) return;
+    audio.playerHitLoadPromise = (async () => {
+      try {
+        const data = await loadAudioArrayBuffer(PLAYER_HIT_SFX_SRC);
+        const decoded = await decodeAudioBuffer(audio.ctx, data);
+        audio.playerHitBuffer = decoded;
+        audio.playerHitTrimStart = detectLeadingSignalStartSeconds(decoded);
+      } catch (err) {
+        console.warn("Failed to load player hit SFX sample", err);
+        audio.playerHitBuffer = null;
+        audio.playerHitTrimStart = 0;
+      } finally {
+        audio.playerHitLoadPromise = null;
+      }
+    })();
+  }
+
+  function playPlayerHitSample(amp) {
+    if (!audio.ctx || !audio.enabled || !audio.sfxBus) return false;
+    if (!audio.playerHitBuffer) {
+      ensurePlayerHitSampleLoaded();
+      return false;
+    }
+    const now = audio.ctx.currentTime;
+    const source = audio.ctx.createBufferSource();
+    const gain = audio.ctx.createGain();
+    source.buffer = audio.playerHitBuffer;
+    const maxStart = Math.max(0, source.buffer.duration - 0.01);
+    const startOffset = clamp(Number(audio.playerHitTrimStart) || 0, 0, maxStart);
+    gain.gain.setValueAtTime(clamp(0.88 * amp, 0.0001, 1.4), now);
+    source.connect(gain);
+    gain.connect(audio.sfxBus);
+    source.start(now, startOffset);
+    return true;
+  }
+
+  function ensureGreenCowMooSampleLoaded() {
+    if (!audio.ctx) return;
+    if (audio.greenCowMooBuffer || audio.greenCowMooLoadPromise) return;
+    audio.greenCowMooLoadPromise = (async () => {
+      try {
+        const data = await loadAudioArrayBuffer(GREEN_COW_MOO_SFX_SRC);
+        const decoded = await decodeAudioBuffer(audio.ctx, data);
+        audio.greenCowMooBuffer = decoded;
+        audio.greenCowMooTrimStart = detectLeadingSignalStartSeconds(decoded, {
+          threshold: GREEN_COW_MOO_SFX_TRIM_THRESHOLD,
+          maxScanSeconds: GREEN_COW_MOO_SFX_MAX_SCAN_SECONDS,
+          preRollSeconds: GREEN_COW_MOO_SFX_MIN_PRE_ROLL_SECONDS,
+        });
+      } catch (err) {
+        console.warn("Failed to load green cow moo sample", err);
+        audio.greenCowMooBuffer = null;
+        audio.greenCowMooTrimStart = 0;
+      } finally {
+        audio.greenCowMooLoadPromise = null;
+      }
+    })();
+  }
+
+  function playGreenCowMooSample(amp) {
+    if (!audio.ctx || !audio.enabled || !audio.sfxBus) return false;
+    if (!audio.greenCowMooBuffer) {
+      ensureGreenCowMooSampleLoaded();
+      return false;
+    }
+    const now = audio.ctx.currentTime;
+    const source = audio.ctx.createBufferSource();
+    const gain = audio.ctx.createGain();
+    source.buffer = audio.greenCowMooBuffer;
+    const maxStart = Math.max(0, source.buffer.duration - 0.01);
+    const startOffset = clamp(Number(audio.greenCowMooTrimStart) || 0, 0, maxStart);
+    gain.gain.setValueAtTime(
+      clamp(GREEN_COW_MOO_SFX_GAIN * amp, 0.0001, 1.2),
+      now
+    );
+    source.connect(gain);
+    gain.connect(audio.sfxBus);
+    source.start(now, startOffset);
+    return true;
+  }
+
+  function ensureGoatBleatSampleLoaded() {
+    if (!audio.ctx) return;
+    if (audio.goatBleatBuffer || audio.goatBleatLoadPromise) return;
+    audio.goatBleatLoadPromise = (async () => {
+      try {
+        const data = await loadAudioArrayBuffer(GOAT_BLEAT_SFX_SRC);
+        const decoded = await decodeAudioBuffer(audio.ctx, data);
+        audio.goatBleatBuffer = decoded;
+        audio.goatBleatTrimStart = detectLeadingSignalStartSeconds(decoded, {
+          threshold: GOAT_BLEAT_SFX_TRIM_THRESHOLD,
+          maxScanSeconds: GOAT_BLEAT_SFX_MAX_SCAN_SECONDS,
+          preRollSeconds: GOAT_BLEAT_SFX_MIN_PRE_ROLL_SECONDS,
+        });
+      } catch (err) {
+        console.warn("Failed to load goat bleat sample", err);
+        audio.goatBleatBuffer = null;
+        audio.goatBleatTrimStart = 0;
+      } finally {
+        audio.goatBleatLoadPromise = null;
+      }
+    })();
+  }
+
+  function playGoatBleatSample(amp) {
+    if (!audio.ctx || !audio.enabled || !audio.sfxBus) return false;
+    if (!audio.goatBleatBuffer) {
+      ensureGoatBleatSampleLoaded();
+      return false;
+    }
+    const now = audio.ctx.currentTime;
+    const source = audio.ctx.createBufferSource();
+    const gain = audio.ctx.createGain();
+    source.buffer = audio.goatBleatBuffer;
+    const maxStart = Math.max(0, source.buffer.duration - 0.01);
+    const startOffset = clamp(Number(audio.goatBleatTrimStart) || 0, 0, maxStart);
+    gain.gain.setValueAtTime(
+      clamp(GOAT_BLEAT_SFX_GAIN * amp, 0.0001, 1.2),
+      now
+    );
+    source.connect(gain);
+    gain.connect(audio.sfxBus);
+    source.start(now, startOffset);
+    return true;
+  }
+
+  function ensureBoarGruntSampleLoaded() {
+    if (!audio.ctx) return;
+    if (audio.boarGruntBuffer || audio.boarGruntLoadPromise) return;
+    audio.boarGruntLoadPromise = (async () => {
+      try {
+        const data = await loadAudioArrayBuffer(BOAR_GRUNT_SFX_SRC);
+        const decoded = await decodeAudioBuffer(audio.ctx, data);
+        audio.boarGruntBuffer = decoded;
+        audio.boarGruntTrimStart = detectLeadingSignalStartSeconds(decoded, {
+          threshold: BOAR_GRUNT_SFX_TRIM_THRESHOLD,
+          maxScanSeconds: BOAR_GRUNT_SFX_MAX_SCAN_SECONDS,
+          preRollSeconds: BOAR_GRUNT_SFX_MIN_PRE_ROLL_SECONDS,
+        });
+      } catch (err) {
+        console.warn("Failed to load boar grunt sample", err);
+        audio.boarGruntBuffer = null;
+        audio.boarGruntTrimStart = 0;
+      } finally {
+        audio.boarGruntLoadPromise = null;
+      }
+    })();
+  }
+
+  function playBoarGruntSample(amp) {
+    if (!audio.ctx || !audio.enabled || !audio.sfxBus) return false;
+    if (!audio.boarGruntBuffer) {
+      ensureBoarGruntSampleLoaded();
+      return false;
+    }
+    const now = audio.ctx.currentTime;
+    const source = audio.ctx.createBufferSource();
+    const gain = audio.ctx.createGain();
+    source.buffer = audio.boarGruntBuffer;
+    const maxStart = Math.max(0, source.buffer.duration - 0.01);
+    const startOffset = clamp(Number(audio.boarGruntTrimStart) || 0, 0, maxStart);
+    gain.gain.setValueAtTime(
+      clamp(BOAR_GRUNT_SFX_GAIN * amp, 0.0001, 1.2),
+      now
+    );
+    source.connect(gain);
+    gain.connect(audio.sfxBus);
+    source.start(now, startOffset);
+    return true;
+  }
+
+  function ensureLionAggroSampleLoaded() {
+    if (!audio.ctx) return;
+    if (audio.lionAggroBuffer || audio.lionAggroLoadPromise) return;
+    audio.lionAggroLoadPromise = (async () => {
+      try {
+        const data = await loadAudioArrayBuffer(LION_AGGRO_SFX_SRC);
+        const decoded = await decodeAudioBuffer(audio.ctx, data);
+        audio.lionAggroBuffer = decoded;
+        audio.lionAggroTrimStart = detectLeadingSignalStartSeconds(decoded, {
+          threshold: LION_AGGRO_SFX_TRIM_THRESHOLD,
+          maxScanSeconds: LION_AGGRO_SFX_MAX_SCAN_SECONDS,
+          preRollSeconds: LION_AGGRO_SFX_MIN_PRE_ROLL_SECONDS,
+        });
+      } catch (err) {
+        console.warn("Failed to load lion aggro sample", err);
+        audio.lionAggroBuffer = null;
+        audio.lionAggroTrimStart = 0;
+      } finally {
+        audio.lionAggroLoadPromise = null;
+      }
+    })();
+  }
+
+  function ensureWolfChaseSampleLoaded() {
+    if (!audio.ctx) return;
+    if (audio.wolfChaseBuffer || audio.wolfChaseLoadPromise) return;
+    audio.wolfChaseLoadPromise = (async () => {
+      try {
+        const data = await loadAudioArrayBuffer(WOLF_CHASE_SFX_SRC);
+        const decoded = await decodeAudioBuffer(audio.ctx, data);
+        audio.wolfChaseBuffer = decoded;
+        audio.wolfChaseTrimStart = detectLeadingSignalStartSeconds(decoded, {
+          threshold: WOLF_CHASE_SFX_TRIM_THRESHOLD,
+          maxScanSeconds: WOLF_CHASE_SFX_MAX_SCAN_SECONDS,
+          preRollSeconds: WOLF_CHASE_SFX_MIN_PRE_ROLL_SECONDS,
+        });
+      } catch (err) {
+        console.warn("Failed to load wolf chase sample", err);
+        audio.wolfChaseBuffer = null;
+        audio.wolfChaseTrimStart = 0;
+      } finally {
+        audio.wolfChaseLoadPromise = null;
+      }
+    })();
+  }
+
+  function ensurePolarBearChaseSampleLoaded() {
+    if (!audio.ctx) return;
+    if (audio.polarBearChaseBuffer || audio.polarBearChaseLoadPromise) return;
+    audio.polarBearChaseLoadPromise = (async () => {
+      try {
+        const data = await loadAudioArrayBuffer(POLAR_BEAR_CHASE_SFX_SRC);
+        const decoded = await decodeAudioBuffer(audio.ctx, data);
+        audio.polarBearChaseBuffer = decoded;
+        audio.polarBearChaseTrimStart = detectLeadingSignalStartSeconds(decoded, {
+          threshold: POLAR_BEAR_CHASE_SFX_TRIM_THRESHOLD,
+          maxScanSeconds: POLAR_BEAR_CHASE_SFX_MAX_SCAN_SECONDS,
+          preRollSeconds: POLAR_BEAR_CHASE_SFX_MIN_PRE_ROLL_SECONDS,
+        });
+      } catch (err) {
+        console.warn("Failed to load polar bear chase sample", err);
+        audio.polarBearChaseBuffer = null;
+        audio.polarBearChaseTrimStart = 0;
+      } finally {
+        audio.polarBearChaseLoadPromise = null;
+      }
+    })();
+  }
+
+  function getMonsterChaseSampleProfile(monsterType) {
+    if (monsterType === "lion") {
+      return {
+        ensureLoaded: ensureLionAggroSampleLoaded,
+        buffer: audio.lionAggroBuffer,
+        trimStart: audio.lionAggroTrimStart,
+        gainScale: LION_AGGRO_SFX_GAIN,
+      };
+    }
+    if (monsterType === "wolf") {
+      return {
+        ensureLoaded: ensureWolfChaseSampleLoaded,
+        buffer: audio.wolfChaseBuffer,
+        trimStart: audio.wolfChaseTrimStart,
+        gainScale: WOLF_CHASE_SFX_GAIN,
+      };
+    }
+    if (monsterType === "polar_bear") {
+      return {
+        ensureLoaded: ensurePolarBearChaseSampleLoaded,
+        buffer: audio.polarBearChaseBuffer,
+        trimStart: audio.polarBearChaseTrimStart,
+        gainScale: POLAR_BEAR_CHASE_SFX_GAIN,
+      };
+    }
+    return null;
+  }
+
+  function ensureMonsterChaseVoicesMap() {
+    if (!(audio.monsterChaseVoices instanceof Map)) {
+      audio.monsterChaseVoices = new Map();
+    }
+    return audio.monsterChaseVoices;
+  }
+
+  function stopMonsterChaseVoiceByKey(key, fadeSeconds = 0.09) {
+    const map = ensureMonsterChaseVoicesMap();
+    const entry = map.get(key);
+    if (!entry) return;
+    map.delete(key);
+    const now = audio.ctx?.currentTime || 0;
+    const fade = clamp(Number(fadeSeconds) || 0.09, 0.01, 0.35);
+    if (entry.gain?.gain) {
+      try {
+        const current = Math.max(0.0001, Number(entry.gain.gain.value) || 0.0001);
+        entry.gain.gain.cancelScheduledValues(now);
+        entry.gain.gain.setValueAtTime(current, now);
+        entry.gain.gain.exponentialRampToValueAtTime(0.0001, now + fade);
+      } catch (err) {
+        // ignore envelope errors
+      }
+    }
+    if (entry.source) {
+      try {
+        entry.source.stop(now + fade + 0.02);
+      } catch (err) {
+        // ignore stop errors
+      }
+      try {
+        entry.source.disconnect();
+      } catch (err) {
+        // ignore disconnect errors
+      }
+    }
+    if (entry.gain) {
+      try {
+        entry.gain.disconnect();
+      } catch (err) {
+        // ignore disconnect errors
+      }
+    }
+  }
+
+  function stopAllMonsterChaseVoices() {
+    const map = ensureMonsterChaseVoicesMap();
+    for (const key of map.keys()) {
+      stopMonsterChaseVoiceByKey(key, 0.08);
+    }
+  }
+
+  function syncMonsterChaseVoice(key, monsterType, shouldPlay, amp = 1) {
+    const map = ensureMonsterChaseVoicesMap();
+    if (!shouldPlay) {
+      stopMonsterChaseVoiceByKey(key);
+      return;
+    }
+    const profile = getMonsterChaseSampleProfile(monsterType);
+    if (!profile) {
+      stopMonsterChaseVoiceByKey(key);
+      return;
+    }
+    const now = audio.ctx?.currentTime || 0;
+    const targetGain = clamp((profile.gainScale || 0.7) * amp, 0.0001, 1.25);
+    const existing = map.get(key);
+    if (existing && existing.monsterType === monsterType) {
+      try {
+        existing.gain.gain.setTargetAtTime(targetGain, now, 0.05);
+      } catch (err) {
+        // ignore gain update errors
+      }
+      return;
+    }
+    if (existing) {
+      stopMonsterChaseVoiceByKey(key, 0.04);
+    }
+    if (!profile.buffer) {
+      if (typeof profile.ensureLoaded === "function") profile.ensureLoaded();
+      return;
+    }
+
+    const source = audio.ctx.createBufferSource();
+    const gain = audio.ctx.createGain();
+    source.buffer = profile.buffer;
+    source.loop = true;
+    const maxStart = Math.max(0, source.buffer.duration - 0.01);
+    const startOffset = clamp(Number(profile.trimStart) || 0, 0, maxStart);
+    if (startOffset > 0 && source.buffer.duration - startOffset > 0.01) {
+      source.loopStart = startOffset;
+      source.loopEnd = source.buffer.duration;
+    }
+
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(targetGain, now + 0.06);
+    source.connect(gain);
+    gain.connect(audio.sfxBus);
+    source.onended = () => {
+      const current = map.get(key);
+      if (current && current.source === source) {
+        map.delete(key);
+      }
+    };
+    try {
+      source.start(now, startOffset);
+    } catch (err) {
+      try {
+        source.disconnect();
+      } catch (disconnectErr) {
+        // ignore disconnect errors
+      }
+      try {
+        gain.disconnect();
+      } catch (disconnectErr) {
+        // ignore disconnect errors
+      }
+      return;
+    }
+    map.set(key, { monsterType, source, gain });
   }
 
   function getNoiseBuffer() {
@@ -2614,9 +3215,15 @@
   }
 
   function updateMonsterSoundscape(dt) {
-    if (!audio.ctx || !audio.enabled || !state.player || !state.world) return;
+    if (!audio.ctx || !audio.enabled || !state.player || !state.world) {
+      stopAllMonsterChaseVoices();
+      return;
+    }
     const world = state.world;
-    if (!Array.isArray(world.monsters)) return;
+    if (!Array.isArray(world.monsters)) {
+      stopAllMonsterChaseVoices();
+      return;
+    }
     if (!(audio.monsterStates instanceof Map)) {
       audio.monsterStates = new Map();
     }
@@ -2636,6 +3243,15 @@
       const aggroRange = Number(monster.aggroRange) || MONSTER.aggroRange;
       const aggroNow = !playerHidden && dist <= aggroRange * 1.02;
       const meleeRange = Number(monster.attackRange) || MONSTER.attackRange;
+      const chaseType = monster.type === "lion"
+        || monster.type === "wolf"
+        || monster.type === "polar_bear";
+      if (chaseType) {
+        const chaseRange = CONFIG.tileSize * 16;
+        const chaseAmp = 0.32 + getSfxDistanceIntensity(dist, chaseRange) * 0.85;
+        const shouldPlayChaseVocal = aggroNow && dist <= chaseRange;
+        syncMonsterChaseVoice(key, monster.type, shouldPlayChaseVocal, chaseAmp);
+      }
 
       const stateEntry = audio.monsterStates.get(key) || {
         x: monster.x,
@@ -2653,6 +3269,9 @@
         triggeredThisTick < MONSTER_AUDIO_LIMIT.perFrameMax
         && aggroNow
         && !stateEntry.aggro
+        && monster.type !== "lion"
+        && monster.type !== "wolf"
+        && monster.type !== "polar_bear"
         && dist <= CONFIG.tileSize * 14
         && canPlayLimitedSfx(`monster:aggro:${worldTag}`, MONSTER_AUDIO_LIMIT.aggroCooldownMs, nowMs)
       ) {
@@ -2739,12 +3358,22 @@
     for (const [key, stateEntry] of audio.monsterStates.entries()) {
       const stale = !stateEntry || (nowMs - (stateEntry.lastSeen || 0)) > 12000;
       if (stale || key.startsWith(`${worldTag}:`) && !seen.has(key)) {
+        stopMonsterChaseVoiceByKey(key, 0.08);
         audio.monsterStates.delete(key);
+      }
+    }
+
+    const chaseKeys = Array.from(ensureMonsterChaseVoicesMap().keys());
+    for (const key of chaseKeys) {
+      const inCurrentWorld = key.startsWith(`${worldTag}:`);
+      if (!inCurrentWorld || !seen.has(key)) {
+        stopMonsterChaseVoiceByKey(key, 0.08);
       }
     }
   }
 
   function updateMenuAudio(dt) {
+    if (!BACKGROUND_MUSIC_ENABLED) return;
     if (!audio.ctx || !audio.enabled || !audio.musicBus) return;
     if (!audio.menuActive) {
       audio.menuActive = true;
@@ -2837,60 +3466,38 @@
 
   function updateAudio(dt) {
     if (!audio.ctx || !audio.enabled) return;
-    if (startScreen && !startScreen.classList.contains("hidden")) {
+    updateBackgroundMusicPlayback();
+    const proceduralMusicActive = !!(
+      audio.musicGain
+      || audio.padGain
+      || audio.filter
+      || audio.oscA
+      || audio.oscB
+      || audio.oscC
+      || audio.bassGain
+      || audio.bassFilter
+      || audio.bassOsc
+      || audio.textureSource
+      || audio.textureGain
+      || audio.textureFilter
+      || audio.variationGain
+      || audio.lfo
+      || audio.lfoGain
+    );
+    if (proceduralMusicActive) {
       stopAmbientAudio();
-      updateMenuAudio(dt);
+    }
+    if (startScreen && !startScreen.classList.contains("hidden")) {
+      stopMenuAudio();
+      stopCaveAmbience();
+      stopAllMonsterChaseVoices();
       return;
     }
     stopMenuAudio();
     if (!state.player || state.gameWon) {
-      stopAmbientAudio();
+      stopCaveAmbience();
+      stopAllMonsterChaseVoices();
       return;
-    }
-    if (!audio.oscA || !audio.oscB || !audio.oscC || !audio.musicGain) {
-      startAmbientAudio();
-      if (!audio.oscA || !audio.oscB || !audio.oscC) return;
-    }
-
-    audio.themeTime += dt;
-    const now = audio.ctx.currentTime;
-    const variationTarget = audio.themeTime >= DRIFTWOOD_THEME.variationFadeStart
-      ? clamp(
-          (audio.themeTime - DRIFTWOOD_THEME.variationFadeStart) / DRIFTWOOD_THEME.variationFadeDuration,
-          0,
-          1
-        )
-      : 0;
-    audio.variationMix = smoothValue(audio.variationMix, variationTarget, dt, 0.9);
-
-    if (audio.variationGain) {
-      const gainTarget = 0.0001 + audio.variationMix * 1.05;
-      audio.variationGain.gain.setTargetAtTime(gainTarget, now, 0.7);
-    }
-    if (audio.textureGain) {
-      const textureTarget = 0.001 + audio.variationMix * 0.0012 + (state.isNight ? 0.00045 : 0);
-      audio.textureGain.gain.setTargetAtTime(textureTarget, now, 0.8);
-    }
-    if (audio.bassGain) {
-      const bassBedTarget = state.isNight ? 0.0076 : 0.0068;
-      audio.bassGain.gain.setTargetAtTime(bassBedTarget, now, 0.7);
-    }
-    if (audio.filter) {
-      const nightShift = state.isNight ? -180 : 180;
-      const filterTarget = clamp(1670 + nightShift + audio.variationMix * 420, 1050, 3300);
-      audio.filter.frequency.setTargetAtTime(filterTarget, now, 0.65);
-    }
-
-    if (audio.themeTime < DRIFTWOOD_THEME.introDuration) {
-      updateDriftwoodIntro(dt);
-    } else {
-      if (audio.prevMainBeat < 0) {
-        audio.chordIndex = getDriftwoodChordIndexAtBeat(0);
-        setAmbientChord(audio.chordIndex, 1.25);
-        scheduleDriftwoodBeat(0, now + 0.02);
-        audio.prevMainBeat = 0;
-      }
-      updateDriftwoodMain(dt);
     }
 
     updateAnimalAmbience(dt);
@@ -3379,6 +3986,7 @@
     }
 
     if (kind === "damage" || kind === "hurt") {
+      if (playPlayerHitSample(amp)) return;
       const pitchJitter = 0.92 + Math.random() * 0.19;
       playSfxTone({
         wave: "triangle",
@@ -3400,6 +4008,7 @@
     }
 
     if (kind === "animalBaa" || kind === "animalGoatIdle") {
+      if (playGoatBleatSample(amp)) return;
       playSfxTone({
         wave: "triangle",
         freqStart: 330 + Math.random() * 70,
@@ -3412,6 +4021,7 @@
     }
 
     if (kind === "animalMoo" || kind === "animalCowIdle") {
+      if (playGreenCowMooSample(amp)) return;
       playSfxTone({
         wave: "sine",
         freqStart: 170 + Math.random() * 35,
@@ -3424,6 +4034,7 @@
     }
 
     if (kind === "animalBoarIdle") {
+      if (playBoarGruntSample(amp)) return;
       playSfxTone({
         wave: "triangle",
         freqStart: 148 + Math.random() * 20,
@@ -16328,35 +16939,114 @@
     );
   }
 
-  function spawnSurfaceMonsterOnIsland(world, island, players) {
-    if (!world || !island) return false;
-    if (isMushroomBiomeId(getIslandBiomeId(world, island))) return false;
+  function pickSurfaceMonsterSpawnTileOnIsland(world, island, players, options = null) {
+    if (!world || !island) return null;
     const cx = island.x;
     const cy = island.y;
+    const attempts = Math.max(1, Math.floor(Number(options?.attempts) || 28));
     const maxRadius = Math.max(4, Math.floor(island.radius * 0.82));
+    const minPlayerDistance = Number.isFinite(options?.minPlayerDistance)
+      ? Math.max(0, Number(options.minPlayerDistance))
+      : (MONSTER.spawnMinTiles * CONFIG.tileSize * 0.55);
+    const canUseTile = (tx, ty) => {
+      if (!canSpawnMonsterAt(world, tx, ty, false)) return false;
+      if (!Array.isArray(players) || players.length === 0 || minPlayerDistance <= 0) return true;
+      const wx = (tx + 0.5) * CONFIG.tileSize;
+      const wy = (ty + 0.5) * CONFIG.tileSize;
+      return !players.some(
+        (player) => player
+          && Number.isFinite(player.x)
+          && Number.isFinite(player.y)
+          && Math.hypot(player.x - wx, player.y - wy) < minPlayerDistance
+      );
+    };
+
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      const angle = Math.random() * Math.PI * 2;
+      const dist = Math.random() * maxRadius;
+      const tx = Math.floor(cx + Math.cos(angle) * dist);
+      const ty = Math.floor(cy + Math.sin(angle) * dist);
+      if (canUseTile(tx, ty)) return { tx, ty };
+    }
+
+    const fallbackRadius = Math.max(maxRadius, Math.floor((Number(island.radius) || 6) * 1.08));
+    const candidates = [];
+    for (let dy = -fallbackRadius; dy <= fallbackRadius; dy += 1) {
+      for (let dx = -fallbackRadius; dx <= fallbackRadius; dx += 1) {
+        const tx = Math.floor(cx + dx);
+        const ty = Math.floor(cy + dy);
+        const dist = Math.hypot((tx + 0.5) - cx, (ty + 0.5) - cy);
+        if (dist > fallbackRadius) continue;
+        if (!canUseTile(tx, ty)) continue;
+        candidates.push({ tx, ty });
+      }
+    }
+    if (candidates.length <= 0) return null;
+    return candidates[Math.floor(Math.random() * candidates.length)];
+  }
+
+  function spawnSurfaceMonsterOnIsland(world, island, players, options = null) {
+    if (!world || !island) return false;
+    if (isMushroomBiomeId(getIslandBiomeId(world, island))) return false;
     const biomeId = Number.isInteger(island.biomeId) ? island.biomeId : 0;
     const biome = BIOMES[biomeId] || BIOMES[0];
     const forcePoison = state.isNight
       && biome.key === "marsh"
       && !hasMarshStalkerOnIsland(world, island);
-    for (let attempt = 0; attempt < 28; attempt += 1) {
-      const angle = Math.random() * Math.PI * 2;
-      const dist = Math.random() * maxRadius;
-      const tx = Math.floor(cx + Math.cos(angle) * dist);
-      const ty = Math.floor(cy + Math.sin(angle) * dist);
-      if (!canSpawnMonsterAt(world, tx, ty, false)) continue;
-      const wx = (tx + 0.5) * CONFIG.tileSize;
-      const wy = (ty + 0.5) * CONFIG.tileSize;
-      const tooClose = players.some(
-        (player) => Math.hypot(player.x - wx, player.y - wy) < (MONSTER.spawnMinTiles * CONFIG.tileSize * 0.55)
-      );
-      if (tooClose) continue;
-      const spawnOptions = buildSurfaceMonsterSpawnOptions(world, tx, ty, island, forcePoison);
-      if (!spawnOptions) continue;
-      spawnMonster(world, tx, ty, spawnOptions);
-      return true;
+    const tile = pickSurfaceMonsterSpawnTileOnIsland(world, island, players, options);
+    if (!tile) return false;
+    const spawnOptions = buildSurfaceMonsterSpawnOptions(world, tile.tx, tile.ty, island, forcePoison);
+    if (!spawnOptions) return false;
+    spawnMonster(world, tile.tx, tile.ty, spawnOptions);
+    return true;
+  }
+
+  function countSurfaceNonGuardianMonstersOnIsland(world, island) {
+    if (!world || !island || !Array.isArray(world.monsters)) return 0;
+    let count = 0;
+    const radiusPad = Math.max(3, (Number(island.radius) || 0) * 0.95);
+    for (const monster of world.monsters) {
+      if (!monster || monster.hp <= 0) continue;
+      if (isGuardianMonsterType(monster.type)) continue;
+      const tx = Math.floor(monster.x / CONFIG.tileSize);
+      const ty = Math.floor(monster.y / CONFIG.tileSize);
+      if (inBounds(tx, ty, world.size) && getIslandForTile(world, tx, ty) === island) {
+        count += 1;
+        continue;
+      }
+      const px = monster.x / CONFIG.tileSize;
+      const py = monster.y / CONFIG.tileSize;
+      if (Math.hypot(px - island.x, py - island.y) <= radiusPad) {
+        count += 1;
+      }
     }
-    return false;
+    return count;
+  }
+
+  function ensureSpawnIslandNightMonsters(world, players, minCount = 1) {
+    if (!world || !Array.isArray(players) || players.length === 0) return 0;
+    if (!state.isNight) return 0;
+    const spawnTx = Number.isFinite(state.spawnTile?.x) ? Math.floor(state.spawnTile.x) : null;
+    const spawnTy = Number.isFinite(state.spawnTile?.y) ? Math.floor(state.spawnTile.y) : null;
+    const spawnIsland = (spawnTx != null && spawnTy != null)
+      ? getIslandForTile(world, spawnTx, spawnTy)
+      : (world.islands?.find((island) => island?.starter) || null);
+    if (!spawnIsland) return 0;
+    if (isMushroomBiomeId(getIslandBiomeId(world, spawnIsland))) return 0;
+
+    const target = Math.max(1, Math.floor(minCount) || 1);
+    const existing = countSurfaceNonGuardianMonstersOnIsland(world, spawnIsland);
+    const missing = Math.max(0, target - existing);
+    let added = 0;
+    for (let i = 0; i < missing; i += 1) {
+      const spawned = spawnSurfaceMonsterOnIsland(world, spawnIsland, players, {
+        attempts: 44,
+        minPlayerDistance: MONSTER.spawnMinTiles * CONFIG.tileSize * 0.34,
+      });
+      if (!spawned) break;
+      added += 1;
+    }
+    return added;
   }
 
   function countSurfaceGuardians(world) {
@@ -17164,6 +17854,7 @@
         state.surfaceSpawnTimer -= dt;
         if (state.surfaceSpawnTimer <= 0) {
           spawnSurfaceMonstersForActiveIslands(world, players);
+          ensureSpawnIslandNightMonsters(world, players, 1);
           state.surfaceSpawnTimer = MONSTER.spawnInterval;
         }
       } else if (Array.isArray(world.monsters) && world.monsters.length > 0) {

@@ -933,76 +933,141 @@ button:focus-visible {
 }
 
 .start-screen {
-  background: linear-gradient(180deg, #b7f2ff 0%, #82dbf9 36%, #3bafd8 68%, #216f9b 100%);
+  background: linear-gradient(180deg, #83caea 0%, #55b1d8 42%, #2c88b6 74%, #1e5f87 100%);
   z-index: 20;
   overflow: hidden;
+  isolation: isolate;
 }
 
 .start-scene-art {
   position: absolute;
-  inset: -1.5%;
+  inset: -1%;
   pointer-events: none;
   z-index: 1;
-  background-image:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0) 38%),
-    url("assets/intro-menu-bg.svg?v=20260210-3");
-  background-size: cover, cover;
+}
+
+.scene-layer {
+  position: absolute;
+  inset: 0;
+  background-repeat: no-repeat;
   background-position: center;
+  background-size: cover;
+  will-change: transform, opacity, background-position;
+}
+
+.scene-layer-base {
+  z-index: 0;
+  background-image: url("assets/intro-menu-bg.svg?v=20260213-1");
   transform-origin: center;
-  animation: introSceneFloat 30s ease-in-out infinite alternate;
+  animation: introSceneFloat 36s ease-in-out infinite alternate;
+}
+
+.scene-layer-clouds {
+  z-index: 1;
+  opacity: 0.46;
+  mix-blend-mode: screen;
+  background-image:
+    radial-gradient(150px 52px at 9% 22%, rgba(255, 255, 255, 0.32), rgba(255, 255, 255, 0) 70%),
+    radial-gradient(214px 70px at 32% 14%, rgba(255, 255, 255, 0.28), rgba(255, 255, 255, 0) 72%),
+    radial-gradient(198px 66px at 56% 20%, rgba(255, 255, 255, 0.24), rgba(255, 255, 255, 0) 74%),
+    radial-gradient(228px 76px at 77% 16%, rgba(255, 255, 255, 0.26), rgba(255, 255, 255, 0) 72%),
+    radial-gradient(180px 60px at 93% 24%, rgba(255, 255, 255, 0.23), rgba(255, 255, 255, 0) 74%);
+  filter: blur(0.4px);
+  animation: introCloudDrift 72s linear infinite;
+}
+
+.scene-layer-waterfx {
+  z-index: 2;
+  opacity: 0.25;
+  mix-blend-mode: screen;
+  background:
+    radial-gradient(44% 8% at 50% 39%, rgba(178, 236, 247, 0.35), rgba(178, 236, 247, 0) 72%),
+    repeating-linear-gradient(109deg, rgba(227, 250, 255, 0.06) 0 3px, rgba(227, 250, 255, 0) 3px 20px),
+    repeating-linear-gradient(18deg, rgba(22, 111, 142, 0.08) 0 2px, rgba(22, 111, 142, 0) 2px 16px);
+  -webkit-mask-image: linear-gradient(180deg, transparent 0%, transparent 28%, rgba(0, 0, 0, 0.94) 42%, #000 100%);
+  mask-image: linear-gradient(180deg, transparent 0%, transparent 28%, rgba(0, 0, 0, 0.94) 42%, #000 100%);
+  animation: introWaterShimmer 20s linear infinite;
+}
+
+.scene-layer-foreground {
+  z-index: 3;
+  opacity: 0.36;
+  background:
+    radial-gradient(120% 92% at 50% 58%, rgba(9, 34, 44, 0) 38%, rgba(9, 34, 44, 0.22) 100%),
+    radial-gradient(26px 10px at 9% 72%, rgba(23, 61, 50, 0.18), rgba(23, 61, 50, 0)),
+    radial-gradient(20px 8px at 15% 80%, rgba(24, 67, 54, 0.16), rgba(24, 67, 54, 0)),
+    radial-gradient(30px 11px at 90% 76%, rgba(24, 64, 53, 0.2), rgba(24, 64, 53, 0)),
+    radial-gradient(22px 8px at 84% 84%, rgba(24, 64, 53, 0.16), rgba(24, 64, 53, 0));
+  animation: introLeafDrift 38s ease-in-out infinite alternate;
 }
 
 .start-scene-art::before {
   content: "";
   position: absolute;
   inset: 0;
+  z-index: 4;
   background:
-    radial-gradient(76% 58% at 50% 52%, rgba(22, 79, 115, 0.02) 0%, rgba(22, 79, 115, 0.08) 62%, rgba(11, 37, 57, 0.24) 100%);
+    radial-gradient(30% 16% at 18% 42%, rgba(232, 253, 255, 0.12), rgba(232, 253, 255, 0) 72%),
+    radial-gradient(26% 14% at 82% 48%, rgba(232, 253, 255, 0.12), rgba(232, 253, 255, 0) 72%);
+  opacity: 0.5;
 }
 
 .start-scene-art::after {
   content: "";
   position: absolute;
   inset: 0;
+  z-index: 5;
   background:
-    radial-gradient(64% 38% at 50% 18%, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0) 70%),
-    linear-gradient(118deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0) 52%);
-  mix-blend-mode: screen;
-  opacity: 0.26;
-  animation: introRipples 18s linear infinite;
+    repeating-linear-gradient(35deg, rgba(223, 250, 255, 0.05) 0 1px, rgba(223, 250, 255, 0) 1px 9px),
+    repeating-linear-gradient(140deg, rgba(16, 86, 112, 0.05) 0 1px, rgba(16, 86, 112, 0) 1px 11px);
+  mix-blend-mode: soft-light;
+  opacity: 0.33;
+  animation: introTextureDrift 18s linear infinite;
 }
 
 @keyframes introSceneFloat {
   0% {
-    transform: scale(1.015) translateY(0);
+    transform: scale(1.012) translateY(0);
   }
   100% {
-    transform: scale(1.04) translateY(-10px);
+    transform: scale(1.038) translateY(-12px);
   }
 }
 
-@keyframes introRipples {
+@keyframes introCloudDrift {
+  0% {
+    transform: translateX(1.5%) translateY(0);
+  }
+  100% {
+    transform: translateX(-3.5%) translateY(-0.6%);
+  }
+}
+
+@keyframes introWaterShimmer {
+  0% {
+    background-position: 0 0, 0 0, 0 0;
+  }
+  100% {
+    background-position: -120px 22px, 140px 0, -90px 0;
+  }
+}
+
+@keyframes introLeafDrift {
+  0% {
+    background-position: center, 0 0, 0 0, 0 0, 0 0;
+  }
+  100% {
+    background-position: center, 22px -8px, 10px -4px, -18px -6px, -12px -2px;
+  }
+}
+
+@keyframes introTextureDrift {
   0% {
     background-position: 0 0, 0 0;
   }
   100% {
-    background-position: 0 14px, 360px 20px;
+    background-position: 80px 34px, -94px 28px;
   }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .start-scene-art,
-  .start-scene-art::after {
-    animation: none;
-  }
-}
-
-.scene-island {
-  display: none;
-}
-
-.scene-tree {
-  display: none;
 }
 
 .start-screen::before {
@@ -1012,8 +1077,8 @@ button:focus-visible {
   pointer-events: none;
   z-index: 0;
   background:
-    radial-gradient(980px 460px at 50% 44%, rgba(26, 94, 130, 0.06), rgba(26, 94, 130, 0.01) 56%, rgba(8, 28, 44, 0.18) 100%),
-    radial-gradient(620px 220px at 50% 12%, rgba(255, 255, 255, 0.36), rgba(255, 255, 255, 0) 72%);
+    radial-gradient(52% 30% at 50% 16%, rgba(255, 243, 202, 0.26), rgba(255, 243, 202, 0) 80%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0) 34%);
 }
 
 .start-screen::after {
@@ -1022,7 +1087,19 @@ button:focus-visible {
   inset: 0;
   pointer-events: none;
   z-index: 2;
-  background: radial-gradient(640px 270px at 50% 52%, rgba(10, 36, 54, 0.02), rgba(10, 36, 54, 0.2));
+  background:
+    radial-gradient(1300px 700px at 50% 52%, rgba(7, 30, 42, 0) 38%, rgba(7, 30, 42, 0.33) 100%),
+    radial-gradient(520px 280px at 50% 52%, rgba(7, 30, 42, 0), rgba(7, 30, 42, 0.1) 78%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scene-layer-base,
+  .scene-layer-clouds,
+  .scene-layer-waterfx,
+  .scene-layer-foreground,
+  .start-scene-art::after {
+    animation: none;
+  }
 }
 
 .start-card {

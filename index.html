@@ -7,26 +7,17 @@
     content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no, viewport-fit=cover"
   />
   <title>Island Survival Game</title>
-  <link rel="stylesheet" href="styles.css?v=20260212-1" />
+  <link rel="stylesheet" href="styles.css?v=20260213-1" />
 </head>
 <body>
   <canvas id="game"></canvas>
 
   <div id="startScreen" class="overlay start-screen">
     <div class="start-scene-art" aria-hidden="true">
-      <div class="scene-island scene-island-left">
-        <span class="scene-tree t1"></span>
-        <span class="scene-tree t2"></span>
-      </div>
-      <div class="scene-island scene-island-right">
-        <span class="scene-tree t1"></span>
-        <span class="scene-tree t2"></span>
-      </div>
-      <div class="scene-island scene-island-main">
-        <span class="scene-tree t1"></span>
-        <span class="scene-tree t2"></span>
-        <span class="scene-tree t3"></span>
-      </div>
+      <div class="scene-layer scene-layer-base"></div>
+      <div class="scene-layer scene-layer-clouds"></div>
+      <div class="scene-layer scene-layer-waterfx"></div>
+      <div class="scene-layer scene-layer-foreground"></div>
     </div>
     <div class="overlay-card start-card">
       <div class="overlay-kicker">Open World Survival</div>
