@@ -66,63 +66,92 @@ html, body {
 #topbar {
   position: relative;
   z-index: 4;
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  padding: calc(8px + env(safe-area-inset-top)) calc(12px + env(safe-area-inset-right)) 8px calc(12px + env(safe-area-inset-left));
-  font-size: 14px;
-  background: linear-gradient(180deg, rgba(8, 20, 34, 0.9), rgba(8, 15, 26, 0));
-  border-bottom: 1px solid rgba(120, 170, 220, 0.2);
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
-  pointer-events: auto;
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) auto minmax(360px, 1fr);
   align-items: center;
-  flex-wrap: wrap;
-  max-width: 100%;
-  overscroll-behavior-x: contain;
-  backdrop-filter: blur(6px);
-  -webkit-overflow-scrolling: touch;
+  gap: 10px;
+  padding: calc(8px + env(safe-area-inset-top)) calc(12px + env(safe-area-inset-right)) 10px calc(12px + env(safe-area-inset-left));
+  background: linear-gradient(180deg, rgba(7, 17, 29, 0.86), rgba(7, 15, 26, 0.46) 70%, rgba(7, 15, 26, 0));
+  border-bottom: 1px solid rgba(125, 164, 198, 0.24);
+  pointer-events: auto;
+  backdrop-filter: blur(12px) saturate(1.25);
+  -webkit-backdrop-filter: blur(12px) saturate(1.25);
+}
+
+.topbar-group {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.topbar-group-left {
+  justify-content: flex-start;
+}
+
+.topbar-group-center {
+  justify-content: center;
+}
+
+.topbar-group-right {
+  justify-content: flex-end;
+}
+
+#seedDisplay,
+#toolDisplay,
+#timeDisplay,
+#armorDisplay,
+#mpStatus,
+#roomDisplay {
+  min-height: 32px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(142, 174, 204, 0.34);
+  background: linear-gradient(175deg, rgba(36, 50, 67, 0.8), rgba(19, 29, 42, 0.8));
+  color: rgba(238, 246, 252, 0.96);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
 }
 
 #seedDisplay {
-  padding: 2px 10px;
-  border-radius: 999px;
-  background: linear-gradient(135deg, rgba(34, 56, 80, 0.55), rgba(20, 34, 52, 0.65));
-  border: 1px solid rgba(120, 170, 220, 0.3);
   cursor: pointer;
   user-select: none;
-  min-height: 28px;
-  display: inline-flex;
-  align-items: center;
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
+  transition: border-color 0.14s ease, background-color 0.14s ease;
 }
 
 #seedDisplay:hover {
-  filter: brightness(1.08);
+  border-color: rgba(180, 210, 234, 0.68);
+  background: linear-gradient(175deg, rgba(44, 62, 84, 0.86), rgba(24, 36, 52, 0.86));
+}
+
+#toolDisplay {
+  max-width: clamp(220px, 29vw, 460px);
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 #timeDisplay {
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: rgba(40, 80, 120, 0.35);
-  border: 1px solid rgba(140, 190, 230, 0.3);
-  font-size: 12px;
+  background: linear-gradient(175deg, rgba(36, 88, 108, 0.72), rgba(23, 63, 79, 0.78));
+  border-color: rgba(150, 204, 224, 0.44);
   text-transform: uppercase;
-  letter-spacing: 0.6px;
-  min-height: 24px;
-  display: inline-flex;
-  align-items: center;
+  letter-spacing: 0.05em;
 }
 
 #healthDisplay {
-  width: 120px;
-  height: 12px;
+  width: 134px;
+  height: 14px;
   border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.25);
-  background: rgba(10, 18, 26, 0.6);
+  border: 1px solid rgba(180, 204, 224, 0.3);
+  background: rgba(12, 18, 24, 0.7);
   overflow: hidden;
-  box-shadow: inset 0 0 6px rgba(0, 0, 0, 0.35);
-  align-self: center;
+  box-shadow: inset 0 0 8px rgba(0, 0, 0, 0.34);
   position: relative;
 }
 
@@ -143,68 +172,107 @@ html, body {
   pointer-events: none;
 }
 
-#mpStatus {
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: rgba(38, 60, 88, 0.4);
-  border: 1px solid rgba(140, 190, 230, 0.28);
-  font-size: 12px;
-  letter-spacing: 0.3px;
-  min-height: 24px;
+#armorDisplay {
+  min-height: 30px;
+  padding: 0 10px;
+  gap: 8px;
+  background: linear-gradient(175deg, rgba(52, 64, 47, 0.76), rgba(29, 41, 28, 0.82));
+  border-color: rgba(178, 214, 152, 0.42);
+}
+
+.armor-label {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(228, 241, 222, 0.9);
+}
+
+.armor-pips {
   display: inline-flex;
   align-items: center;
+  gap: 2px;
+}
+
+.armor-pip {
+  width: 10px;
+  height: 8px;
+  border-radius: 3px;
+  border: 1px solid rgba(129, 148, 122, 0.72);
+  background: linear-gradient(180deg, rgba(60, 68, 56, 0.85), rgba(36, 41, 34, 0.92));
+}
+
+.armor-pip.full {
+  border-color: rgba(213, 236, 168, 0.88);
+  background: linear-gradient(180deg, rgba(191, 223, 130, 0.95), rgba(127, 166, 78, 0.96));
+}
+
+.armor-pip.half {
+  border-color: rgba(201, 225, 157, 0.84);
+  background: linear-gradient(90deg, rgba(177, 210, 120, 0.95) 50%, rgba(41, 48, 38, 0.92) 50%);
+}
+
+.armor-value {
+  min-width: 36px;
+  text-align: right;
+  font-size: 11px;
+  color: rgba(226, 241, 211, 0.92);
+}
+
+#mpStatus {
+  background: linear-gradient(175deg, rgba(43, 62, 87, 0.74), rgba(23, 36, 51, 0.8));
+  border-color: rgba(151, 184, 218, 0.35);
 }
 
 #roomDisplay {
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: linear-gradient(135deg, rgba(34, 56, 80, 0.55), rgba(20, 34, 52, 0.65));
-  border: 1px solid rgba(120, 170, 220, 0.3);
-  font-size: 12px;
-  letter-spacing: 0.3px;
-  min-height: 24px;
-  display: inline-flex;
-  align-items: center;
+  max-width: clamp(140px, 16vw, 240px);
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 #mpCopy,
 #mpJoin {
-  padding: 6px 12px;
-  border-radius: 999px;
-  border: 1px solid var(--ui-surface-border);
-  background: linear-gradient(155deg, var(--ui-surface-top), var(--ui-surface-bottom));
+  min-height: 32px;
+  padding: 0 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(145, 176, 205, 0.34);
+  background: linear-gradient(175deg, rgba(37, 51, 67, 0.86), rgba(20, 31, 45, 0.88));
   color: var(--ui-text);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
   font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
   cursor: pointer;
   pointer-events: auto;
-  min-height: 30px;
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
-  transition: border-color 0.14s ease, transform 0.12s ease;
+  transition: border-color 0.14s ease, background-color 0.14s ease, transform 0.12s ease;
 }
 
 #settingsToggle,
 #debugToggle {
-  padding: 6px 12px;
-  border-radius: 999px;
-  border: 1px solid var(--ui-surface-border);
-  background: linear-gradient(155deg, var(--ui-surface-top), var(--ui-surface-bottom));
+  min-height: 32px;
+  padding: 0 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(145, 176, 205, 0.34);
+  background: linear-gradient(175deg, rgba(37, 51, 67, 0.86), rgba(20, 31, 45, 0.88));
   color: var(--ui-text);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
   font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
   cursor: pointer;
   pointer-events: auto;
-  min-height: 30px;
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
-  transition: border-color 0.14s ease, transform 0.12s ease;
+  transition: border-color 0.14s ease, background-color 0.14s ease, transform 0.12s ease;
 }
 
 #settingsToggle {
-  width: 34px;
-  height: 30px;
+  width: 32px;
+  height: 32px;
   padding: 0;
   font-size: 15px;
-  line-height: 28px;
+  line-height: 30px;
   text-align: center;
 }
 
@@ -218,13 +286,63 @@ html, body {
 #mpJoin:hover:not(:disabled),
 #settingsToggle:hover:not(:disabled),
 #debugToggle:hover:not(:disabled) {
-  border-color: rgba(166, 198, 224, 0.74);
+  border-color: rgba(180, 210, 234, 0.78);
+  background: linear-gradient(175deg, rgba(44, 62, 84, 0.9), rgba(24, 37, 54, 0.92));
   transform: translateY(-1px);
+}
+
+#saveStatus {
+  min-height: 32px;
+  padding: 0 10px 0 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(142, 174, 204, 0.34);
+  background: linear-gradient(175deg, rgba(37, 51, 67, 0.82), rgba(20, 31, 45, 0.84));
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: rgba(232, 241, 248, 0.9);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+#saveStatus::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: #86d8a3;
+  box-shadow: 0 0 0 1px rgba(130, 218, 164, 0.38);
+}
+
+#saveStatus[data-state="saving"]::before {
+  background: #f0b472;
+  box-shadow: 0 0 0 1px rgba(240, 180, 114, 0.42);
+  animation: savePulse 1.1s ease-in-out infinite;
+}
+
+#saveStatus[data-state="error"]::before {
+  background: #e57f7f;
+  box-shadow: 0 0 0 1px rgba(229, 127, 127, 0.44);
+  animation: none;
+}
+
+@keyframes savePulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.52;
+  }
 }
 
 #prompt {
   position: absolute;
-  top: 48px;
+  top: calc(env(safe-area-inset-top) + 68px);
   left: 50%;
   transform: translateX(-50%);
   background: linear-gradient(160deg, var(--ui-panel-top), var(--ui-panel-bottom));
@@ -238,6 +356,7 @@ html, body {
   transition: opacity 0.18s ease;
   box-shadow: 0 8px 18px rgba(0, 0, 0, 0.36);
   z-index: 4;
+  max-width: min(78vw, 620px);
 }
 
 #prompt.visible {
@@ -948,7 +1067,7 @@ button:focus-visible {
 }
 
 .start-screen {
-  background: linear-gradient(180deg, #83caea 0%, #55b1d8 42%, #2c88b6 74%, #1e5f87 100%);
+  background: #0c1f33;
   z-index: 20;
   overflow: hidden;
   isolation: isolate;
@@ -958,18 +1077,19 @@ button:focus-visible {
 
 .start-scene-art {
   position: absolute;
-  inset: -1%;
-  pointer-events: none;
-  z-index: 1;
-}
-
-.scene-layer {
-  position: absolute;
   inset: 0;
+  background-image: url("assets/menu-bg-island.png?v=20260218-1");
   background-repeat: no-repeat;
   background-position: center;
   background-size: cover;
-  will-change: transform, opacity, background-position;
+  pointer-events: none;
+  z-index: 1;
+  will-change: transform;
+  animation: introSceneFloat 46s ease-in-out infinite alternate;
+}
+
+.scene-layer {
+  display: none;
 }
 
 .scene-layer-base {
@@ -1022,24 +1142,19 @@ button:focus-visible {
   content: "";
   position: absolute;
   inset: 0;
-  z-index: 4;
+  z-index: 1;
   background:
-    radial-gradient(30% 16% at 18% 42%, rgba(232, 253, 255, 0.12), rgba(232, 253, 255, 0) 72%),
-    radial-gradient(26% 14% at 82% 48%, rgba(232, 253, 255, 0.12), rgba(232, 253, 255, 0) 72%);
-  opacity: 0.5;
+    linear-gradient(180deg, rgba(7, 18, 31, 0.04), rgba(7, 18, 31, 0.08)),
+    radial-gradient(1300px 700px at 50% 56%, rgba(7, 30, 42, 0) 40%, rgba(7, 30, 42, 0.34) 100%);
+  opacity: 1;
 }
 
 .start-scene-art::after {
   content: "";
   position: absolute;
   inset: 0;
-  z-index: 5;
-  background:
-    repeating-linear-gradient(35deg, rgba(223, 250, 255, 0.05) 0 1px, rgba(223, 250, 255, 0) 1px 9px),
-    repeating-linear-gradient(140deg, rgba(16, 86, 112, 0.05) 0 1px, rgba(16, 86, 112, 0) 1px 11px);
-  mix-blend-mode: soft-light;
-  opacity: 0.33;
-  animation: introTextureDrift 18s linear infinite;
+  z-index: 2;
+  background: radial-gradient(110% 86% at 50% 52%, rgba(5, 14, 23, 0) 46%, rgba(5, 14, 23, 0.28) 100%);
 }
 
 @keyframes introSceneFloat {
@@ -1120,7 +1235,7 @@ button:focus-visible {
 }
 
 .start-card {
-  width: min(430px, 92vw);
+  width: min(560px, 92vw);
   position: relative;
   z-index: 3;
   margin: 0 auto;
@@ -1130,28 +1245,171 @@ button:focus-visible {
 .start-screen .overlay-card {
   opacity: 1;
   transform: translateY(0);
-  border-radius: 18px;
-  border: 1px solid rgba(155, 210, 244, 0.35);
-  background: linear-gradient(180deg, rgba(8, 27, 47, 0.88), rgba(8, 20, 36, 0.92));
+  border-radius: 42px;
+  border: 1px solid rgba(196, 233, 255, 0.52);
+  background: linear-gradient(180deg, rgba(122, 205, 255, 0.38), rgba(55, 154, 214, 0.46));
   box-shadow:
-    0 24px 40px rgba(1, 8, 16, 0.5),
-    inset 0 1px 0 rgba(221, 241, 255, 0.08);
+    0 24px 56px rgba(2, 18, 34, 0.45),
+    inset 0 1px 0 rgba(237, 251, 255, 0.55),
+    inset 0 -14px 24px rgba(17, 93, 150, 0.24);
+  padding: 22px 26px 24px;
 }
 
-.start-buttons {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 12px;
-  justify-items: stretch;
+.start-screen .overlay-card::before {
+  content: "";
+  position: absolute;
+  top: 12px;
+  left: 16px;
+  width: 86px;
+  height: 42px;
+  border-radius: 999px;
+  background: radial-gradient(circle at 30% 40%, rgba(255, 255, 255, 0.86), rgba(255, 255, 255, 0));
+  opacity: 0.72;
+  pointer-events: none;
 }
 
-.start-buttons .action-btn {
-  margin-top: 0;
+.start-menu-shell {
+  width: min(420px, 78vw);
+  margin: 0 auto;
+  min-height: 390px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.start-menu-view {
+  display: none;
   width: 100%;
-  padding: 10px 12px;
-  border-radius: 10px;
+  animation: startMenuFadeIn 0.2s ease;
+}
+
+.start-menu-view.active {
+  display: block;
+}
+
+@keyframes startMenuFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.start-menu-stack {
+  display: grid;
+  gap: 14px;
+}
+
+.start-menu-btn,
+.start-menu-back-btn {
+  width: 100%;
+  min-height: 82px;
+  border-radius: 999px;
+  border: 1px solid rgba(213, 198, 160, 0.95);
+  background: linear-gradient(180deg, #f4ebcf 0%, #e8dbb7 46%, #d6c79e 100%);
+  color: #264f80;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Segoe UI", sans-serif;
+  font-size: clamp(24px, 4vw, 64px);
+  font-weight: 800;
+  letter-spacing: 0.012em;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.42);
+  box-shadow:
+    0 5px 0 rgba(125, 109, 80, 0.5),
+    0 14px 18px rgba(12, 36, 58, 0.24),
+    inset 0 1px 0 rgba(255, 255, 255, 0.72);
+  cursor: pointer;
+  transition: transform 0.12s ease, filter 0.12s ease, box-shadow 0.12s ease;
+}
+
+.start-menu-btn:active:not(:disabled),
+.start-menu-back-btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.start-subhead {
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+  font-size: 12px;
+  font-weight: 700;
+  color: rgba(229, 244, 255, 0.95);
+  text-align: center;
+  margin-bottom: 14px;
+}
+
+.start-options-list {
+  margin-bottom: 16px;
+  display: grid;
+  gap: 8px;
+}
+
+.start-option-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
   font-size: 13px;
-  letter-spacing: 0.25px;
+  font-weight: 600;
+  color: rgba(233, 244, 252, 0.96);
+  padding: 0 2px;
+}
+
+.start-settings-slider {
+  margin-bottom: 8px;
+}
+
+.start-menu-back-btn {
+  min-height: 58px;
+  font-size: 22px;
+  margin-top: 2px;
+}
+
+.start-menu-utility-btn {
+  width: 100%;
+  min-height: 44px;
+  margin-bottom: 10px;
+  border-radius: 14px;
+  border: 1px solid rgba(186, 215, 238, 0.54);
+  background: linear-gradient(180deg, rgba(20, 80, 124, 0.76), rgba(12, 56, 89, 0.84));
+  color: rgba(231, 244, 255, 0.96);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+@media (max-width: 720px) {
+  .start-card {
+    width: min(94vw, 430px);
+  }
+
+  .start-screen .overlay-card {
+    border-radius: 30px;
+    padding: 16px 14px 18px;
+  }
+
+  .start-menu-shell {
+    width: min(92vw, 360px);
+    min-height: 334px;
+  }
+
+  .start-menu-btn {
+    min-height: 68px;
+    font-size: 31px;
+  }
+
+  .start-menu-back-btn {
+    min-height: 52px;
+    font-size: 20px;
+  }
+
+  .start-options-list {
+    gap: 6px;
+    margin-bottom: 12px;
+  }
 }
 
 .overlay.hidden {
@@ -1330,35 +1588,106 @@ button:focus-visible {
   }
 }
 
+@media (max-width: 1100px) {
+  #topbar {
+    grid-template-columns: 1fr;
+    gap: 7px;
+    padding-bottom: 9px;
+  }
+
+  .topbar-group-center,
+  .topbar-group-right {
+    justify-content: flex-start;
+  }
+
+  .topbar-group-right {
+    flex-wrap: wrap;
+  }
+
+  #toolDisplay {
+    max-width: min(74vw, 560px);
+  }
+
+  #prompt {
+    top: calc(env(safe-area-inset-top) + 104px);
+  }
+}
+
 @media (max-width: 720px) {
   #topbar {
+    display: flex;
     flex-wrap: nowrap;
     overflow-x: auto;
     overflow-y: hidden;
     white-space: nowrap;
-    gap: 8px;
+    gap: 10px;
     align-items: center;
     scrollbar-width: none;
+    padding-bottom: 8px;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
   }
 
   #topbar::-webkit-scrollbar {
     display: none;
   }
 
-  #topbar > * {
+  .topbar-group {
     flex: 0 0 auto;
+    gap: 6px;
+    flex-wrap: nowrap;
+  }
+
+  .topbar-group-left,
+  .topbar-group-center,
+  .topbar-group-right {
+    justify-content: flex-start;
+  }
+
+  .topbar-group-right {
+    padding-right: 6px;
   }
 
   #seedDisplay,
   #toolDisplay,
-  #saveStatus,
   #timeDisplay,
+  #armorDisplay,
   #mpStatus,
   #roomDisplay {
-    min-height: 26px;
-    display: inline-flex;
-    align-items: center;
+    min-height: 28px;
     font-size: 12px;
+  }
+
+  #toolDisplay {
+    max-width: 220px;
+  }
+
+  #roomDisplay {
+    max-width: 166px;
+  }
+
+  #mpCopy,
+  #mpJoin,
+  #settingsToggle,
+  #debugToggle,
+  #saveStatus {
+    min-height: 28px;
+    font-size: 11px;
+  }
+
+  #saveStatus {
+    padding: 0 8px;
+    gap: 6px;
+  }
+
+  #saveStatus::before {
+    width: 6px;
+    height: 6px;
+  }
+
+  #prompt {
+    top: calc(env(safe-area-inset-top) + 62px);
+    max-width: 90vw;
   }
 
   .panel {
@@ -1495,7 +1824,7 @@ button:focus-visible {
   }
 
   #prompt {
-    top: 54px;
+    top: calc(env(safe-area-inset-top) + 58px);
     font-size: 13px;
     max-width: 88vw;
   }

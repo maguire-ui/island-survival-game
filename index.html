@@ -7,7 +7,7 @@
     content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no, viewport-fit=cover"
   />
   <title>Island Survival Game</title>
-  <link rel="stylesheet" href="styles.css?v=20260213-2" />
+  <link rel="stylesheet" href="styles.css?v=20260218-2" />
 </head>
 <body>
   <canvas id="game"></canvas>
@@ -20,32 +20,70 @@
       <div class="scene-layer scene-layer-foreground"></div>
     </div>
     <div class="overlay-card start-card">
-      <div class="overlay-kicker">Open World Survival</div>
-      <div class="overlay-title">Island Survival</div>
-      <div class="overlay-text">Scavenge, craft, survive nights, and signal for rescue.</div>
-      <div id="startButtons" class="start-buttons">
-        <button id="soloBtn" class="action-btn">Play Solo</button>
-        <button id="hostBtn" class="action-btn">Host Room</button>
-        <button id="joinBtn" class="action-btn">Join Room</button>
+      <div class="start-menu-shell">
+        <div id="startMainMenu" class="start-menu-view active">
+          <div class="start-menu-stack">
+            <button id="menuPlayBtn" class="start-menu-btn" type="button">Play</button>
+            <button id="menuOptionsBtn" class="start-menu-btn" type="button">Options</button>
+            <button id="menuQuitBtn" class="start-menu-btn" type="button">Quit</button>
+          </div>
+        </div>
+        <div id="startPlayMenu" class="start-menu-view">
+          <div class="start-subhead">Play</div>
+          <div class="start-menu-stack">
+            <button id="soloBtn" class="start-menu-btn" type="button">Play Alone</button>
+            <button id="hostBtn" class="start-menu-btn" type="button">Host Room</button>
+            <button id="joinBtn" class="start-menu-btn" type="button">Join Room</button>
+          </div>
+          <button id="menuBackFromPlayBtn" class="start-menu-back-btn" type="button">Back</button>
+        </div>
+        <div id="startOptionsMenu" class="start-menu-view">
+          <div class="start-subhead">Options</div>
+          <div class="start-options-list">
+            <label class="start-option-row" for="menuMusicVolume">
+              <span>Music Volume</span>
+              <span id="menuMusicVolumeValue">62%</span>
+            </label>
+            <input id="menuMusicVolume" class="settings-slider start-settings-slider" type="range" min="0" max="100" step="1" value="62" />
+            <label class="start-option-row" for="menuSfxVolume">
+              <span>SFX Volume</span>
+              <span id="menuSfxVolumeValue">65%</span>
+            </label>
+            <input id="menuSfxVolume" class="settings-slider start-settings-slider" type="range" min="0" max="100" step="1" value="65" />
+          </div>
+          <button id="menuResetWorldBtn" class="start-menu-utility-btn" type="button">Reset Current Seed</button>
+          <button id="menuBackFromOptionsBtn" class="start-menu-back-btn" type="button">Back</button>
+        </div>
       </div>
     </div>
   </div>
 
   <div id="ui">
     <div id="topbar">
-      <div id="seedDisplay">Seed: --</div>
-      <div id="toolDisplay">Tool: Basic</div>
-      <div id="timeDisplay">Day</div>
-      <div id="healthDisplay">
-        <div id="healthFill"></div>
+      <div class="topbar-group topbar-group-left">
+        <div id="seedDisplay">Seed: --</div>
+        <div id="toolDisplay">Tool: Basic</div>
       </div>
-      <div id="mpStatus">MP: Offline</div>
-      <div id="roomDisplay">Room: --</div>
-      <button id="mpCopy" type="button">Copy Link</button>
-      <button id="mpJoin" type="button">Join Room</button>
-      <button id="settingsToggle" type="button" aria-label="Settings">⚙</button>
-      <button id="debugToggle" type="button" class="hidden">Debug</button>
-      <div id="saveStatus">Saved</div>
+      <div class="topbar-group topbar-group-center">
+        <div id="timeDisplay">Day</div>
+        <div id="healthDisplay">
+          <div id="healthFill"></div>
+        </div>
+        <div id="armorDisplay" aria-label="Armor points">
+          <span class="armor-label">Armor</span>
+          <span id="armorPips" class="armor-pips" aria-hidden="true"></span>
+          <span id="armorValue" class="armor-value">0/20</span>
+        </div>
+      </div>
+      <div class="topbar-group topbar-group-right">
+        <div id="mpStatus">MP: Offline</div>
+        <div id="roomDisplay">Room: --</div>
+        <button id="mpCopy" type="button">Copy Link</button>
+        <button id="mpJoin" type="button">Join Room</button>
+        <button id="settingsToggle" type="button" aria-label="Settings">⚙</button>
+        <button id="debugToggle" type="button" class="hidden">Debug</button>
+        <div id="saveStatus" data-state="saved">Saved</div>
+      </div>
     </div>
 
     <div id="prompt"></div>
@@ -165,6 +203,19 @@
         step="10"
         value="100"
       />
+      <div class="settings-row">
+        <span>Field of View</span>
+        <span id="debugFovValue">1.0x</span>
+      </div>
+      <input
+        id="debugFov"
+        class="settings-slider"
+        type="range"
+        min="100"
+        max="240"
+        step="5"
+        value="100"
+      />
     </div>
 
     <div id="settingsPanel" class="panel hidden">
@@ -216,6 +267,6 @@
   </div>
 
   <script src="https://unpkg.com/peerjs@1.5.5/dist/peerjs.min.js"></script>
-  <script src="src/main.js?v=20260213-3"></script>
+  <script src="src/main.js?v=20260218-2"></script>
 </body>
 </html>

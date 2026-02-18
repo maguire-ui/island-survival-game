@@ -8,6 +8,8 @@
   const toolDisplay = document.getElementById("toolDisplay");
   const timeDisplay = document.getElementById("timeDisplay");
   const healthFill = document.getElementById("healthFill");
+  const armorPips = document.getElementById("armorPips");
+  const armorValue = document.getElementById("armorValue");
   const saveStatus = document.getElementById("saveStatus");
   const promptEl = document.getElementById("prompt");
   const topbar = document.getElementById("topbar");
@@ -36,9 +38,22 @@
   const endScreen = document.getElementById("endScreen");
   const newRunBtn = document.getElementById("newRunBtn");
   const startScreen = document.getElementById("startScreen");
+  const startMainMenu = document.getElementById("startMainMenu");
+  const startPlayMenu = document.getElementById("startPlayMenu");
+  const startOptionsMenu = document.getElementById("startOptionsMenu");
+  const menuPlayBtn = document.getElementById("menuPlayBtn");
+  const menuOptionsBtn = document.getElementById("menuOptionsBtn");
+  const menuQuitBtn = document.getElementById("menuQuitBtn");
+  const menuBackFromPlayBtn = document.getElementById("menuBackFromPlayBtn");
+  const menuBackFromOptionsBtn = document.getElementById("menuBackFromOptionsBtn");
+  const menuResetWorldBtn = document.getElementById("menuResetWorldBtn");
   const soloBtn = document.getElementById("soloBtn");
   const hostBtn = document.getElementById("hostBtn");
   const joinBtn = document.getElementById("joinBtn");
+  const menuMusicVolumeInput = document.getElementById("menuMusicVolume");
+  const menuMusicVolumeValue = document.getElementById("menuMusicVolumeValue");
+  const menuSfxVolumeInput = document.getElementById("menuSfxVolume");
+  const menuSfxVolumeValue = document.getElementById("menuSfxVolumeValue");
   const movePadEl = document.getElementById("movePad");
   const stickEl = document.getElementById("stick");
   const stickKnobEl = document.getElementById("stickKnob");
@@ -70,6 +85,8 @@
   const debugSpeedValue = document.getElementById("debugSpeedValue");
   const debugWorldSpeedInput = document.getElementById("debugWorldSpeed");
   const debugWorldSpeedValue = document.getElementById("debugWorldSpeedValue");
+  const debugFovInput = document.getElementById("debugFov");
+  const debugFovValue = document.getElementById("debugFovValue");
   const giveBeaconBtn = document.getElementById("giveBeaconBtn");
   const giveRobotBtn = document.getElementById("giveRobotBtn");
   const spawnCaveBtn = document.getElementById("spawnCaveBtn");
@@ -132,6 +149,7 @@
     moveSpeedScale: 0.52,
     staggerResetMin: 0.16,
     staggerResetMax: 0.44,
+    dayStartGrace: 2.3,
   });
 
   const MONSTER_BURN_FX = Object.freeze({
@@ -153,6 +171,16 @@
     maxDps: 4.2,
     defaultDps: 1.25,
   });
+  const MARSH_STALKER_DAY_SPAWN = Object.freeze({
+    defaultChance: 0.14,
+    minChance: 0.06,
+    maxChance: 0.22,
+    maxTotal: 3,
+    maxPerIsland: 1,
+    spawnBudget: 1,
+    attempts: 34,
+    minPlayerDistanceTiles: 4.2,
+  });
 
   const SKELETON_ARROW = {
     speed: 235,
@@ -162,6 +190,27 @@
     spread: 0.11,
     missSpread: 0.28,
   };
+  const POISON_BOTTLE = Object.freeze({
+    speed: 205,
+    radius: 8,
+    maxLife: 1.7,
+    maxDistance: CONFIG.tileSize * 9.2,
+    missChance: 0.18,
+    spread: 0.08,
+    missSpread: 0.2,
+    cloudRadius: CONFIG.tileSize * 1.22,
+    cloudDuration: 2.9,
+    cloudAffectInterval: 0.95,
+  });
+  const POISON_CLOUD = Object.freeze({
+    maxActive: 24,
+    minRadius: CONFIG.tileSize * 0.7,
+    maxRadius: CONFIG.tileSize * 1.9,
+    minDuration: 1.6,
+    maxDuration: 5.4,
+    minAffectInterval: 0.45,
+    maxAffectInterval: 2.2,
+  });
 
   const MONSTER_VARIANTS = {
     crawler: {
@@ -211,19 +260,66 @@
     },
     marsh_stalker: {
       name: "Marsh Stalker",
-      color: "#4e8e68",
+      color: "#48b76f",
       hp: 10,
       speed: 62,
       damage: 8,
       attackRange: 25,
-      attackCooldown: 1.0,
-      aggroRange: 225,
-      rangedRange: 0,
-      poisonDuration: 8.5,
-      poisonDps: 1.35,
+      attackCooldown: 1.18,
+      aggroRange: 236,
+      rangedRange: CONFIG.tileSize * 9.4,
+      dayImmune: true,
+      poisonDuration: 7.5,
+      poisonDps: 1.45,
       drop: {
         bone: { min: 1, max: 2, chance: 0.78 },
         monster_flesh: { min: 2, max: 3, chance: 0.9 },
+      },
+    },
+    slime_large: {
+      name: "Giant Slime",
+      color: "#4fbf66",
+      hp: 24,
+      speed: 54,
+      damage: 11,
+      attackRange: 29,
+      attackCooldown: 1.1,
+      aggroRange: 220,
+      rangedRange: 0,
+      splitInto: {
+        type: "slime_medium",
+        count: 2,
+      },
+      drop: null,
+    },
+    slime_medium: {
+      name: "Medium Slime",
+      color: "#63cc6f",
+      hp: 12,
+      speed: 66,
+      damage: 7,
+      attackRange: 23,
+      attackCooldown: 0.9,
+      aggroRange: 190,
+      rangedRange: 0,
+      splitInto: {
+        type: "slime_small",
+        count: 4,
+      },
+      drop: null,
+    },
+    slime_small: {
+      name: "Small Slime",
+      color: "#7bdb7f",
+      hp: 4,
+      speed: 74,
+      damage: 0,
+      attackRange: 0,
+      attackCooldown: 1.2,
+      aggroRange: 0,
+      rangedRange: 0,
+      drop: {
+        slime_ball: { min: 1, max: 2, chance: 1 },
       },
     },
     polar_bear: {
@@ -356,6 +452,39 @@
     "#f7d56b",
   ];
 
+  const QA_SELF_TEST_CONFIG = Object.freeze({
+    runInterval: 6,
+    saveRoundTripInterval: 32,
+    maxIssuesPerRun: 32,
+  });
+
+  const QA_FEATURE_INVENTORY = Object.freeze([
+    "World generation + seed determinism + per-seed persistence",
+    "Island layout + biome assignment + cave generation/entry/exit",
+    "Resource harvesting (trees, rocks, ore, grass) + tool-gated damage",
+    "Inventory/hotbar/backpack stacks + pickup/drop + death drop scatter",
+    "Crafting bench recipes + cost validation + output grant flow",
+    "Build placement rules + bridges/docks + house upgrades",
+    "Station crafting flows (sawmill, smelter, kiln, refinery, lab)",
+    "Storage systems (surface chests, house chests, shipwreck chests, robot cargo)",
+    "Chest transfer + destroy-chest behavior + inventory panel stacking",
+    "Day/night cycle + world lighting + night/day spawn transitions",
+    "Surface hostiles + cave hostiles + biome guardians + poison systems",
+    "Passive animals + mushroom green cows + villagers + ambient fish",
+    "Player combat/damage/poison/death/respawn/checkpoint rules",
+    "Win condition (beacon + rescue sequence + end flow)",
+    "Multiplayer host/join + snapshots + motion sync + late join",
+    "Save/load integrity for world, structures, entities, inventory, progression",
+    "Debug systems (world map, continental shift, repaired boat placement, speed/FOV)",
+  ]);
+
+  const QA_VERIFICATION_PASSES = Object.freeze([
+    "Pass 1: Fresh singleplayer full gameplay loop",
+    "Pass 2: Save/load regression loop with repeated reloads",
+    "Pass 3: Multiplayer host+join snapshot and interaction sync",
+    "Pass 4: Multiplayer late-join stress (rapid interactions/race checks)",
+  ]);
+
   const RESPAWN = {
     treeStump: 30,
     treeSapling: 60,
@@ -467,6 +596,11 @@
     hide: { name: "Hide", color: "#9f7d57" },
     bone: { name: "Bone", color: "#d6d6c9" },
     monster_flesh: { name: "Monster Flesh", color: "#9b4e59" },
+    slime_ball: { name: "Slime Ball", color: "#7adf74" },
+    slime_helmet: { name: "Slime Helmet", color: "#88df7d" },
+    slime_chestplate: { name: "Slime Chestplate", color: "#7dd576" },
+    slime_leggings: { name: "Slime Leggings", color: "#74cb70" },
+    slime_boots: { name: "Slime Boots", color: "#69bf67" },
     ...BIOME_STONE_ITEMS,
     bridge: { name: "Bridge", color: "#c7b37a", placeable: true, placeType: "bridge" },
     village_path: { name: "Path Block", color: "#b59b6a", placeable: true, placeType: "village_path" },
@@ -495,6 +629,12 @@
       debugOnly: true,
     },
   };
+  const PLACE_TYPE_TO_ITEM_ID = Object.freeze(
+    Object.entries(ITEMS).reduce((acc, [itemId, def]) => {
+      if (def?.placeType && !acc[def.placeType]) acc[def.placeType] = itemId;
+      return acc;
+    }, {})
+  );
 
   const ITEM_VISUALS = {
     tree_resource: { symbol: "TREE", bg: "#2f7f4f", border: "#7ed19d", fg: "#ecffef" },
@@ -520,6 +660,11 @@
     hide: { symbol: "HID", bg: "#7d603f", border: "#bc9a73", fg: "#f9e5c9" },
     bone: { symbol: "BNE", bg: "#7c7a6f", border: "#d6d5c8", fg: "#f9f8ee" },
     monster_flesh: { symbol: "FLS", bg: "#6e303a", border: "#c37787", fg: "#ffe5ea" },
+    slime_ball: { symbol: "SLM", bg: "#2f7d3f", border: "#84df7a", fg: "#eaffec" },
+    slime_helmet: { symbol: "S-HM", bg: "#356f3f", border: "#8be38c", fg: "#e9ffe9" },
+    slime_chestplate: { symbol: "S-CH", bg: "#2f7a3e", border: "#84de87", fg: "#e9ffe9" },
+    slime_leggings: { symbol: "S-LG", bg: "#2b7037", border: "#7dd683", fg: "#e7ffe8" },
+    slime_boots: { symbol: "S-BT", bg: "#266733", border: "#75cf7c", fg: "#e5ffe7" },
     bridge: { symbol: "BRG", bg: "#8a7548", border: "#d2bb82", fg: "#fff3d8" },
     village_path: { symbol: "PTH", bg: "#726243", border: "#c6ab72", fg: "#fff3d7" },
     dock: { symbol: "DCK", bg: "#7c6a43", border: "#c3aa72", fg: "#fff2d2" },
@@ -618,6 +763,18 @@
   // Damp sword scaling versus hostile mobs to avoid early one-tap kills.
   const SWORD_DAMAGE_VS_MONSTER_SCALE = [1, 0.9, 0.84, 0.8, 0.76, 0.72];
 
+  const SLIME_ARMOR = Object.freeze({
+    maxPoints: 20,
+    reductionPerPoint: 0.035,
+    maxDamageReduction: 0.72,
+    pieces: Object.freeze([
+      { unlock: "slimeHelmet", itemId: "slime_helmet", points: 3 },
+      { unlock: "slimeChestplate", itemId: "slime_chestplate", points: 8 },
+      { unlock: "slimeLeggings", itemId: "slime_leggings", points: 6 },
+      { unlock: "slimeBoots", itemId: "slime_boots", points: 3 },
+    ]),
+  });
+
   const PLAYER_UNLOCK_DEFAULTS = Object.freeze({
     pickaxe: false,
     orePickaxe: false,
@@ -630,6 +787,10 @@
     sword3: false,
     sword4: false,
     sword5: false,
+    slimeHelmet: false,
+    slimeChestplate: false,
+    slimeLeggings: false,
+    slimeBoots: false,
   });
 
   const STRUCTURE_DEFS = {
@@ -659,14 +820,6 @@
   };
 
   const BUILD_RECIPES = [
-    {
-      id: "stick_bundle",
-      icon: "stick",
-      name: "Stick Bundle",
-      description: "Whittle sticks by hand so early tool progression never deadlocks.",
-      cost: { wood: 1 },
-      output: { stick: 2 },
-    },
     {
       id: "bridge",
       name: "Bridge",
@@ -746,7 +899,7 @@
       id: "sawmill",
       name: "Sawmill",
       description: "Convert logs into planks and sticks for advanced builds.",
-      cost: { wood: 8, stone: 2 },
+      cost: { wood: 12 },
     },
     {
       id: "kiln",
@@ -919,6 +1072,49 @@
       tier: 5,
       requires: ["sword4"],
     },
+    {
+      id: "unlock_slime_helmet",
+      name: "Slime Helmet",
+      description: "Gel-lined head armor. Adds light damage resistance.",
+      cost: { slime_ball: 10, hide: 1 },
+      icon: "slime_helmet",
+      unlock: "slimeHelmet",
+      track: "slime_armor",
+      tier: 1,
+    },
+    {
+      id: "unlock_slime_chestplate",
+      name: "Slime Chestplate",
+      description: "Absorbing torso plating. Biggest armor point gain.",
+      cost: { slime_ball: 18, hide: 2, monster_flesh: 1 },
+      icon: "slime_chestplate",
+      unlock: "slimeChestplate",
+      track: "slime_armor",
+      tier: 2,
+      requires: ["slimeHelmet"],
+    },
+    {
+      id: "unlock_slime_leggings",
+      name: "Slime Leggings",
+      description: "Flexible lower-body protection for steady mitigation.",
+      cost: { slime_ball: 14, hide: 2 },
+      icon: "slime_leggings",
+      unlock: "slimeLeggings",
+      track: "slime_armor",
+      tier: 3,
+      requires: ["slimeChestplate"],
+    },
+    {
+      id: "unlock_slime_boots",
+      name: "Slime Boots",
+      description: "Finishes the set. Full slime armor gives strong resistance.",
+      cost: { slime_ball: 9, hide: 1 },
+      icon: "slime_boots",
+      unlock: "slimeBoots",
+      track: "slime_armor",
+      tier: 4,
+      requires: ["slimeLeggings"],
+    },
   ];
 
   const BUILD_CATEGORY_DEFS = Object.freeze([
@@ -965,7 +1161,6 @@
   ]);
 
   const BUILD_RECIPE_CATEGORIES = Object.freeze({
-    stick_bundle: "navigation",
     bridge: "navigation",
     bridge_bundle: "navigation",
     village_path: "navigation",
@@ -1191,7 +1386,7 @@
       stoneRate: 0.00045,
       moveSpeedScale: 0.92,
       animalSpawnScale: 0.78,
-      poisonMonsterChance: 0.62,
+      poisonMonsterChance: 0.14,
     },
     {
       key: "mushroom",
@@ -1269,23 +1464,26 @@
   });
 
   const MUSHROOM_GREEN_COW_CONFIG = Object.freeze({
-    minPerIsland: 3,
+    minPerIsland: 2,
     ensureAttemptsPerCow: 28,
     minSpacingTiles: 3.25,
   });
 
   const SURFACE_PASSIVE_ANIMAL_CONFIG = Object.freeze({
-    baselineMin: 7,
-    baselineMax: 30,
-    baselineIslandFactor: 0.65,
-    baselineIslandOffset: 9,
-    maxBase: 14,
-    maxIslandFactor: 1.1,
-    maxIslandOffset: 7,
-    maxCap: 42,
-    spawnIslandHarvestMin: 2,
+    baselineMin: 3,
+    baselineMax: 12,
+    baselineIslandFactor: 0.4,
+    baselineIslandOffset: 8,
+    maxBase: 6,
+    maxIslandFactor: 0.6,
+    maxIslandOffset: 8,
+    maxCap: 16,
+    maxPerIsland: 4,
+    spawnIslandMax: 5,
+    mushroomMaxPerIsland: 3,
+    spawnIslandHarvestMin: 1,
     activeIslandHarvestMin: 1,
-    catchupSpawnBurstMax: 2,
+    catchupSpawnBurstMax: 1,
   });
 
   const AMBIENT_FISH_CONFIG = Object.freeze({
@@ -1406,7 +1604,10 @@
   const SAMPLE_FADE_IN_SECONDS = 0.004;
   const SAMPLE_FADE_OUT_SECONDS = 0.018;
   const CHASE_LOOP_ZERO_CROSS_WINDOW_SECONDS = 0.02;
-  const CHASE_LOOP_MIN_SPAN_SECONDS = 0.28;
+  const CHASE_LOOP_EDGE_FADE_SECONDS = 0.016;
+  const MONSTER_CHASE_RELEASE_HOLD_SECONDS = 0.34;
+  const MONSTER_CHASE_RESTART_GUARD_SECONDS = 0.12;
+  const MONSTER_CHASE_DUCK_GAIN_MULT = 0.44;
   const LION_AGGRO_SFX_SRC = "assets/lion-aggro.mp3";
   const LION_AGGRO_SFX_TRIM_THRESHOLD = 0.008;
   const LION_AGGRO_SFX_MAX_SCAN_SECONDS = 2.2;
@@ -1422,6 +1623,16 @@
   const POLAR_BEAR_CHASE_SFX_MAX_SCAN_SECONDS = 2.2;
   const POLAR_BEAR_CHASE_SFX_MIN_PRE_ROLL_SECONDS = 0.002;
   const POLAR_BEAR_CHASE_SFX_GAIN = 0.74;
+  const POISON_BOTTLE_BREAK_SFX_SRC = "assets/poison-bottle-break.mp3";
+  const POISON_BOTTLE_BREAK_SFX_TRIM_THRESHOLD = 0.009;
+  const POISON_BOTTLE_BREAK_SFX_MAX_SCAN_SECONDS = 2.2;
+  const POISON_BOTTLE_BREAK_SFX_MIN_PRE_ROLL_SECONDS = 0.002;
+  const POISON_BOTTLE_BREAK_SFX_GAIN = 0.66;
+  const SKELETON_ARROW_SHOOT_SFX_SRC = "assets/skeleton-arrow-shoot.mp3";
+  const SKELETON_ARROW_SHOOT_SFX_TRIM_THRESHOLD = 0.0085;
+  const SKELETON_ARROW_SHOOT_SFX_MAX_SCAN_SECONDS = 1.8;
+  const SKELETON_ARROW_SHOOT_SFX_MIN_PRE_ROLL_SECONDS = 0.002;
+  const SKELETON_ARROW_SHOOT_SFX_GAIN = 0.68;
   const MONSTER_AUDIO_LIMIT = Object.freeze({
     perFrameMax: 4,
     idleCooldownMs: 90,
@@ -1439,6 +1650,7 @@
     debugInfiniteResources: false,
     debugSpeedMultiplier: 1,
     debugWorldSpeedMultiplier: 1,
+    debugFovMultiplier: 1,
   });
   const MAP_ITEM_SET = new Set(["village_map", "cave_map"]);
   const MAP_PANEL = Object.freeze({
@@ -1505,6 +1717,16 @@
   const inventorySlots = [];
   const chestSlots = [];
   const itemTextureCache = new Map();
+  const ITEM_TEXTURE_CACHE_VERSION = 2;
+  const qaRuntime = {
+    runTimer: QA_SELF_TEST_CONFIG.runInterval,
+    saveRoundTripTimer: QA_SELF_TEST_CONFIG.saveRoundTripInterval,
+    runCount: 0,
+    featureInventoryLogged: false,
+    passChecklistLogged: false,
+    initCallCount: 0,
+    gameLoopStartCount: 0,
+  };
 
   const state = {
     world: null,
@@ -1524,6 +1746,7 @@
     nearHouse: null,
     nearBed: null,
     nearDock: null,
+    nearInteriorMoveTarget: null,
     activeStation: null,
     activeChest: null,
     activeCave: null,
@@ -1534,6 +1757,7 @@
     spawnTile: null,
     timeOfDay: 0,
     isNight: false,
+    surfaceDayBurnGraceTimer: 0,
     surfaceSpawnTimer: 0,
     surfaceGuardianSpawnTimer: SURFACE_GUARDIAN_CONFIG.spawnInterval,
     gameWon: false,
@@ -1563,6 +1787,8 @@
     debugIslandDrag: null,
     debugSpeedMultiplier: SETTINGS_DEFAULTS.debugSpeedMultiplier,
     debugWorldSpeedMultiplier: SETTINGS_DEFAULTS.debugWorldSpeedMultiplier,
+    debugFovMultiplier: SETTINGS_DEFAULTS.debugFovMultiplier,
+    houseRelocation: null,
     sleepSequence: null,
     ambientFish: [],
     ambientFishSpawnTimer: 0,
@@ -1587,6 +1813,7 @@
     players: new Map(),
     pendingPlaces: new Map(),
     pendingHousePlaces: new Map(),
+    pendingHouseMoves: new Map(),
     debugBoatPlaceReceipts: new Map(),
     snapshotTimer: NET_CONFIG.snapshotInterval,
     motionTimer: NET_CONFIG.motionInterval,
@@ -1601,6 +1828,7 @@
     master: null,
     limiter: null,
     sfxBus: null,
+    sfxDcBlocker: null,
     musicBus: null,
     musicGain: null,
     padGain: null,
@@ -1645,15 +1873,25 @@
     boarGruntTrimStart: 0,
     boarGruntLoadPromise: null,
     lionAggroBuffer: null,
+    lionAggroLoopBuffer: null,
     lionAggroTrimStart: 0,
     lionAggroLoadPromise: null,
     wolfChaseBuffer: null,
+    wolfChaseLoopBuffer: null,
     wolfChaseTrimStart: 0,
     wolfChaseLoadPromise: null,
     polarBearChaseBuffer: null,
+    polarBearChaseLoopBuffer: null,
     polarBearChaseTrimStart: 0,
     polarBearChaseLoadPromise: null,
+    poisonBottleBreakBuffer: null,
+    poisonBottleBreakTrimStart: 0,
+    poisonBottleBreakLoadPromise: null,
+    skeletonArrowShootBuffer: null,
+    skeletonArrowShootTrimStart: 0,
+    skeletonArrowShootLoadPromise: null,
     monsterChaseVoices: new Map(),
+    monsterChaseVoiceStopTimes: new Map(),
     noiseBuffer: null,
     chordIndex: 0,
     chordTimer: 0,
@@ -1693,6 +1931,71 @@
 
   function clamp(value, min, max) {
     return Math.min(Math.max(value, min), max);
+  }
+
+  function normalizeHexColor(value) {
+    if (typeof value !== "string") return null;
+    const trimmed = value.trim();
+    const matched = /^#?([0-9a-fA-F]{6})$/.exec(trimmed);
+    if (!matched) return null;
+    return `#${matched[1].toLowerCase()}`;
+  }
+
+  function hslToHex(h, s, l) {
+    const hue = ((((Number(h) || 0) % 360) + 360) % 360) / 360;
+    const sat = clamp((Number(s) || 0) / 100, 0, 1);
+    const light = clamp((Number(l) || 0) / 100, 0, 1);
+    if (sat <= 0.0001) {
+      const gray = Math.round(light * 255);
+      const hex = gray.toString(16).padStart(2, "0");
+      return `#${hex}${hex}${hex}`;
+    }
+    const q = light < 0.5 ? light * (1 + sat) : (light + sat - light * sat);
+    const p = 2 * light - q;
+    const hueToRgb = (t) => {
+      let tt = t;
+      if (tt < 0) tt += 1;
+      if (tt > 1) tt -= 1;
+      if (tt < 1 / 6) return p + (q - p) * 6 * tt;
+      if (tt < 1 / 2) return q;
+      if (tt < 2 / 3) return p + (q - p) * (2 / 3 - tt) * 6;
+      return p;
+    };
+    const r = Math.round(hueToRgb(hue + 1 / 3) * 255);
+    const g = Math.round(hueToRgb(hue) * 255);
+    const b = Math.round(hueToRgb(hue - 1 / 3) * 255);
+    return `#${r.toString(16).padStart(2, "0")}${g.toString(16).padStart(2, "0")}${b.toString(16).padStart(2, "0")}`;
+  }
+
+  function getAssignedPlayerColorSet() {
+    const used = new Set();
+    const local = normalizeHexColor(net.localColor);
+    if (local) used.add(local);
+    for (const player of net.players.values()) {
+      const normalized = normalizeHexColor(player?.color);
+      if (normalized) used.add(normalized);
+    }
+    return used;
+  }
+
+  function pickRandomDistinctPlayerColor(existing = null) {
+    const used = existing instanceof Set ? new Set(existing) : new Set();
+    const palette = PLAYER_COLORS
+      .map((value) => normalizeHexColor(value))
+      .filter(Boolean);
+    const availablePalette = palette.filter((value) => !used.has(value));
+    if (availablePalette.length > 0) {
+      return availablePalette[Math.floor(Math.random() * availablePalette.length)];
+    }
+    for (let attempt = 0; attempt < 48; attempt += 1) {
+      const color = hslToHex(
+        Math.random() * 360,
+        58 + Math.random() * 24,
+        44 + Math.random() * 18
+      );
+      if (!used.has(color)) return color;
+    }
+    return hslToHex(Math.random() * 360, 64, 52);
   }
 
   function hexToRgb(hex) {
@@ -1776,6 +2079,12 @@
     return clamp(num, 1, 10);
   }
 
+  function clampDebugFovMultiplier(value) {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return SETTINGS_DEFAULTS.debugFovMultiplier;
+    return clamp(num, 1, 2.4);
+  }
+
   function saveUserSettings() {
     const payload = {
       musicVolume: clampVolume(state.musicVolume, SETTINGS_DEFAULTS.musicVolume),
@@ -1784,6 +2093,7 @@
       debugInfiniteResources: !!state.debugInfiniteResources,
       debugSpeedMultiplier: clampDebugSpeedMultiplier(state.debugSpeedMultiplier),
       debugWorldSpeedMultiplier: clampDebugWorldSpeedMultiplier(state.debugWorldSpeedMultiplier),
+      debugFovMultiplier: clampDebugFovMultiplier(state.debugFovMultiplier),
     };
     try {
       window.localStorage.setItem(SETTINGS_KEY, JSON.stringify(payload));
@@ -1810,6 +2120,7 @@
       state.debugInfiniteResources = false;
       state.debugSpeedMultiplier = clampDebugSpeedMultiplier(data.debugSpeedMultiplier);
       state.debugWorldSpeedMultiplier = clampDebugWorldSpeedMultiplier(data.debugWorldSpeedMultiplier);
+      state.debugFovMultiplier = clampDebugFovMultiplier(data.debugFovMultiplier);
     } catch (err) {
       state.musicVolume = SETTINGS_DEFAULTS.musicVolume;
       state.sfxVolume = SETTINGS_DEFAULTS.sfxVolume;
@@ -1817,21 +2128,36 @@
       state.debugInfiniteResources = SETTINGS_DEFAULTS.debugInfiniteResources;
       state.debugSpeedMultiplier = SETTINGS_DEFAULTS.debugSpeedMultiplier;
       state.debugWorldSpeedMultiplier = SETTINGS_DEFAULTS.debugWorldSpeedMultiplier;
+      state.debugFovMultiplier = SETTINGS_DEFAULTS.debugFovMultiplier;
     }
   }
 
   function updateVolumeUI() {
+    const musicPercent = Math.round(clampVolume(state.musicVolume, SETTINGS_DEFAULTS.musicVolume) * 100);
+    const sfxPercent = Math.round(clampVolume(state.sfxVolume, SETTINGS_DEFAULTS.sfxVolume) * 100);
     if (musicVolumeInput) {
-      musicVolumeInput.value = String(Math.round(clampVolume(state.musicVolume, SETTINGS_DEFAULTS.musicVolume) * 100));
+      musicVolumeInput.value = String(musicPercent);
     }
     if (musicVolumeValue) {
-      musicVolumeValue.textContent = `${Math.round(clampVolume(state.musicVolume, SETTINGS_DEFAULTS.musicVolume) * 100)}%`;
+      musicVolumeValue.textContent = `${musicPercent}%`;
     }
     if (sfxVolumeInput) {
-      sfxVolumeInput.value = String(Math.round(clampVolume(state.sfxVolume, SETTINGS_DEFAULTS.sfxVolume) * 100));
+      sfxVolumeInput.value = String(sfxPercent);
     }
     if (sfxVolumeValue) {
-      sfxVolumeValue.textContent = `${Math.round(clampVolume(state.sfxVolume, SETTINGS_DEFAULTS.sfxVolume) * 100)}%`;
+      sfxVolumeValue.textContent = `${sfxPercent}%`;
+    }
+    if (menuMusicVolumeInput) {
+      menuMusicVolumeInput.value = String(musicPercent);
+    }
+    if (menuMusicVolumeValue) {
+      menuMusicVolumeValue.textContent = `${musicPercent}%`;
+    }
+    if (menuSfxVolumeInput) {
+      menuSfxVolumeInput.value = String(sfxPercent);
+    }
+    if (menuSfxVolumeValue) {
+      menuSfxVolumeValue.textContent = `${sfxPercent}%`;
     }
   }
 
@@ -1844,6 +2170,11 @@
     if (!state.debugUnlocked) return 1;
     if (netIsClient()) return 1;
     return clampDebugWorldSpeedMultiplier(state.debugWorldSpeedMultiplier);
+  }
+
+  function getDebugFovMultiplier() {
+    if (!state.debugUnlocked) return 1;
+    return clampDebugFovMultiplier(state.debugFovMultiplier);
   }
 
   function updateDebugSpeedUI() {
@@ -1868,6 +2199,17 @@
     }
   }
 
+  function updateDebugFovUI() {
+    const mult = clampDebugFovMultiplier(state.debugFovMultiplier);
+    if (debugFovInput) {
+      debugFovInput.value = String(Math.round(mult * 100));
+      debugFovInput.disabled = !state.debugUnlocked;
+    }
+    if (debugFovValue) {
+      debugFovValue.textContent = `${mult.toFixed(1)}x`;
+    }
+  }
+
   function setDebugSpeedFromPercent(percent, persist = true) {
     const mult = clampDebugSpeedMultiplier((Number(percent) || 100) / 100);
     state.debugSpeedMultiplier = mult;
@@ -1879,6 +2221,13 @@
     const mult = clampDebugWorldSpeedMultiplier((Number(percent) || 100) / 100);
     state.debugWorldSpeedMultiplier = mult;
     updateDebugWorldSpeedUI();
+    if (persist) saveUserSettings();
+  }
+
+  function setDebugFovFromPercent(percent, persist = true) {
+    const mult = clampDebugFovMultiplier((Number(percent) || 100) / 100);
+    state.debugFovMultiplier = mult;
+    updateDebugFovUI();
     if (persist) saveUserSettings();
   }
 
@@ -1943,6 +2292,7 @@
       state.debugIslandDrag = null;
       state.debugSpeedMultiplier = 1;
       state.debugWorldSpeedMultiplier = 1;
+      state.debugFovMultiplier = 1;
       if (buildMenu && !buildMenu.classList.contains("hidden")) {
         renderBuildMenu();
       }
@@ -1957,7 +2307,407 @@
     updateDebugPlaceBoatButton();
     updateDebugSpeedUI();
     updateDebugWorldSpeedUI();
+    updateDebugFovUI();
+    if (!state.debugUnlocked) {
+      qaRuntime.runTimer = QA_SELF_TEST_CONFIG.runInterval;
+      qaRuntime.saveRoundTripTimer = QA_SELF_TEST_CONFIG.saveRoundTripInterval;
+      qaRuntime.featureInventoryLogged = false;
+      qaRuntime.passChecklistLogged = false;
+    }
     if (persist) saveUserSettings();
+  }
+
+  function qaPushIssue(issues, message) {
+    if (!Array.isArray(issues) || typeof message !== "string" || !message) return;
+    if (!issues.includes(message)) issues.push(message);
+  }
+
+  function qaLogFeatureInventoryOnce() {
+    if (qaRuntime.featureInventoryLogged) return;
+    qaRuntime.featureInventoryLogged = true;
+    console.groupCollapsed("[QA] Feature inventory checklist (code-derived)");
+    for (let i = 0; i < QA_FEATURE_INVENTORY.length; i += 1) {
+      console.info(`${i + 1}. ${QA_FEATURE_INVENTORY[i]}`);
+    }
+    console.groupEnd();
+  }
+
+  function qaLogVerificationPassesOnce() {
+    if (qaRuntime.passChecklistLogged) return;
+    qaRuntime.passChecklistLogged = true;
+    console.groupCollapsed("[QA] Verification pass checklist");
+    for (let i = 0; i < QA_VERIFICATION_PASSES.length; i += 1) {
+      console.info(`${i + 1}. ${QA_VERIFICATION_PASSES[i]}`);
+    }
+    console.groupEnd();
+  }
+
+  function qaCollectWorldContexts() {
+    const surface = state.surfaceWorld || state.world;
+    if (!surface) return [];
+    const contexts = [{ label: "surface", world: surface, isSurface: true }];
+    if (Array.isArray(surface.caves)) {
+      for (const cave of surface.caves) {
+        if (!cave?.world) continue;
+        contexts.push({ label: `cave:${cave.id}`, world: cave.world, isSurface: false });
+      }
+    }
+    return contexts;
+  }
+
+  function qaCheckUniqueNumericIds(list, label, issues) {
+    if (!Array.isArray(list)) {
+      qaPushIssue(issues, `[${label}] Expected array`);
+      return;
+    }
+    const seen = new Set();
+    for (const entry of list) {
+      if (!entry) continue;
+      if (!Number.isInteger(entry.id)) {
+        qaPushIssue(issues, `[${label}] Non-integer id encountered`);
+        continue;
+      }
+      const key = String(entry.id);
+      if (seen.has(key)) {
+        qaPushIssue(issues, `[${label}] Duplicate id ${entry.id}`);
+      } else {
+        seen.add(key);
+      }
+    }
+  }
+
+  function qaCheckFiniteEntityPosition(entry, label, issues, allowVelocity = false) {
+    if (!entry) return;
+    if (!Number.isFinite(entry.x) || !Number.isFinite(entry.y)) {
+      qaPushIssue(issues, `[${label}] Non-finite position`);
+    }
+    if ("hp" in entry && !Number.isFinite(Number(entry.hp))) {
+      qaPushIssue(issues, `[${label}] Non-finite hp`);
+    }
+    if (allowVelocity) {
+      if ("vx" in entry && !Number.isFinite(Number(entry.vx))) qaPushIssue(issues, `[${label}] Non-finite vx`);
+      if ("vy" in entry && !Number.isFinite(Number(entry.vy))) qaPushIssue(issues, `[${label}] Non-finite vy`);
+    }
+  }
+
+  function qaCheckWorldState(worldCtx, issues) {
+    const { world, label, isSurface } = worldCtx;
+    if (!world || typeof world !== "object") {
+      qaPushIssue(issues, `[${label}] Missing world object`);
+      return;
+    }
+    if (!Number.isInteger(world.size) || world.size <= 0) {
+      qaPushIssue(issues, `[${label}] Invalid world size`);
+    }
+    const expectedTileCount = Number.isInteger(world.size) ? world.size * world.size : -1;
+    if (!Array.isArray(world.tiles) || world.tiles.length !== expectedTileCount) {
+      qaPushIssue(issues, `[${label}] Tile array size mismatch`);
+    }
+    if (!Array.isArray(world.resources)) qaPushIssue(issues, `[${label}] Missing resources array`);
+    if (!Array.isArray(world.monsters)) qaPushIssue(issues, `[${label}] Missing monsters array`);
+    if (!Array.isArray(world.animals)) qaPushIssue(issues, `[${label}] Missing animals array`);
+    if (!Array.isArray(world.villagers)) qaPushIssue(issues, `[${label}] Missing villagers array`);
+    if (!Array.isArray(world.projectiles)) qaPushIssue(issues, `[${label}] Missing projectiles array`);
+    if (!Array.isArray(world.poisonClouds)) qaPushIssue(issues, `[${label}] Missing poisonClouds array`);
+    if (!Array.isArray(world.drops)) qaPushIssue(issues, `[${label}] Missing drops array`);
+
+    qaCheckUniqueNumericIds(world.resources, `${label}.resources`, issues);
+    qaCheckUniqueNumericIds(world.monsters, `${label}.monsters`, issues);
+    qaCheckUniqueNumericIds(world.animals, `${label}.animals`, issues);
+    qaCheckUniqueNumericIds(world.villagers, `${label}.villagers`, issues);
+    qaCheckUniqueNumericIds(world.projectiles, `${label}.projectiles`, issues);
+    qaCheckUniqueNumericIds(world.poisonClouds, `${label}.poisonClouds`, issues);
+    qaCheckUniqueNumericIds(world.drops, `${label}.drops`, issues);
+
+    for (const resource of world.resources || []) {
+      qaCheckFiniteEntityPosition(resource, `${label}.resource`, issues, false);
+    }
+    for (const monster of world.monsters || []) {
+      qaCheckFiniteEntityPosition(monster, `${label}.monster`, issues, false);
+    }
+    for (const animal of world.animals || []) {
+      qaCheckFiniteEntityPosition(animal, `${label}.animal`, issues, false);
+    }
+    for (const villager of world.villagers || []) {
+      qaCheckFiniteEntityPosition(villager, `${label}.villager`, issues, false);
+    }
+    for (const projectile of world.projectiles || []) {
+      qaCheckFiniteEntityPosition(projectile, `${label}.projectile`, issues, true);
+    }
+    for (const cloud of world.poisonClouds || []) {
+      qaCheckFiniteEntityPosition(cloud, `${label}.poisonCloud`, issues, false);
+    }
+    for (const drop of world.drops || []) {
+      qaCheckFiniteEntityPosition(drop, `${label}.drop`, issues, false);
+      if (!Number.isFinite(Number(drop.qty)) || drop.qty < 0) {
+        qaPushIssue(issues, `[${label}.drop] Invalid quantity`);
+      }
+    }
+    if (hasResourceGridInconsistency(world)) {
+      qaPushIssue(issues, `[${label}] Resource grid mismatch`);
+    }
+
+    if (isSurface) {
+      if (state.spawnTile && !isSpawnableTile(world, state.spawnTile.x, state.spawnTile.y)) {
+        qaPushIssue(issues, "[surface] Spawn tile is not valid land");
+      }
+      const spawnIsland = getSpawnIsland(world, state.spawnTile);
+      if (!spawnIsland) {
+        qaPushIssue(issues, "[surface] Spawn island resolution failed");
+      }
+      const passiveTargets = getSurfacePassiveAnimalTargets(world);
+      if (Array.isArray(world.animals) && world.animals.length > passiveTargets.maxAnimals) {
+        qaPushIssue(
+          issues,
+          `[surface] Passive animal cap exceeded (${world.animals.length} > ${passiveTargets.maxAnimals})`
+        );
+      }
+      if (Array.isArray(world.islands)) {
+        for (const island of world.islands) {
+          if (!island) continue;
+          const passiveCount = countPassiveAnimalsOnIsland(world, island);
+          const passiveCap = getPassiveAnimalIslandCap(world, island, spawnIsland);
+          if (passiveCount > passiveCap) {
+            qaPushIssue(
+              issues,
+              `[surface] Island passive cap exceeded (${passiveCount} > ${passiveCap})`
+            );
+            break;
+          }
+          const guardianCount = countGuardiansOnIsland(world, island);
+          if (guardianCount > SURFACE_GUARDIAN_CONFIG.maxPerIsland) {
+            qaPushIssue(
+              issues,
+              `[surface] Island guardian cap exceeded (${guardianCount} > ${SURFACE_GUARDIAN_CONFIG.maxPerIsland})`
+            );
+            break;
+          }
+        }
+      }
+      const guardianTotal = countSurfaceGuardians(world);
+      if (guardianTotal > SURFACE_GUARDIAN_CONFIG.maxTotal) {
+        qaPushIssue(
+          issues,
+          `[surface] Guardian total cap exceeded (${guardianTotal} > ${SURFACE_GUARDIAN_CONFIG.maxTotal})`
+        );
+      }
+      const stalkerTotal = countSurfaceMarshStalkers(world);
+      if (stalkerTotal > MARSH_STALKER_DAY_SPAWN.maxTotal) {
+        qaPushIssue(
+          issues,
+          `[surface] Marsh stalker cap exceeded (${stalkerTotal} > ${MARSH_STALKER_DAY_SPAWN.maxTotal})`
+        );
+      }
+      for (const animal of world.animals || []) {
+        const tx = Math.floor(animal.x / CONFIG.tileSize);
+        const ty = Math.floor(animal.y / CONFIG.tileSize);
+        if (!isAnimalTypeAllowedAtTile(world, animal.type, tx, ty)) {
+          qaPushIssue(issues, `[surface] Animal biome mismatch for type ${animal.type}`);
+          break;
+        }
+      }
+    }
+  }
+
+  function qaValidateSnapshotSchema(issues) {
+    if (!state.player || (!state.surfaceWorld && !state.world)) {
+      qaPushIssue(issues, "[snapshot] Missing local world/player context");
+      return;
+    }
+    const snapshot = buildSnapshot();
+    if (!snapshot || snapshot.type !== "snapshot") {
+      qaPushIssue(issues, "[snapshot] Invalid snapshot payload");
+      return;
+    }
+    if (!snapshot.seed || typeof snapshot.seed !== "string") {
+      qaPushIssue(issues, "[snapshot] Missing seed");
+    }
+    if (!Array.isArray(snapshot.islandLayout)) {
+      qaPushIssue(issues, "[snapshot] islandLayout missing array");
+    }
+    if (!Array.isArray(snapshot.caves)) {
+      qaPushIssue(issues, "[snapshot] caves missing array");
+    }
+    if (!snapshot.world || typeof snapshot.world !== "object") {
+      qaPushIssue(issues, "[snapshot] Missing world payload");
+      return;
+    }
+    const requiredArrays = [
+      "resourceStates",
+      "respawnTasks",
+      "drops",
+      "monsters",
+      "projectiles",
+      "poisonClouds",
+      "animals",
+      "villagers",
+    ];
+    for (const key of requiredArrays) {
+      if (!Array.isArray(snapshot.world[key])) {
+        qaPushIssue(issues, `[snapshot] world.${key} missing array`);
+      }
+    }
+    if (!Array.isArray(snapshot.structures)) qaPushIssue(issues, "[snapshot] structures missing array");
+    if (!Array.isArray(snapshot.players)) qaPushIssue(issues, "[snapshot] players missing array");
+    for (const player of snapshot.players || []) {
+      if (!player || typeof player.id !== "string") {
+        qaPushIssue(issues, "[snapshot] player entry missing id");
+        continue;
+      }
+      if (!Number.isFinite(player.x) || !Number.isFinite(player.y)) {
+        qaPushIssue(issues, `[snapshot] player ${player.id} has non-finite position`);
+      }
+      if (!normalizeHexColor(player.color)) {
+        qaPushIssue(issues, `[snapshot] player ${player.id} has invalid color`);
+      }
+    }
+  }
+
+  function qaBuildInventoryTotals(inventory) {
+    const totals = Object.create(null);
+    for (const slot of inventory || []) {
+      if (!slot?.id || !Number.isFinite(Number(slot.qty)) || slot.qty <= 0) continue;
+      totals[slot.id] = (totals[slot.id] || 0) + Math.max(0, Math.floor(Number(slot.qty) || 0));
+    }
+    return totals;
+  }
+
+  function qaInventoryTotalsEqual(a, b) {
+    const keys = new Set([...Object.keys(a || {}), ...Object.keys(b || {})]);
+    for (const key of keys) {
+      if ((a?.[key] || 0) !== (b?.[key] || 0)) return false;
+    }
+    return true;
+  }
+
+  function qaValidateSaveRoundTrip(issues) {
+    if (netIsClientReady()) return;
+    const world = state.surfaceWorld || state.world;
+    if (!world || !state.player) return;
+    const before = {
+      seed: world.seed,
+      inventoryTotals: qaBuildInventoryTotals(state.inventory),
+      structureCount: serializeStructuresList().length,
+      dropCount: Array.isArray(world.drops) ? world.drops.length : 0,
+      animalCount: Array.isArray(world.animals) ? world.animals.length : 0,
+      monsterCount: Array.isArray(world.monsters) ? world.monsters.length : 0,
+      caveCount: Array.isArray(world.caves) ? world.caves.length : 0,
+      toolTier: Number(state.player.toolTier) || 1,
+    };
+    const prevDirty = state.dirty;
+    const prevSaveTimer = state.saveTimer;
+    saveGame();
+    const loaded = migrateSave(loadGame(world.seed));
+    state.dirty = prevDirty;
+    state.saveTimer = prevSaveTimer;
+    if (!loaded) {
+      qaPushIssue(issues, "[save/load] Could not reload save for current seed");
+      return;
+    }
+    if (normalizeSeedValue(loaded.seed) !== normalizeSeedValue(before.seed)) {
+      qaPushIssue(issues, "[save/load] Seed mismatch after reload");
+    }
+    const loadedInventory = sanitizeInventorySlots(loaded.inventory, INVENTORY_SIZE);
+    const loadedTotals = qaBuildInventoryTotals(loadedInventory);
+    if (!qaInventoryTotalsEqual(before.inventoryTotals, loadedTotals)) {
+      qaPushIssue(issues, "[save/load] Inventory totals mismatch after reload");
+    }
+    if ((Array.isArray(loaded.structures) ? loaded.structures.length : 0) !== before.structureCount) {
+      qaPushIssue(issues, "[save/load] Structure count mismatch after reload");
+    }
+    if ((Array.isArray(loaded.drops) ? loaded.drops.length : 0) !== before.dropCount) {
+      qaPushIssue(issues, "[save/load] Drop count mismatch after reload");
+    }
+    if ((Array.isArray(loaded.animals) ? loaded.animals.length : 0) !== before.animalCount) {
+      qaPushIssue(issues, "[save/load] Animal count mismatch after reload");
+    }
+    if ((Array.isArray(loaded.monsters) ? loaded.monsters.length : 0) !== before.monsterCount) {
+      qaPushIssue(issues, "[save/load] Monster count mismatch after reload");
+    }
+    if ((Array.isArray(loaded.caves) ? loaded.caves.length : 0) !== before.caveCount) {
+      qaPushIssue(issues, "[save/load] Cave count mismatch after reload");
+    }
+    if ((Number(loaded.player?.toolTier) || 1) !== before.toolTier) {
+      qaPushIssue(issues, "[save/load] Player tool tier mismatch after reload");
+    }
+  }
+
+  function runDebugQaSelfTests(dt = 0) {
+    if (!state.debugUnlocked) return;
+    qaLogFeatureInventoryOnce();
+    qaLogVerificationPassesOnce();
+    const step = Math.max(0, Number(dt) || 0);
+    qaRuntime.runTimer -= step;
+    qaRuntime.saveRoundTripTimer -= step;
+    if (qaRuntime.runTimer > 0) return;
+    qaRuntime.runTimer = QA_SELF_TEST_CONFIG.runInterval;
+    qaRuntime.runCount += 1;
+
+    const issues = [];
+    if (qaRuntime.initCallCount > 1) {
+      qaPushIssue(issues, `[runtime] init called ${qaRuntime.initCallCount} times`);
+    }
+    if (qaRuntime.gameLoopStartCount > 1) {
+      qaPushIssue(issues, `[runtime] gameLoop started ${qaRuntime.gameLoopStartCount} times`);
+    }
+    if (state.activeChest && state.activeStation) {
+      qaPushIssue(issues, "[ui] Chest and station are open simultaneously");
+    }
+    if (state.activeShipRepair && state.activeChest) {
+      qaPushIssue(issues, "[ui] Ship repair panel overlaps chest state");
+    }
+    if (state.ambientFish?.length > AMBIENT_FISH_CONFIG.maxAlive) {
+      qaPushIssue(
+        issues,
+        `[ambient] Fish cap exceeded (${state.ambientFish.length} > ${AMBIENT_FISH_CONFIG.maxAlive})`
+      );
+    }
+    if (state.player) {
+      if (!Number.isFinite(state.player.x) || !Number.isFinite(state.player.y)) {
+        qaPushIssue(issues, "[player] Non-finite local player position");
+      }
+      if (!Number.isFinite(state.player.hp) || !Number.isFinite(state.player.maxHp)) {
+        qaPushIssue(issues, "[player] Non-finite local player health");
+      }
+    }
+    for (const remote of net.players.values()) {
+      if (!Number.isFinite(remote.x) || !Number.isFinite(remote.y)) {
+        qaPushIssue(issues, `[net] Remote player ${remote.id || "unknown"} has non-finite position`);
+      }
+      if (!normalizeHexColor(remote.color || "")) {
+        qaPushIssue(issues, `[net] Remote player ${remote.id || "unknown"} has invalid color`);
+      }
+    }
+    if (!net.enabled && net.players.size > 0) {
+      qaPushIssue(issues, "[net] Remote player cache present while multiplayer disabled");
+    }
+    qaCheckUniqueNumericIds(state.structures || [], "structures", issues);
+    for (const structure of state.structures || []) {
+      if (!structure || structure.removed) continue;
+      if (!Number.isInteger(structure.tx) || !Number.isInteger(structure.ty)) {
+        qaPushIssue(issues, "[structures] Non-integer structure tile position");
+        break;
+      }
+    }
+
+    const contexts = qaCollectWorldContexts();
+    for (const worldCtx of contexts) {
+      qaCheckWorldState(worldCtx, issues);
+    }
+    qaValidateSnapshotSchema(issues);
+
+    if (qaRuntime.saveRoundTripTimer <= 0) {
+      qaValidateSaveRoundTrip(issues);
+      qaRuntime.saveRoundTripTimer = QA_SELF_TEST_CONFIG.saveRoundTripInterval;
+    }
+
+    if (issues.length === 0) {
+      console.debug(`[QA] self-test run ${qaRuntime.runCount}: pass`);
+      return;
+    }
+
+    const clipped = issues.slice(0, QA_SELF_TEST_CONFIG.maxIssuesPerRun);
+    console.warn(`[QA] self-test run ${qaRuntime.runCount}: ${issues.length} issue(s)`, clipped);
   }
 
   function updateMosesButton() {
@@ -2030,13 +2780,19 @@
       limiter.connect(ctx.destination);
       const musicBus = ctx.createGain();
       const sfxBus = ctx.createGain();
+      const sfxDcBlocker = ctx.createBiquadFilter();
+      sfxDcBlocker.type = "highpass";
+      sfxDcBlocker.frequency.setValueAtTime(18, ctx.currentTime);
+      sfxDcBlocker.Q.setValueAtTime(0.68, ctx.currentTime);
       musicBus.connect(master);
-      sfxBus.connect(master);
+      sfxBus.connect(sfxDcBlocker);
+      sfxDcBlocker.connect(master);
       audio.ctx = ctx;
       audio.master = master;
       audio.limiter = limiter;
       audio.musicBus = musicBus;
       audio.sfxBus = sfxBus;
+      audio.sfxDcBlocker = sfxDcBlocker;
       audio.enabled = true;
       applyAudioLevels();
       updateBackgroundMusicPlayback();
@@ -2047,6 +2803,8 @@
       ensureLionAggroSampleLoaded();
       ensureWolfChaseSampleLoaded();
       ensurePolarBearChaseSampleLoaded();
+      ensurePoisonBottleBreakSampleLoaded();
+      ensureSkeletonArrowShootSampleLoaded();
     }
     if (audio.ctx.state === "suspended") {
       audio.ctx.resume().catch(() => {});
@@ -2059,6 +2817,8 @@
     ensureLionAggroSampleLoaded();
     ensureWolfChaseSampleLoaded();
     ensurePolarBearChaseSampleLoaded();
+    ensurePoisonBottleBreakSampleLoaded();
+    ensureSkeletonArrowShootSampleLoaded();
     return audio.ctx;
   }
 
@@ -2548,6 +3308,44 @@
     );
   }
 
+  function buildTrimmedLoopBuffer(buffer, startOffsetSeconds, edgeFadeSeconds = CHASE_LOOP_EDGE_FADE_SECONDS) {
+    if (!audio.ctx || !buffer || !Number.isFinite(buffer.length) || buffer.length <= 8) return buffer;
+    const sampleRate = Math.max(1, Number(buffer.sampleRate) || 44100);
+    const totalFrames = Math.max(1, Math.floor(buffer.length));
+    const startFrame = clamp(
+      Math.floor((Number(startOffsetSeconds) || 0) * sampleRate),
+      0,
+      Math.max(0, totalFrames - 2)
+    );
+    const loopFrames = totalFrames - startFrame;
+    if (loopFrames < 8) return buffer;
+
+    const channelCount = Math.max(1, Number(buffer.numberOfChannels) || 1);
+    const loopBuffer = audio.ctx.createBuffer(channelCount, loopFrames, sampleRate);
+    const requestedFadeFrames = Math.max(
+      1,
+      Math.floor(sampleRate * Math.max(0.002, Number(edgeFadeSeconds) || CHASE_LOOP_EDGE_FADE_SECONDS))
+    );
+    const fadeFrames = Math.min(requestedFadeFrames, Math.max(1, Math.floor(loopFrames * 0.24)));
+
+    for (let channel = 0; channel < channelCount; channel += 1) {
+      const source = buffer.getChannelData(channel);
+      const target = loopBuffer.getChannelData(channel);
+      target.set(source.subarray(startFrame, startFrame + loopFrames));
+      for (let i = 0; i < fadeFrames; i += 1) {
+        const fadeIn = (i + 1) / (fadeFrames + 1);
+        const fadeOut = (fadeFrames - i) / (fadeFrames + 1);
+        target[i] *= fadeIn;
+        const outIndex = loopFrames - 1 - i;
+        target[outIndex] *= fadeOut;
+      }
+      target[0] = 0;
+      target[loopFrames - 1] = 0;
+    }
+
+    return loopBuffer;
+  }
+
   function playTrimmedSampleBuffer(buffer, startOffset, gainValue, options = null) {
     if (!audio.ctx || !audio.enabled || !audio.sfxBus || !buffer) return false;
     const opts = options && typeof options === "object" ? options : {};
@@ -2739,9 +3537,83 @@
     );
   }
 
+  function ensurePoisonBottleBreakSampleLoaded() {
+    if (!audio.ctx) return;
+    if (audio.poisonBottleBreakBuffer || audio.poisonBottleBreakLoadPromise) return;
+    audio.poisonBottleBreakLoadPromise = (async () => {
+      try {
+        const data = await loadAudioArrayBuffer(POISON_BOTTLE_BREAK_SFX_SRC);
+        const decoded = await decodeAudioBuffer(audio.ctx, data);
+        audio.poisonBottleBreakBuffer = decoded;
+        audio.poisonBottleBreakTrimStart = detectLeadingSignalStartSeconds(decoded, {
+          threshold: POISON_BOTTLE_BREAK_SFX_TRIM_THRESHOLD,
+          maxScanSeconds: POISON_BOTTLE_BREAK_SFX_MAX_SCAN_SECONDS,
+          preRollSeconds: POISON_BOTTLE_BREAK_SFX_MIN_PRE_ROLL_SECONDS,
+        });
+      } catch (err) {
+        console.warn("Failed to load poison bottle break sample", err);
+        audio.poisonBottleBreakBuffer = null;
+        audio.poisonBottleBreakTrimStart = 0;
+      } finally {
+        audio.poisonBottleBreakLoadPromise = null;
+      }
+    })();
+  }
+
+  function playPoisonBottleBreakSample(amp) {
+    if (!audio.ctx || !audio.enabled || !audio.sfxBus) return false;
+    if (!audio.poisonBottleBreakBuffer) {
+      ensurePoisonBottleBreakSampleLoaded();
+      return false;
+    }
+    return playTrimmedSampleBuffer(
+      audio.poisonBottleBreakBuffer,
+      audio.poisonBottleBreakTrimStart,
+      clamp(POISON_BOTTLE_BREAK_SFX_GAIN * amp, 0.0001, 1.15),
+      { fadeInSeconds: 0.003, fadeOutSeconds: 0.026 }
+    );
+  }
+
+  function ensureSkeletonArrowShootSampleLoaded() {
+    if (!audio.ctx) return;
+    if (audio.skeletonArrowShootBuffer || audio.skeletonArrowShootLoadPromise) return;
+    audio.skeletonArrowShootLoadPromise = (async () => {
+      try {
+        const data = await loadAudioArrayBuffer(SKELETON_ARROW_SHOOT_SFX_SRC);
+        const decoded = await decodeAudioBuffer(audio.ctx, data);
+        audio.skeletonArrowShootBuffer = decoded;
+        audio.skeletonArrowShootTrimStart = detectLeadingSignalStartSeconds(decoded, {
+          threshold: SKELETON_ARROW_SHOOT_SFX_TRIM_THRESHOLD,
+          maxScanSeconds: SKELETON_ARROW_SHOOT_SFX_MAX_SCAN_SECONDS,
+          preRollSeconds: SKELETON_ARROW_SHOOT_SFX_MIN_PRE_ROLL_SECONDS,
+        });
+      } catch (err) {
+        console.warn("Failed to load skeleton arrow shoot sample", err);
+        audio.skeletonArrowShootBuffer = null;
+        audio.skeletonArrowShootTrimStart = 0;
+      } finally {
+        audio.skeletonArrowShootLoadPromise = null;
+      }
+    })();
+  }
+
+  function playSkeletonArrowShootSample(amp) {
+    if (!audio.ctx || !audio.enabled || !audio.sfxBus) return false;
+    if (!audio.skeletonArrowShootBuffer) {
+      ensureSkeletonArrowShootSampleLoaded();
+      return false;
+    }
+    return playTrimmedSampleBuffer(
+      audio.skeletonArrowShootBuffer,
+      audio.skeletonArrowShootTrimStart,
+      clamp(SKELETON_ARROW_SHOOT_SFX_GAIN * amp, 0.0001, 1.2),
+      { fadeInSeconds: 0.0025, fadeOutSeconds: 0.02 }
+    );
+  }
+
   function ensureLionAggroSampleLoaded() {
     if (!audio.ctx) return;
-    if (audio.lionAggroBuffer || audio.lionAggroLoadPromise) return;
+    if ((audio.lionAggroBuffer && audio.lionAggroLoopBuffer) || audio.lionAggroLoadPromise) return;
     audio.lionAggroLoadPromise = (async () => {
       try {
         const data = await loadAudioArrayBuffer(LION_AGGRO_SFX_SRC);
@@ -2752,9 +3624,11 @@
           maxScanSeconds: LION_AGGRO_SFX_MAX_SCAN_SECONDS,
           preRollSeconds: LION_AGGRO_SFX_MIN_PRE_ROLL_SECONDS,
         });
+        audio.lionAggroLoopBuffer = buildTrimmedLoopBuffer(decoded, audio.lionAggroTrimStart);
       } catch (err) {
         console.warn("Failed to load lion aggro sample", err);
         audio.lionAggroBuffer = null;
+        audio.lionAggroLoopBuffer = null;
         audio.lionAggroTrimStart = 0;
       } finally {
         audio.lionAggroLoadPromise = null;
@@ -2764,7 +3638,7 @@
 
   function ensureWolfChaseSampleLoaded() {
     if (!audio.ctx) return;
-    if (audio.wolfChaseBuffer || audio.wolfChaseLoadPromise) return;
+    if ((audio.wolfChaseBuffer && audio.wolfChaseLoopBuffer) || audio.wolfChaseLoadPromise) return;
     audio.wolfChaseLoadPromise = (async () => {
       try {
         const data = await loadAudioArrayBuffer(WOLF_CHASE_SFX_SRC);
@@ -2775,9 +3649,11 @@
           maxScanSeconds: WOLF_CHASE_SFX_MAX_SCAN_SECONDS,
           preRollSeconds: WOLF_CHASE_SFX_MIN_PRE_ROLL_SECONDS,
         });
+        audio.wolfChaseLoopBuffer = buildTrimmedLoopBuffer(decoded, audio.wolfChaseTrimStart);
       } catch (err) {
         console.warn("Failed to load wolf chase sample", err);
         audio.wolfChaseBuffer = null;
+        audio.wolfChaseLoopBuffer = null;
         audio.wolfChaseTrimStart = 0;
       } finally {
         audio.wolfChaseLoadPromise = null;
@@ -2787,7 +3663,7 @@
 
   function ensurePolarBearChaseSampleLoaded() {
     if (!audio.ctx) return;
-    if (audio.polarBearChaseBuffer || audio.polarBearChaseLoadPromise) return;
+    if ((audio.polarBearChaseBuffer && audio.polarBearChaseLoopBuffer) || audio.polarBearChaseLoadPromise) return;
     audio.polarBearChaseLoadPromise = (async () => {
       try {
         const data = await loadAudioArrayBuffer(POLAR_BEAR_CHASE_SFX_SRC);
@@ -2798,9 +3674,11 @@
           maxScanSeconds: POLAR_BEAR_CHASE_SFX_MAX_SCAN_SECONDS,
           preRollSeconds: POLAR_BEAR_CHASE_SFX_MIN_PRE_ROLL_SECONDS,
         });
+        audio.polarBearChaseLoopBuffer = buildTrimmedLoopBuffer(decoded, audio.polarBearChaseTrimStart);
       } catch (err) {
         console.warn("Failed to load polar bear chase sample", err);
         audio.polarBearChaseBuffer = null;
+        audio.polarBearChaseLoopBuffer = null;
         audio.polarBearChaseTrimStart = 0;
       } finally {
         audio.polarBearChaseLoadPromise = null;
@@ -2813,6 +3691,7 @@
       return {
         ensureLoaded: ensureLionAggroSampleLoaded,
         buffer: audio.lionAggroBuffer,
+        loopBuffer: audio.lionAggroLoopBuffer,
         trimStart: audio.lionAggroTrimStart,
         gainScale: LION_AGGRO_SFX_GAIN,
       };
@@ -2821,6 +3700,7 @@
       return {
         ensureLoaded: ensureWolfChaseSampleLoaded,
         buffer: audio.wolfChaseBuffer,
+        loopBuffer: audio.wolfChaseLoopBuffer,
         trimStart: audio.wolfChaseTrimStart,
         gainScale: WOLF_CHASE_SFX_GAIN,
       };
@@ -2829,6 +3709,7 @@
       return {
         ensureLoaded: ensurePolarBearChaseSampleLoaded,
         buffer: audio.polarBearChaseBuffer,
+        loopBuffer: audio.polarBearChaseLoopBuffer,
         trimStart: audio.polarBearChaseTrimStart,
         gainScale: POLAR_BEAR_CHASE_SFX_GAIN,
       };
@@ -2843,19 +3724,36 @@
     return audio.monsterChaseVoices;
   }
 
+  function ensureMonsterChaseVoiceStopTimesMap() {
+    if (!(audio.monsterChaseVoiceStopTimes instanceof Map)) {
+      audio.monsterChaseVoiceStopTimes = new Map();
+    }
+    return audio.monsterChaseVoiceStopTimes;
+  }
+
   function stopMonsterChaseVoiceByKey(key, fadeSeconds = 0.09) {
     const map = ensureMonsterChaseVoicesMap();
     const entry = map.get(key);
     if (!entry) return;
     map.delete(key);
     const now = audio.ctx?.currentTime || 0;
+    const stopTimes = ensureMonsterChaseVoiceStopTimesMap();
+    stopTimes.set(String(key), now);
+    if (stopTimes.size > 512) {
+      const staleBefore = now - 18;
+      for (const [entryKey, value] of stopTimes.entries()) {
+        if (!Number.isFinite(value) || value < staleBefore) {
+          stopTimes.delete(entryKey);
+        }
+      }
+    }
     const fade = clamp(Number(fadeSeconds) || 0.09, 0.01, 0.35);
     if (entry.gain?.gain) {
       try {
         const current = Math.max(0.0001, Number(entry.gain.gain.value) || 0.0001);
         entry.gain.gain.cancelScheduledValues(now);
         entry.gain.gain.setValueAtTime(current, now);
-        entry.gain.gain.exponentialRampToValueAtTime(0.0001, now + fade);
+        entry.gain.gain.linearRampToValueAtTime(0.0001, now + fade);
       } catch (err) {
         // ignore envelope errors
       }
@@ -2908,7 +3806,25 @@
 
   function syncMonsterChaseVoice(key, monsterType, shouldPlay, amp = 1) {
     const map = ensureMonsterChaseVoicesMap();
+    const now = audio.ctx?.currentTime || 0;
+    const existing = map.get(key);
+
     if (!shouldPlay) {
+      if (!existing) return;
+      const lastWantedAt = Number(existing.lastWantedAt) || now;
+      if ((now - lastWantedAt) < MONSTER_CHASE_RELEASE_HOLD_SECONDS) {
+        const duckGain = clamp(
+          (Number(existing.targetGain) || 0.18) * MONSTER_CHASE_DUCK_GAIN_MULT,
+          0.0001,
+          0.9
+        );
+        try {
+          existing.gain.gain.setTargetAtTime(duckGain, now, 0.09);
+        } catch (err) {
+          // ignore gain update errors
+        }
+        return;
+      }
       stopMonsterChaseVoiceByKey(key);
       return;
     }
@@ -2917,12 +3833,12 @@
       stopMonsterChaseVoiceByKey(key);
       return;
     }
-    const now = audio.ctx?.currentTime || 0;
     const targetGain = clamp((profile.gainScale || 0.7) * amp, 0.0001, 1.25);
-    const existing = map.get(key);
     if (existing && existing.monsterType === monsterType) {
+      existing.lastWantedAt = now;
+      existing.targetGain = targetGain;
       try {
-        existing.gain.gain.setTargetAtTime(targetGain, now, 0.05);
+        existing.gain.gain.setTargetAtTime(targetGain, now, 0.08);
       } catch (err) {
         // ignore gain update errors
       }
@@ -2931,43 +3847,36 @@
     if (existing) {
       stopMonsterChaseVoiceByKey(key, 0.04);
     }
-    if (!profile.buffer) {
+    const loopBuffer = profile.loopBuffer || profile.buffer;
+    if (!loopBuffer) {
       if (typeof profile.ensureLoaded === "function") profile.ensureLoaded();
+      return;
+    }
+    const stopTimes = ensureMonsterChaseVoiceStopTimesMap();
+    const lastStopAt = Number(stopTimes.get(String(key)));
+    if (
+      Number.isFinite(lastStopAt)
+      && (now - lastStopAt) < MONSTER_CHASE_RESTART_GUARD_SECONDS
+    ) {
       return;
     }
 
     const source = audio.ctx.createBufferSource();
     const gain = audio.ctx.createGain();
-    source.buffer = profile.buffer;
+    source.buffer = loopBuffer;
     source.loop = true;
     const maxStart = Math.max(0, source.buffer.duration - 0.01);
-    const rawStart = clamp(Number(profile.trimStart) || 0, 0, maxStart);
+    const rawStart = loopBuffer === profile.loopBuffer
+      ? 0
+      : clamp(Number(profile.trimStart) || 0, 0, maxStart);
     const startOffset = snapOffsetToZeroCrossing(
       source.buffer,
       rawStart,
       CHASE_LOOP_ZERO_CROSS_WINDOW_SECONDS
     );
-    if (startOffset > 0 && source.buffer.duration - startOffset > 0.01) {
-      source.loopStart = startOffset;
-      const rawLoopEnd = Math.max(
-        startOffset + CHASE_LOOP_MIN_SPAN_SECONDS,
-        source.buffer.duration - 0.004
-      );
-      const snappedLoopEnd = snapOffsetToZeroCrossing(
-        source.buffer,
-        rawLoopEnd,
-        CHASE_LOOP_ZERO_CROSS_WINDOW_SECONDS * 1.4
-      );
-      const safeLoopEnd = clamp(
-        snappedLoopEnd,
-        startOffset + CHASE_LOOP_MIN_SPAN_SECONDS,
-        source.buffer.duration
-      );
-      source.loopEnd = safeLoopEnd;
-    }
 
     gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.exponentialRampToValueAtTime(targetGain, now + 0.06);
+    gain.gain.linearRampToValueAtTime(targetGain, now + 0.08);
     source.connect(gain);
     gain.connect(audio.sfxBus);
     source.onended = () => {
@@ -2991,7 +3900,13 @@
       }
       return;
     }
-    map.set(key, { monsterType, source, gain });
+    map.set(key, {
+      monsterType,
+      source,
+      gain,
+      lastWantedAt: now,
+      targetGain,
+    });
   }
 
   function getNoiseBuffer() {
@@ -4388,6 +5303,46 @@
       return;
     }
 
+    if (kind === "poisonBottleBreak") {
+      if (playPoisonBottleBreakSample(amp)) return;
+      playSfxNoise({
+        duration: 0.14,
+        peak: 0.0062 * amp,
+        filterType: "bandpass",
+        filterFreq: 1850 + Math.random() * 340,
+        filterQ: 0.78,
+      });
+      playSfxTone({
+        wave: "triangle",
+        freqStart: 420 + Math.random() * 90,
+        freqEnd: 188 + Math.random() * 45,
+        duration: 0.16,
+        attack: 0.008,
+        peak: 0.0072 * amp,
+      });
+      return;
+    }
+
+    if (kind === "skeletonArrowShoot") {
+      if (playSkeletonArrowShootSample(amp)) return;
+      playSfxTone({
+        wave: "triangle",
+        freqStart: 1120 + Math.random() * 220,
+        freqEnd: 420 + Math.random() * 110,
+        duration: 0.11,
+        attack: 0.004,
+        peak: 0.006 * amp,
+      });
+      playSfxNoise({
+        duration: 0.07,
+        peak: 0.0022 * amp,
+        filterType: "highpass",
+        filterFreq: 1850 + Math.random() * 520,
+        filterQ: 0.68,
+      });
+      return;
+    }
+
     if (kind === "dayWind") {
       playSfxNoise({
         duration: 1.35,
@@ -4663,13 +5618,10 @@
 
   function getLocalProfile() {
     let name = "";
-    let color = "";
     try {
       name = window.localStorage.getItem("island_mp_name") || "";
-      color = window.localStorage.getItem("island_mp_color") || "";
     } catch (err) {
       name = "";
-      color = "";
     }
     if (!name) {
       name = `Survivor-${Math.floor(100 + Math.random() * 900)}`;
@@ -4679,14 +5631,7 @@
         // ignore
       }
     }
-    if (!color) {
-      color = PLAYER_COLORS[Math.floor(Math.random() * PLAYER_COLORS.length)];
-      try {
-        window.localStorage.setItem("island_mp_color", color);
-      } catch (err) {
-        // ignore
-      }
-    }
+    const color = pickRandomDistinctPlayerColor();
     return { name, color };
   }
 
@@ -4766,10 +5711,26 @@
       if (mpJoin) mpJoin.disabled = true;
       return;
     }
+    try {
+      net.peer?.destroy();
+    } catch (err) {
+      // ignore destroy errors
+    }
+    net.peer = null;
+    net.hostConn = null;
+    net.connections.clear();
+    net.players.clear();
+    net.pendingPlaces.clear();
+    net.pendingHousePlaces.clear();
+    net.pendingHouseMoves.clear();
+    net.debugBoatPlaceReceipts.clear();
+    net.isHost = false;
+    net.ready = false;
+    net.playerId = null;
     net.enabled = true;
     const profile = getLocalProfile();
     net.localName = profile.name;
-    net.localColor = profile.color;
+    net.localColor = normalizeHexColor(profile.color) || pickRandomDistinctPlayerColor(getAssignedPlayerColorSet());
     net.roomId = getOrCreateRoomId();
     net.hostId = `${net.roomId}-host`;
     if (roomDisplay) {
@@ -4779,10 +5740,12 @@
     if (mpCopy) {
       mpCopy.disabled = false;
       mpCopy.textContent = window.location.protocol === "file:" ? "Copy Room" : "Copy Link";
+      mpCopy.removeEventListener("click", copyRoomLink);
       mpCopy.addEventListener("click", copyRoomLink);
     }
     if (mpJoin) {
       mpJoin.disabled = false;
+      mpJoin.removeEventListener("click", joinRoomPrompt);
       mpJoin.addEventListener("click", joinRoomPrompt);
     }
     connectAsHostCandidate();
@@ -4793,10 +5756,26 @@
       updateMpStatus("MP: Offline");
       return;
     }
+    try {
+      net.peer?.destroy();
+    } catch (err) {
+      // ignore destroy errors
+    }
+    net.peer = null;
+    net.hostConn = null;
+    net.connections.clear();
+    net.players.clear();
+    net.pendingPlaces.clear();
+    net.pendingHousePlaces.clear();
+    net.pendingHouseMoves.clear();
+    net.debugBoatPlaceReceipts.clear();
+    net.isHost = false;
+    net.ready = false;
+    net.playerId = null;
     net.enabled = true;
     const profile = getLocalProfile();
     net.localName = profile.name;
-    net.localColor = profile.color;
+    net.localColor = normalizeHexColor(profile.color) || pickRandomDistinctPlayerColor(getAssignedPlayerColorSet());
     net.roomId = roomId;
     net.hostId = `${roomId}-host`;
     if (roomDisplay) {
@@ -4808,10 +5787,50 @@
 
   function hideStartScreen() {
     if (startScreen) startScreen.classList.add("hidden");
+    setStartMenuView("main");
+  }
+
+  function setStartMenuView(view = "main") {
+    const nextView = view === "play" || view === "options" ? view : "main";
+    if (startMainMenu) startMainMenu.classList.toggle("active", nextView === "main");
+    if (startPlayMenu) startPlayMenu.classList.toggle("active", nextView === "play");
+    if (startOptionsMenu) startOptionsMenu.classList.toggle("active", nextView === "options");
+  }
+
+  function quitFromStartMenu() {
+    try {
+      window.close();
+    } catch (err) {
+      // ignore close errors
+    }
+    window.setTimeout(() => {
+      if (document.hidden) return;
+      try {
+        window.location.replace("about:blank");
+      } catch (err) {
+        // ignore navigation errors
+      }
+    }, 120);
   }
 
   function startSolo() {
+    try {
+      net.peer?.destroy();
+    } catch (err) {
+      // ignore destroy errors
+    }
+    net.peer = null;
+    net.hostConn = null;
+    net.connections.clear();
+    net.players.clear();
+    net.pendingPlaces.clear();
+    net.pendingHousePlaces.clear();
+    net.pendingHouseMoves.clear();
+    net.debugBoatPlaceReceipts.clear();
     net.enabled = false;
+    net.ready = false;
+    net.isHost = false;
+    net.playerId = null;
     hideStartScreen();
     if (!state.world) {
       loadOrCreateGame();
@@ -4987,6 +6006,12 @@
       case "housePlaceResult":
         if (!net.isHost) handleHousePlaceResult(message);
         break;
+      case "houseMove":
+        if (net.isHost) handleHouseMoveRequest(conn, message);
+        break;
+      case "houseMoveResult":
+        if (!net.isHost) handleHouseMoveResult(message);
+        break;
       case "harvest":
         if (net.isHost) handleHarvestRequest(conn, message);
         break;
@@ -5135,10 +6160,27 @@
         vy: projectile.vy,
         life: projectile.life,
         maxLife: projectile.maxLife,
+        maxDistance: projectile.maxDistance,
+        distanceTraveled: projectile.distanceTraveled,
         damage: projectile.damage,
         radius: projectile.radius,
         poisonDuration: Math.max(0, Number(projectile.poisonDuration) || 0),
         poisonDps: Math.max(0, Number(projectile.poisonDps) || 0),
+        cloudRadius: Math.max(0, Number(projectile.cloudRadius) || 0),
+        cloudDuration: Math.max(0, Number(projectile.cloudDuration) || 0),
+        cloudAffectInterval: Math.max(0, Number(projectile.cloudAffectInterval) || 0),
+      })),
+      poisonClouds: (world.poisonClouds ?? []).map((cloud) => ({
+        id: cloud.id,
+        x: cloud.x,
+        y: cloud.y,
+        life: cloud.life,
+        maxLife: cloud.maxLife,
+        radius: cloud.radius,
+        poisonDuration: Math.max(0, Number(cloud.poisonDuration) || 0),
+        poisonDps: Math.max(0, Number(cloud.poisonDps) || 0),
+        affectInterval: Math.max(0, Number(cloud.affectInterval) || 0),
+        monsterType: cloud.monsterType || "marsh_stalker",
       })),
       animals: (world.animals ?? []).map((animal) => ({
         id: animal.id,
@@ -5378,7 +6420,18 @@
     return built;
   }
 
-  function buildProjectilesFromSnapshot(previous, snapshotProjectiles) {
+  function playSkeletonArrowShootWorldSfx(world, x, y, intensity = 0.74) {
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+    if (!shouldPlayWorldSfx(world, x, y, CONFIG.tileSize * 13)) return;
+    const worldTag = getLocalWorldAudioTag(world);
+    if (!canPlayLimitedSfx(`monster:skeleton-arrow:${worldTag}`, 62)) return;
+    playSfx("skeletonArrowShoot", {
+      intensity,
+      distance: Math.hypot(x - state.player.x, y - state.player.y),
+    });
+  }
+
+  function buildProjectilesFromSnapshot(previous, snapshotProjectiles, world = null) {
     const prevMap = new Map(
       Array.isArray(previous) ? previous.map((projectile) => [projectile.id, projectile]) : []
     );
@@ -5386,22 +6439,78 @@
     return snapshotProjectiles.map((projectile) => {
       if (!Number.isInteger(projectile?.id)) return null;
       const prev = prevMap.get(projectile.id);
+      const projectileType = projectile.type || "arrow";
+      const monsterType = projectile.monsterType || prev?.monsterType || "skeleton";
+      if (
+        netIsClient()
+        && world
+        && !prev
+        && projectileType === "arrow"
+        && monsterType === "skeleton"
+        && Number.isFinite(projectile.x)
+        && Number.isFinite(projectile.y)
+      ) {
+        playSkeletonArrowShootWorldSfx(world, projectile.x, projectile.y, 0.72);
+      }
       return {
         id: projectile.id,
-        type: projectile.type || "arrow",
-        monsterType: projectile.monsterType || prev?.monsterType || "skeleton",
+        type: projectileType,
+        monsterType,
         x: projectile.x,
         y: projectile.y,
         vx: projectile.vx,
         vy: projectile.vy,
         life: projectile.life,
         maxLife: projectile.maxLife,
+        maxDistance: Number(projectile.maxDistance) || 0,
+        distanceTraveled: Number(projectile.distanceTraveled) || 0,
         damage: projectile.damage,
         radius: projectile.radius,
         poisonDuration: Math.max(0, Number(projectile.poisonDuration) || 0),
         poisonDps: Math.max(0, Number(projectile.poisonDps) || 0),
+        cloudRadius: Math.max(0, Number(projectile.cloudRadius) || 0),
+        cloudDuration: Math.max(0, Number(projectile.cloudDuration) || 0),
+        cloudAffectInterval: Math.max(0, Number(projectile.cloudAffectInterval) || 0),
         renderX: prev?.renderX ?? projectile.x,
         renderY: prev?.renderY ?? projectile.y,
+      };
+    }).filter(Boolean);
+  }
+
+  function buildPoisonCloudsFromSnapshot(previous, snapshotClouds) {
+    const prevMap = new Map(
+      Array.isArray(previous) ? previous.map((cloud) => [cloud.id, cloud]) : []
+    );
+    if (!Array.isArray(snapshotClouds)) return [];
+    return snapshotClouds.map((cloud) => {
+      if (!Number.isInteger(cloud?.id)) return null;
+      const prev = prevMap.get(cloud.id);
+      return {
+        id: cloud.id,
+        x: cloud.x,
+        y: cloud.y,
+        life: Math.max(0, Number(cloud.life) || 0),
+        maxLife: Math.max(0.01, Number(cloud.maxLife) || POISON_BOTTLE.cloudDuration),
+        radius: clamp(
+          Number(cloud.radius) || POISON_BOTTLE.cloudRadius,
+          POISON_CLOUD.minRadius,
+          POISON_CLOUD.maxRadius
+        ),
+        poisonDuration: clamp(Number(cloud.poisonDuration) || 0, 0, POISON_STATUS.maxDuration),
+        poisonDps: clamp(
+          Number(cloud.poisonDps) || POISON_STATUS.defaultDps,
+          POISON_STATUS.minDps,
+          POISON_STATUS.maxDps
+        ),
+        affectInterval: clamp(
+          Number(cloud.affectInterval) || POISON_BOTTLE.cloudAffectInterval,
+          POISON_CLOUD.minAffectInterval,
+          POISON_CLOUD.maxAffectInterval
+        ),
+        monsterType: cloud.monsterType || prev?.monsterType || "marsh_stalker",
+        nextAffectByPlayer: Object.create(null),
+        renderX: prev?.renderX ?? cloud.x,
+        renderY: prev?.renderY ?? cloud.y,
       };
     }).filter(Boolean);
   }
@@ -5455,10 +6564,27 @@
         vy: projectile.vy,
         life: projectile.life,
         maxLife: projectile.maxLife,
+        maxDistance: projectile.maxDistance,
+        distanceTraveled: projectile.distanceTraveled,
         damage: projectile.damage,
         radius: projectile.radius,
         poisonDuration: Math.max(0, Number(projectile.poisonDuration) || 0),
         poisonDps: Math.max(0, Number(projectile.poisonDps) || 0),
+        cloudRadius: Math.max(0, Number(projectile.cloudRadius) || 0),
+        cloudDuration: Math.max(0, Number(projectile.cloudDuration) || 0),
+        cloudAffectInterval: Math.max(0, Number(projectile.cloudAffectInterval) || 0),
+      })),
+      poisonClouds: (world.poisonClouds ?? []).map((cloud) => ({
+        id: cloud.id,
+        x: cloud.x,
+        y: cloud.y,
+        life: cloud.life,
+        maxLife: cloud.maxLife,
+        radius: cloud.radius,
+        poisonDuration: Math.max(0, Number(cloud.poisonDuration) || 0),
+        poisonDps: Math.max(0, Number(cloud.poisonDps) || 0),
+        affectInterval: Math.max(0, Number(cloud.affectInterval) || 0),
+        monsterType: cloud.monsterType || "marsh_stalker",
       })),
       animals: (world.animals ?? []).map((animal) => ({
         id: animal.id,
@@ -5554,7 +6680,11 @@
       world.monsters = buildMonstersFromSnapshot(world.monsters, motionWorld.monsters, world);
     }
     if (Array.isArray(motionWorld.projectiles)) {
-      world.projectiles = buildProjectilesFromSnapshot(world.projectiles, motionWorld.projectiles);
+      world.projectiles = buildProjectilesFromSnapshot(world.projectiles, motionWorld.projectiles, world);
+    }
+    if (Array.isArray(motionWorld.poisonClouds)) {
+      world.poisonClouds = buildPoisonCloudsFromSnapshot(world.poisonClouds, motionWorld.poisonClouds);
+      world.nextPoisonCloudId = world.poisonClouds.reduce((max, cloud) => Math.max(max, (cloud.id || 0) + 1), 1);
     }
     if (Array.isArray(motionWorld.animals)) {
       applyAnimals(world, motionWorld.animals);
@@ -5705,6 +6835,7 @@
     state.structureGrid = new Array(world.size * world.size).fill(null);
     if (!Array.isArray(structures)) return;
     const orderedStructures = sortStructureEntriesForPlacement(structures);
+    normalizeBridgeEntriesForLoad(world, orderedStructures);
     const bridgeSet = new Set(
       orderedStructures
         .filter((entry) => entry && (entry.type === "bridge" || entry.type === "dock"))
@@ -5715,9 +6846,7 @@
       if (!entry) continue;
       const normalized = { ...entry, type: normalizeLegacyStructureType(entry.type) };
       if (!isStructureValidOnLoad(world, normalized, bridgeSet, anchoredBridgeSet)) continue;
-      const storageSize = normalized.type === "robot"
-        ? ROBOT_STORAGE_SIZE
-        : ((normalized.type === "chest" || normalized.type === "shipwreck") ? CHEST_SIZE : null);
+      const storageSize = getStorageSizeForStructureType(normalized.type, null);
       clearResourcesForFootprint(world, normalized.type, normalized.tx, normalized.ty);
       const structure = addStructure(normalized.type, normalized.tx, normalized.ty, {
         storage: Array.isArray(entry.storage)
@@ -5800,6 +6929,8 @@
         if (typeof entry.hp === "number") state.player.hp = entry.hp;
         if (typeof entry.maxHp === "number") state.player.maxHp = entry.maxHp;
         if (typeof entry.toolTier === "number") state.player.toolTier = entry.toolTier;
+        const snapshotColor = normalizeHexColor(entry.color);
+        if (snapshotColor) net.localColor = snapshotColor;
         state.player.unlocks = normalizeUnlocks(entry.unlocks ?? state.player.unlocks);
         state.player.checkpoint = normalizeCheckpoint(entry.checkpoint) ?? state.player.checkpoint;
         updateHealthUI();
@@ -5807,10 +6938,11 @@
         continue;
       }
       const prev = previous.get(entry.id);
+      const normalizedColor = normalizeHexColor(entry.color) || normalizeHexColor(prev?.color) || "#6fa8ff";
       next.set(entry.id, {
         id: entry.id,
         name: entry.name ?? "Survivor",
-        color: entry.color ?? "#ffffff",
+        color: normalizedColor,
         x: entry.x ?? 0,
         y: entry.y ?? 0,
         facing: entry.facing ?? { x: 1, y: 0 },
@@ -5843,6 +6975,11 @@
           existingById.hostileBlocked = entry.hostileBlocked;
         } else {
           existingById.hostileBlocked = shouldBlockCaveHostilesForSurfaceTile(world, existingById.tx, existingById.ty);
+        }
+        if (existingById.hostileBlocked && existingById.world) {
+          existingById.world.monsters = [];
+          existingById.world.projectiles = [];
+          existingById.world.poisonClouds = [];
         }
         continue;
       }
@@ -5931,7 +7068,9 @@
     applyAnimals(world, snapshot.world?.animals ?? []);
     applyVillagers(world, snapshot.world?.villagers ?? []);
     world.monsters = buildMonstersFromSnapshot(world.monsters, snapshot.world?.monsters, world);
-    world.projectiles = buildProjectilesFromSnapshot(world.projectiles, snapshot.world?.projectiles);
+    world.projectiles = buildProjectilesFromSnapshot(world.projectiles, snapshot.world?.projectiles, world);
+    world.poisonClouds = buildPoisonCloudsFromSnapshot(world.poisonClouds, snapshot.world?.poisonClouds);
+    world.nextPoisonCloudId = world.poisonClouds.reduce((max, cloud) => Math.max(max, (cloud.id || 0) + 1), 1);
 
     if (Array.isArray(world.caves) && Array.isArray(snapshot.caves)) {
       for (const cave of world.caves) {
@@ -5946,10 +7085,13 @@
         applyAnimals(cave.world, caveSnapshot.world?.animals ?? []);
         applyVillagers(cave.world, caveSnapshot.world?.villagers ?? []);
         cave.world.monsters = buildMonstersFromSnapshot(cave.world.monsters, caveSnapshot.world?.monsters, cave.world);
-        cave.world.projectiles = buildProjectilesFromSnapshot(cave.world.projectiles, caveSnapshot.world?.projectiles);
+        cave.world.projectiles = buildProjectilesFromSnapshot(cave.world.projectiles, caveSnapshot.world?.projectiles, cave.world);
+        cave.world.poisonClouds = buildPoisonCloudsFromSnapshot(cave.world.poisonClouds, caveSnapshot.world?.poisonClouds);
+        cave.world.nextPoisonCloudId = cave.world.poisonClouds.reduce((max, cloud) => Math.max(max, (cloud.id || 0) + 1), 1);
         if (isCaveHostilesBlocked(world, cave)) {
           cave.world.monsters = [];
           cave.world.projectiles = [];
+          cave.world.poisonClouds = [];
         }
       }
     }
@@ -5989,7 +7131,8 @@
       net.connections.set(conn.peer, conn);
     }
     const name = typeof message.name === "string" ? message.name.slice(0, 16) : "Survivor";
-    const color = typeof message.color === "string" ? message.color : PLAYER_COLORS[0];
+    const usedColors = getAssignedPlayerColorSet();
+    const color = pickRandomDistinctPlayerColor(usedColors);
     const spawn = findSpawnForJoin();
     const player = {
       id: conn.peer,
@@ -6060,6 +7203,10 @@
       state.player.toolTier = message.playerState.toolTier ?? state.player.toolTier;
       state.player.unlocks = normalizeUnlocks(message.playerState.unlocks ?? state.player.unlocks);
       state.player.checkpoint = normalizeCheckpoint(message.playerState.checkpoint) ?? state.player.checkpoint;
+      const assignedColor = normalizeHexColor(message.playerState.color);
+      if (assignedColor) {
+        net.localColor = assignedColor;
+      }
       updateHealthUI();
       updateToolDisplay();
     }
@@ -6073,7 +7220,6 @@
     const player = net.players.get(conn.peer);
     if (!player) return;
     if (typeof message.name === "string") player.name = message.name;
-    if (typeof message.color === "string") player.color = message.color;
     if (typeof message.x === "number") player.x = message.x;
     if (typeof message.y === "number") player.y = message.y;
     if (message.facing) player.facing = message.facing;
@@ -6117,6 +7263,8 @@
 
   function applyRemotePlayerUpdate(message) {
     if (!message.id || message.id === net.playerId) {
+      const syncedColor = normalizeHexColor(message?.color);
+      if (syncedColor) net.localColor = syncedColor;
       if (typeof message.hp === "number") {
         state.player.hp = message.hp;
         updateHealthUI();
@@ -6131,10 +7279,11 @@
       return;
     }
     const current = net.players.get(message.id) || {};
+    const syncedColor = normalizeHexColor(message.color) || normalizeHexColor(current.color) || "#6fa8ff";
     net.players.set(message.id, {
       id: message.id,
       name: message.name ?? current.name ?? "Survivor",
-      color: message.color ?? current.color ?? "#ffffff",
+      color: syncedColor,
       x: typeof message.x === "number" ? message.x : current.x ?? 0,
       y: typeof message.y === "number" ? message.y : current.y ?? 0,
       facing: message.facing ?? current.facing ?? { x: 1, y: 0 },
@@ -6294,6 +7443,82 @@
     net.pendingHousePlaces.delete(message.requestId);
   }
 
+  function handleHouseMoveRequest(conn, message) {
+    const sendResult = (ok) => {
+      if (conn?.open) {
+        conn.send({
+          type: "houseMoveResult",
+          requestId: message?.requestId,
+          ok: !!ok,
+        });
+      }
+    };
+    if (!conn || !message) {
+      sendResult(false);
+      return;
+    }
+    const player = net.players.get(conn.peer);
+    if (!player) {
+      sendResult(false);
+      return;
+    }
+    const house = getStructureAt(message.houseTx, message.houseTy);
+    if (!house || !isHouseType(house.type)) {
+      sendResult(false);
+      return;
+    }
+    const fromTx = Math.floor(Number(message.fromTx));
+    const fromTy = Math.floor(Number(message.fromTy));
+    const toTx = Math.floor(Number(message.toTx));
+    const toTy = Math.floor(Number(message.toTy));
+    if (!Number.isInteger(fromTx) || !Number.isInteger(fromTy) || !Number.isInteger(toTx) || !Number.isInteger(toTy)) {
+      sendResult(false);
+      return;
+    }
+    if (!canRemotePlayerAccessHouseInterior(player, house, fromTx, fromTy, 2.6)) {
+      sendResult(false);
+      return;
+    }
+    if (!canRemotePlayerAccessHouseInterior(player, house, toTx, toTy, 2.6)) {
+      sendResult(false);
+      return;
+    }
+    const source = getInteriorStructureAt(house, fromTx, fromTy);
+    if (!source || !isInteriorPlaceType(source.type)) {
+      sendResult(false);
+      return;
+    }
+    const itemId = getInteriorPlaceItemId(source.type);
+    if (!itemId) {
+      sendResult(false);
+      return;
+    }
+    const result = canPlaceInteriorItem(house, itemId, toTx, toTy, {
+      ignoreTx: fromTx,
+      ignoreTy: fromTy,
+    });
+    if (!result.ok) {
+      sendResult(false);
+      return;
+    }
+    source.tx = toTx;
+    source.ty = toTy;
+    markDirty();
+    sendResult(true);
+  }
+
+  function handleHouseMoveResult(message) {
+    if (!message?.requestId) return;
+    const pending = net.pendingHouseMoves.get(message.requestId);
+    if (!pending) return;
+    if (!message.ok) {
+      setPrompt("Furniture move failed", 0.95);
+    } else {
+      setPrompt(`${getInteriorMoveLabel(pending.type)} moved`, 0.9);
+    }
+    net.pendingHouseMoves.delete(message.requestId);
+  }
+
   function getRemoteActionWorldForPlayer(player, message) {
     if (!player || !state.surfaceWorld) return null;
     if (player.inHut) return null;
@@ -6338,7 +7563,7 @@
     const resId = Number(message.resId);
     if (!Number.isInteger(resId)) return;
     const resource = world.resources?.[resId];
-    if (!resource || resource.removed) return;
+    if (!isResourceInteractable(resource)) return;
     if (!canRemotePlayerReachPoint(player, resource.x, resource.y, 1.35)) return;
     const sourcePlayer = {
       ...player,
@@ -6460,7 +7685,7 @@
     if (structure.type === "robot") {
       ensureRobotMeta(structure);
     }
-    const storageSize = structure.type === "robot" ? ROBOT_STORAGE_SIZE : SHIPWRECK_STORAGE_SIZE;
+    const storageSize = getStorageSizeForStructureType(structure.type, CHEST_SIZE);
     structure.storage = sanitizeInventorySlots(message.storage, storageSize);
     markDirty();
   }
@@ -6789,13 +8014,11 @@
   function applySleepSkipToDawn() {
     state.timeOfDay = 0;
     state.isNight = false;
+    state.surfaceDayBurnGraceTimer = MONSTER_DAY_BURN.dayStartGrace;
     state.checkpointTimer = 0;
     state.animalVocalTimer = 2.4 + Math.random() * 1.8;
     state.surfaceSpawnTimer = MONSTER.spawnInterval;
     state.gameWon = false;
-    if (state.surfaceWorld) {
-      igniteSurfaceMonstersForDay(state.surfaceWorld);
-    }
     updateTimeUI();
     markDirty();
     if (net.isHost && net.connections.size > 0) {
@@ -6936,7 +8159,7 @@
     const attackKind = message.attackKind === "projectile"
       ? "projectile"
       : (message.attackKind === "melee" ? "melee" : null);
-    if (monsterType) {
+    if (monsterType && damageAmount > 0) {
       const attackScalar = attackKind === "projectile" ? 0.9 : 1;
       playSfx("monsterAttackHit", {
         monsterType,
@@ -6944,9 +8167,11 @@
         intensity: (0.45 + Math.min(1, damageAmount / 14) * 0.55) * attackScalar,
       });
     }
-    playSfx("damage", {
-      intensity: 0.7 + Math.min(1, damageAmount / 16) * 0.6,
-    });
+    if (damageAmount > 0) {
+      playSfx("damage", {
+        intensity: 0.7 + Math.min(1, damageAmount / 16) * 0.6,
+      });
+    }
     updateHealthUI();
     if (state.player.hp <= 0) {
       handlePlayerDeath();
@@ -7202,6 +8427,14 @@
         projectile.renderY = projectile.y;
       }
     }
+
+    if (!net.isHost && state.world?.poisonClouds) {
+      for (const cloud of state.world.poisonClouds) {
+        if (!Number.isFinite(cloud.x) || !Number.isFinite(cloud.y)) continue;
+        cloud.renderX = cloud.x;
+        cloud.renderY = cloud.y;
+      }
+    }
   }
 
   function seedToInt(seedStr) {
@@ -7355,6 +8588,33 @@
     if (player?.unlocks?.sword2) return 2;
     if (player?.unlocks?.sword) return 1;
     return 0;
+  }
+
+  function getArmorPoints(player = state.player) {
+    ensurePlayerProgress(player);
+    if (!player?.unlocks) return 0;
+    return SLIME_ARMOR.pieces.reduce(
+      (total, piece) => total + (player.unlocks[piece.unlock] ? piece.points : 0),
+      0
+    );
+  }
+
+  function getArmorDamageReduction(player = state.player) {
+    const points = getArmorPoints(player);
+    if (points <= 0) return 0;
+    return clamp(
+      points * SLIME_ARMOR.reductionPerPoint,
+      0,
+      SLIME_ARMOR.maxDamageReduction
+    );
+  }
+
+  function getReducedDamageForArmor(baseAmount, player = state.player) {
+    const amount = Math.max(0, Number(baseAmount) || 0);
+    if (amount <= 0) return 0;
+    const reduction = getArmorDamageReduction(player);
+    const scaled = amount * (1 - reduction);
+    return Math.max(1, Math.round(scaled));
   }
 
   function hasPlayerUnlock(player, key) {
@@ -7878,6 +9138,18 @@
       }
     }
 
+    if (Array.isArray(world.poisonClouds)) {
+      for (const cloud of world.poisonClouds) {
+        if (!cloud || !Number.isFinite(cloud.x) || !Number.isFinite(cloud.y)) continue;
+        const moved = shiftWorldPos(cloud.x, cloud.y);
+        if (!moved) continue;
+        cloud.x = moved.x;
+        cloud.y = moved.y;
+        if (Number.isFinite(cloud.renderX)) cloud.renderX += moved.delta.dx * tileSize;
+        if (Number.isFinite(cloud.renderY)) cloud.renderY += moved.delta.dy * tileSize;
+      }
+    }
+
     if (Array.isArray(world.animals)) {
       for (const animal of world.animals) {
         if (!animal || !Number.isFinite(animal.x) || !Number.isFinite(animal.y)) continue;
@@ -8144,6 +9416,7 @@
       if (cave.hostileBlocked && cave.world) {
         cave.world.monsters = [];
         cave.world.projectiles = [];
+        cave.world.poisonClouds = [];
       }
     }
   }
@@ -8214,6 +9487,16 @@
         return inBounds(tx, ty, world.size);
       });
       world.nextProjectileId = world.projectiles.reduce((max, projectile) => Math.max(max, (projectile.id || 0) + 1), 1);
+    }
+
+    if (Array.isArray(world.poisonClouds)) {
+      world.poisonClouds = world.poisonClouds.filter((cloud) => {
+        if (!cloud || !Number.isFinite(cloud.x) || !Number.isFinite(cloud.y)) return false;
+        const tx = Math.floor(cloud.x / CONFIG.tileSize);
+        const ty = Math.floor(cloud.y / CONFIG.tileSize);
+        return inBounds(tx, ty, world.size) && world.tiles[tileIndex(tx, ty, world.size)];
+      });
+      world.nextPoisonCloudId = world.poisonClouds.reduce((max, cloud) => Math.max(max, (cloud.id || 0) + 1), 1);
     }
   }
 
@@ -8333,6 +9616,14 @@
         passiveTargets.spawnIslandHarvestMin,
         passiveTargets.maxAnimals
       );
+      trimSurfaceAnimalsToIslandCaps(world, null, {
+        spawnIslandHarvestMin: passiveTargets.spawnIslandHarvestMin,
+        mushroomMinPerIsland: MUSHROOM_GREEN_COW_CONFIG.minPerIsland,
+      });
+      trimSurfaceAnimalsToCap(world, passiveTargets.maxAnimals, null, {
+        spawnIslandHarvestMin: passiveTargets.spawnIslandHarvestMin,
+        mushroomMinPerIsland: MUSHROOM_GREEN_COW_CONFIG.minPerIsland,
+      });
     }
 
     return true;
@@ -8445,17 +9736,14 @@
 
   function pickMonsterType(rng = Math.random) {
     const roll = rng();
-    if (roll < 0.5) return "crawler";
-    if (roll < 0.78) return "brute";
-    return "skeleton";
+    if (roll < 0.43) return "crawler";
+    if (roll < 0.68) return "brute";
+    if (roll < 0.88) return "skeleton";
+    return "slime_large";
   }
 
-  function pickMonsterTypeForBiome(biome, rng = Math.random, isNight = state.isNight) {
+  function pickMonsterTypeForBiome(biome, rng = Math.random) {
     if (!biome || typeof biome !== "object") return pickMonsterType(rng);
-    if (isNight && biome.key === "marsh") {
-      const poisonChance = clamp(Number(biome.poisonMonsterChance) || 0.62, 0.1, 1);
-      if (rng() < poisonChance) return "marsh_stalker";
-    }
     return pickMonsterType(rng);
   }
 
@@ -8857,6 +10145,8 @@
       monsterBurnFx: [],
       projectiles: [],
       nextProjectileId: 1,
+      poisonClouds: [],
+      nextPoisonCloudId: 1,
       villagers: [],
       nextVillagerId: 1,
       landmarks,
@@ -9575,6 +10865,8 @@
       monsterBurnFx: [],
       projectiles: [],
       nextProjectileId: 1,
+      poisonClouds: [],
+      nextPoisonCloudId: 1,
       animals: [],
       nextAnimalId: 1,
       animalSpawnTimer: 3,
@@ -9850,10 +11142,24 @@
     }
   }
 
+  function setSaveStatus(text) {
+    if (!saveStatus) return;
+    const value = String(text ?? "");
+    saveStatus.textContent = value;
+    const normalized = value.toLowerCase();
+    if (normalized.includes("fail") || normalized.includes("error")) {
+      saveStatus.dataset.state = "error";
+    } else if (normalized.includes("saving")) {
+      saveStatus.dataset.state = "saving";
+    } else {
+      saveStatus.dataset.state = "saved";
+    }
+  }
+
   function markDirty() {
     state.dirty = true;
     if (!netIsClientReady()) {
-      saveStatus.textContent = "Saving...";
+      setSaveStatus("Saving...");
     }
   }
 
@@ -9995,9 +11301,11 @@
     state.winPlayerPos = { x: state.player?.x ?? 0, y: state.player?.y ?? 0 };
     state.timeOfDay = 0;
     state.isNight = false;
+    state.surfaceDayBurnGraceTimer = 0;
     if (state.surfaceWorld) {
       state.surfaceWorld.monsters = [];
       state.surfaceWorld.projectiles = [];
+      state.surfaceWorld.poisonClouds = [];
     }
     updateTimeUI();
     updateObjectiveUI();
@@ -10010,7 +11318,7 @@
     return {
       hp: res.hp,
       removed: res.removed,
-      stage: res.stage ?? "alive",
+      stage: normalizeResourceStage(res),
       respawnTimer: res.respawnTimer ?? 0,
     };
   }
@@ -10290,9 +11598,9 @@
     try {
       localStorage.setItem(seedKey, JSON.stringify(data));
       setStoredActiveSeed(surface.seed);
-      saveStatus.textContent = "Saved";
+      setSaveStatus("Saved");
     } catch (err) {
-      saveStatus.textContent = "Save failed";
+      setSaveStatus("Save failed");
       console.warn("Save failed", err);
     }
 
@@ -10521,6 +11829,7 @@
       if (typeof savedRes.hp === "number") res.hp = savedRes.hp;
       res.removed = !!savedRes.removed;
       res.stage = savedRes.stage ?? res.stage ?? "alive";
+      applyResourceStageNormalization(res);
       res.respawnTimer = typeof savedRes.respawnTimer === "number" ? savedRes.respawnTimer : 0;
       res.hitTimer = 0;
       if (res.removed) {
@@ -10573,12 +11882,116 @@
       : [];
   }
 
+  function hasResourceGridInconsistency(world) {
+    if (!world || !Array.isArray(world.resources)) return false;
+    if (!Number.isInteger(world.size) || world.size <= 0) return true;
+    if (!Array.isArray(world.resourceGrid) || world.resourceGrid.length !== world.size * world.size) {
+      return true;
+    }
+    for (let idx = 0; idx < world.resourceGrid.length; idx += 1) {
+      const resId = world.resourceGrid[idx];
+      if (!Number.isInteger(resId) || resId < 0) continue;
+      const res = world.resources[resId];
+      if (!res || res.removed) return true;
+      if (!Number.isInteger(res.tx) || !Number.isInteger(res.ty)) return true;
+      if (!inBounds(res.tx, res.ty, world.size)) return true;
+      if (tileIndex(res.tx, res.ty, world.size) !== idx) return true;
+    }
+    for (const res of world.resources) {
+      if (!res || !Number.isInteger(res.id)) continue;
+      if (!Number.isInteger(res.tx) || !Number.isInteger(res.ty)) return true;
+      if (!inBounds(res.tx, res.ty, world.size)) return true;
+      const idx = tileIndex(res.tx, res.ty, world.size);
+      const shouldMap = !res.removed || (res.type === "tree" && res.stage && res.stage !== "alive");
+      if (shouldMap && world.resourceGrid[idx] !== res.id) return true;
+      if (!shouldMap && world.resourceGrid[idx] === res.id) return true;
+    }
+    return false;
+  }
+
+  function rebuildWorldResourceGrid(world) {
+    if (!world || !Array.isArray(world.resources)) return false;
+    const size = world.size;
+    if (!Number.isInteger(size) || size <= 0) return false;
+    const nextGrid = createResourceGrid(size);
+    let changed = !Array.isArray(world.resourceGrid) || world.resourceGrid.length !== nextGrid.length;
+
+    for (const res of world.resources) {
+      if (!res || !Number.isInteger(res.id)) continue;
+      applyResourceStageNormalization(res);
+      const fallbackTx = Math.floor((Number(res.x) || 0) / CONFIG.tileSize);
+      const fallbackTy = Math.floor((Number(res.y) || 0) / CONFIG.tileSize);
+      let tx = Number.isFinite(res.tx) ? Math.floor(res.tx) : fallbackTx;
+      let ty = Number.isFinite(res.ty) ? Math.floor(res.ty) : fallbackTy;
+      if (!inBounds(tx, ty, size)) {
+        const clamped = clampEntityPositionToLand(
+          world,
+          (tx + 0.5) * CONFIG.tileSize,
+          (ty + 0.5) * CONFIG.tileSize,
+          24
+        );
+        if (!clamped) {
+          if (!res.removed) {
+            res.removed = true;
+            changed = true;
+          }
+          continue;
+        }
+        tx = clamped.tx;
+        ty = clamped.ty;
+      }
+      if (res.tx !== tx || res.ty !== ty) {
+        res.tx = tx;
+        res.ty = ty;
+        changed = true;
+      }
+      const nextX = (tx + 0.5) * CONFIG.tileSize;
+      const nextY = (ty + 0.5) * CONFIG.tileSize;
+      if (res.x !== nextX || res.y !== nextY) {
+        res.x = nextX;
+        res.y = nextY;
+        changed = true;
+      }
+      const idx = tileIndex(tx, ty, size);
+      const shouldMap = !res.removed || (res.type === "tree" && res.stage && res.stage !== "alive");
+      if (!shouldMap) continue;
+      if (world.tiles[idx] !== 1 || world.beachGrid?.[idx]) {
+        if (!res.removed) {
+          res.removed = true;
+          changed = true;
+        }
+        continue;
+      }
+      if (nextGrid[idx] !== -1 && nextGrid[idx] !== res.id) {
+        if (!res.removed) {
+          res.removed = true;
+          changed = true;
+        }
+        continue;
+      }
+      nextGrid[idx] = res.id;
+    }
+
+    if (!changed && Array.isArray(world.resourceGrid)) {
+      for (let i = 0; i < nextGrid.length; i += 1) {
+        if ((world.resourceGrid[i] ?? -1) !== nextGrid[i]) {
+          changed = true;
+          break;
+        }
+      }
+    }
+
+    world.resourceGrid = nextGrid;
+    return changed;
+  }
+
   function normalizeSurfaceResources(world) {
     if (!world || !Array.isArray(world.resources) || !Array.isArray(world.resourceGrid)) return;
     if (!Array.isArray(world.respawnTasks)) world.respawnTasks = [];
 
     for (const res of world.resources) {
       if (!res) continue;
+      applyResourceStageNormalization(res);
       const idx = tileIndex(res.tx, res.ty, world.size);
 
       // Surface ore is disabled: convert any legacy/generated ore nodes into rock nodes.
@@ -10787,13 +12200,26 @@
           }
           const id = typeof animal.id === "number" ? animal.id : autoId++;
           const prev = prevAnimals.get(id);
+          const snapshotMaxHp = Number(animal?.maxHp);
+          const maxHp = Math.max(
+            1,
+            Number.isFinite(snapshotMaxHp)
+              ? Math.max(Math.round(snapshotMaxHp), cfg.hp)
+              : cfg.hp
+          );
+          const snapshotHp = Number(animal?.hp);
+          const hp = clamp(
+            Number.isFinite(snapshotHp) ? snapshotHp : maxHp,
+            0,
+            maxHp
+          );
           return {
             id,
             type,
             x: finalPos.x,
             y: finalPos.y,
-            hp: typeof animal.hp === "number" ? animal.hp : cfg.hp,
-            maxHp: typeof animal.maxHp === "number" ? animal.maxHp : cfg.hp,
+            hp,
+            maxHp,
             speed: typeof animal.speed === "number" ? animal.speed : cfg.speed,
             color: animal.color || cfg.color,
             drop: cfg.drop,
@@ -10884,6 +12310,101 @@
     return false;
   }
 
+  function bridgeTouchesWater(world, tx, ty) {
+    if (!world) return false;
+    const neighbors = [
+      { tx: tx - 1, ty },
+      { tx: tx + 1, ty },
+      { tx, ty: ty - 1 },
+      { tx, ty: ty + 1 },
+    ];
+    for (const next of neighbors) {
+      if (!inBounds(next.tx, next.ty, world.size)) continue;
+      const idx = tileIndex(next.tx, next.ty, world.size);
+      if (world.tiles[idx] === 0) return true;
+    }
+    return false;
+  }
+
+  function countAdjacentBridgeKeys(bridgeSet, tx, ty, ignoreKey = null) {
+    if (!(bridgeSet instanceof Set)) return 0;
+    const neighbors = [
+      `${tx - 1},${ty}`,
+      `${tx + 1},${ty}`,
+      `${tx},${ty - 1}`,
+      `${tx},${ty + 1}`,
+    ];
+    let count = 0;
+    for (const key of neighbors) {
+      if (key === ignoreKey) continue;
+      if (bridgeSet.has(key)) count += 1;
+    }
+    return count;
+  }
+
+  function findBridgeLoadSnapCandidate(world, entry, bridgeSet, claimedSet, oldKey = null, maxRadius = 2) {
+    if (!world || !entry) return null;
+    const origTx = Math.floor(Number(entry.tx) || 0);
+    const origTy = Math.floor(Number(entry.ty) || 0);
+    let best = null;
+    let bestScore = -Infinity;
+    for (let radius = 0; radius <= maxRadius; radius += 1) {
+      for (let dy = -radius; dy <= radius; dy += 1) {
+        for (let dx = -radius; dx <= radius; dx += 1) {
+          if (Math.max(Math.abs(dx), Math.abs(dy)) !== radius) continue;
+          const tx = origTx + dx;
+          const ty = origTy + dy;
+          if (!inBounds(tx, ty, world.size)) continue;
+          const idx = tileIndex(tx, ty, world.size);
+          if (world.tiles[idx] !== 0) continue;
+          const key = `${tx},${ty}`;
+          if (claimedSet?.has(key)) continue;
+          const touchesLand = bridgeTouchesLand(world, tx, ty);
+          if (entry.type === "dock" && !touchesLand) continue;
+          const adjacentBridges = countAdjacentBridgeKeys(bridgeSet, tx, ty, oldKey);
+          if (!touchesLand && adjacentBridges <= 0) continue;
+          const dist = Math.abs(dx) + Math.abs(dy);
+          const score = (touchesLand ? 4 : 0) + (adjacentBridges * 2) - (dist * 0.45);
+          if (score > bestScore) {
+            bestScore = score;
+            best = { tx, ty };
+          }
+        }
+      }
+      if (best) break;
+    }
+    return best;
+  }
+
+  function normalizeBridgeEntriesForLoad(world, entries) {
+    if (!world || !Array.isArray(entries) || entries.length === 0) return;
+    const bridgeSet = new Set();
+    for (const entry of entries) {
+      if (!entry || (entry.type !== "bridge" && entry.type !== "dock")) continue;
+      const tx = Math.floor(Number(entry.tx) || 0);
+      const ty = Math.floor(Number(entry.ty) || 0);
+      entry.tx = tx;
+      entry.ty = ty;
+      bridgeSet.add(`${tx},${ty}`);
+    }
+    const claimed = new Set();
+    for (const entry of entries) {
+      if (!entry || (entry.type !== "bridge" && entry.type !== "dock")) continue;
+      const originalKey = `${entry.tx},${entry.ty}`;
+      const candidate = findBridgeLoadSnapCandidate(world, entry, bridgeSet, claimed, originalKey, 2);
+      if (candidate) {
+        const nextKey = `${candidate.tx},${candidate.ty}`;
+        if (nextKey !== originalKey) {
+          bridgeSet.delete(originalKey);
+          bridgeSet.add(nextKey);
+          entry.tx = candidate.tx;
+          entry.ty = candidate.ty;
+        }
+      }
+      claimed.add(`${entry.tx},${entry.ty}`);
+    }
+  }
+
   function getAnchoredBridgeNetwork(world, bridgeSet) {
     const anchored = new Set();
     if (!world || !(bridgeSet instanceof Set) || bridgeSet.size === 0) return anchored;
@@ -10960,7 +12481,10 @@
     const baseLand = world.tiles[idx] === 1;
 
     if (isWaterStructureType(entry.type)) {
-      if (baseLand) return false;
+      const shorelineBridge = (entry.type === "bridge" || entry.type === "dock")
+        && baseLand
+        && bridgeTouchesWater(world, entry.tx, entry.ty);
+      if (baseLand && !shorelineBridge) return false;
       if (entry.type === "bridge" || entry.type === "dock") {
         const key = `${entry.tx},${entry.ty}`;
         if (anchoredBridgeSet instanceof Set && !anchoredBridgeSet.has(key)) {
@@ -10981,6 +12505,11 @@
           && (world.tiles[tileIndex(entry.tx, entry.ty + 1, world.size)] === 1
             || bridgeSet?.has(toKey(entry.tx, entry.ty + 1)));
         if (!(left || right || up || down)) return false;
+      }
+      if (shorelineBridge) {
+        const occupied = getStructureAt(entry.tx, entry.ty);
+        if (occupied && !occupied.removed) return false;
+        return true;
       }
       const waterOptions = entry.type === "abandoned_ship"
         ? { allowOccupiedBy: (occupied) => isBridgeOrDockStructure(occupied) }
@@ -11061,7 +12590,7 @@
       }
       const res = getResourceAt(world, fx, fy);
       if (!res) return;
-      if (allowResourceClear || (res.stage && res.stage !== "alive")) {
+      if (allowResourceClear || isTreeRegrowthStage(res)) {
         clearResourceTiles.push({ tx: fx, ty: fy });
       } else {
         failReason = "Blocked";
@@ -11091,6 +12620,28 @@
     const swordTier = getSwordTier(state.player);
     const swordLabel = SWORD_TIER_DATA[swordTier]?.name || "No Sword";
     toolDisplay.textContent = `Tool: ${pickaxeLabel} | ${swordLabel}`;
+    updateArmorUI();
+  }
+
+  function updateArmorUI() {
+    if (!state.player || !armorPips || !armorValue) return;
+    const points = getArmorPoints(state.player);
+    const clampedPoints = clamp(points, 0, SLIME_ARMOR.maxPoints);
+    armorValue.textContent = `${clampedPoints}/${SLIME_ARMOR.maxPoints}`;
+    armorPips.innerHTML = "";
+    for (let i = 0; i < 10; i += 1) {
+      const pip = document.createElement("span");
+      pip.className = "armor-pip";
+      const pipPoints = clampedPoints - i * 2;
+      if (pipPoints >= 2) {
+        pip.classList.add("full");
+      } else if (pipPoints === 1) {
+        pip.classList.add("half");
+      } else {
+        pip.classList.add("empty");
+      }
+      armorPips.appendChild(pip);
+    }
   }
 
   function updateHealthUI() {
@@ -11518,8 +13069,7 @@
   }
 
   function robotCanMineResource(robot, resource) {
-    if (!robot || !resource || resource.removed) return false;
-    if (resource.stage && resource.stage !== "alive") return false;
+    if (!robot || !isResourceInteractable(resource)) return false;
     if (robot.mode === ROBOT_MODE.trees) {
       return resource.type === "tree";
     }
@@ -12337,14 +13887,35 @@
   function generateSeededShipwreckPlacements(world) {
     if (!world || !Array.isArray(world.islands)) return [];
     const seedInt = Number.isFinite(world.seedInt) ? world.seedInt : seedToInt(String(world.seed || "island-1"));
-    const candidates = [];
     const islands = world.islands;
+    const candidates = [];
     const maxPairGap = Math.max(SHIPWRECK_CONFIG.minPairGapTiles + 1, SHIPWRECK_CONFIG.maxPairGapTiles);
     const targetCount = clamp(
       Math.floor(islands.length / 8),
       SHIPWRECK_CONFIG.minPerWorld,
       SHIPWRECK_CONFIG.maxPerWorld
     );
+    const placements = [];
+    const seen = new Set();
+    const defaultSpacing = SHIPWRECK_CONFIG.minSpacingTiles;
+    const relaxedSpacing = Math.max(8, Math.round(defaultSpacing * 0.6));
+
+    const isTooCloseToPlacement = (tx, ty, minSpacing = defaultSpacing) => placements.some((entry) => (
+      Math.hypot((entry.tx + 1) - (tx + 1), (entry.ty + 1) - (ty + 1)) < minSpacing
+    ));
+    const tryAddPlacement = (tx, ty, minSpacing = defaultSpacing) => {
+      const key = `${tx},${ty}`;
+      if (seen.has(key)) return false;
+      if (!canUseWaterStructureFootprint(world, "shipwreck", tx, ty)) return false;
+      if (isTooCloseToPlacement(tx, ty, minSpacing)) return false;
+      placements.push({ tx, ty });
+      seen.add(key);
+      return true;
+    };
+    const tryAddPlacementForCenter = (centerX, centerY, minSpacing = defaultSpacing) => {
+      const anchor = getStructureAnchorForCenterTile("shipwreck", centerX, centerY);
+      return tryAddPlacement(anchor.tx, anchor.ty, minSpacing);
+    };
 
     for (let i = 0; i < islands.length; i += 1) {
       const a = islands[i];
@@ -12391,41 +13962,140 @@
       || a.ty - b.ty
     ));
 
-    const placements = [];
-    const seen = new Set();
     for (const candidate of candidates) {
       if (placements.length >= targetCount) break;
-      if (seen.has(candidate.key)) continue;
-      if (!canUseWaterStructureFootprint(world, "shipwreck", candidate.tx, candidate.ty)) continue;
-      const tooClose = placements.some((entry) => {
-        const ax = entry.tx + 1;
-        const ay = entry.ty + 1;
-        const bx = candidate.tx + 1;
-        const by = candidate.ty + 1;
-        return Math.hypot(ax - bx, ay - by) < SHIPWRECK_CONFIG.minSpacingTiles;
-      });
-      if (tooClose) continue;
-      placements.push({ tx: candidate.tx, ty: candidate.ty });
-      seen.add(candidate.key);
+      tryAddPlacement(candidate.tx, candidate.ty, defaultSpacing);
     }
 
-    if (placements.length >= targetCount) return placements;
-    const fallbackRng = makeRng((seedInt ^ 0x8d3a5f91) >>> 0);
-    for (let attempt = 0; attempt < SHIPWRECK_CONFIG.pairAttempts; attempt += 1) {
-      if (placements.length >= targetCount) break;
-      const island = islands[Math.floor(fallbackRng() * islands.length)];
-      if (!island) continue;
-      const angle = fallbackRng() * Math.PI * 2;
-      const dist = island.radius + 3 + fallbackRng() * 11;
-      const centerX = island.x + Math.cos(angle) * dist;
-      const centerY = island.y + Math.sin(angle) * dist;
-      const anchor = getStructureAnchorForCenterTile("shipwreck", centerX, centerY);
-      if (!canUseWaterStructureFootprint(world, "shipwreck", anchor.tx, anchor.ty)) continue;
-      const tooClose = placements.some((entry) => (
-        Math.hypot((entry.tx + 1) - (anchor.tx + 1), (entry.ty + 1) - (anchor.ty + 1)) < SHIPWRECK_CONFIG.minSpacingTiles
+    if (placements.length < targetCount) {
+      const relaxedPairs = [];
+      const relaxedMaxPairGap = Math.max(maxPairGap + 42, 52);
+      for (let i = 0; i < islands.length; i += 1) {
+        const a = islands[i];
+        if (!a || a.radius < 4) continue;
+        for (let j = i + 1; j < islands.length; j += 1) {
+          const b = islands[j];
+          if (!b || b.radius < 4) continue;
+          const dx = b.x - a.x;
+          const dy = b.y - a.y;
+          const dist = Math.hypot(dx, dy);
+          if (dist <= 0.001) continue;
+          const edgeGap = dist - (a.radius + b.radius);
+          if (edgeGap < 1.75 || edgeGap > relaxedMaxPairGap) continue;
+          const gapBias = clamp(1 - (Math.abs(edgeGap - 12) / 20), 0, 1);
+          const score = rand2d(seedInt + i * 257 + j * 593, seedInt + 971, seedInt + 17519) + gapBias * 0.35;
+          relaxedPairs.push({
+            i,
+            j,
+            a,
+            b,
+            dx,
+            dy,
+            dist,
+            edgeGap,
+            score,
+          });
+        }
+      }
+
+      relaxedPairs.sort((a, b) => (
+        b.score - a.score
+        || a.i - b.i
+        || a.j - b.j
       ));
-      if (tooClose) continue;
-      placements.push({ tx: anchor.tx, ty: anchor.ty });
+
+      const betweenT = [0.5, 0.44, 0.56, 0.38, 0.62];
+      const lateralBands = [0, 1, -1, 2, -2, 3, -3];
+      for (const pair of relaxedPairs) {
+        if (placements.length >= targetCount) break;
+        const nx = pair.dx / pair.dist;
+        const ny = pair.dy / pair.dist;
+        const px = -ny;
+        const py = nx;
+        const lateralStep = clamp(Math.max(1, pair.edgeGap * 0.15), 0.9, 6.2);
+        const alongStep = clamp(Math.max(0.6, pair.edgeGap * 0.08), 0.6, 3.6);
+        let placed = false;
+        for (let tIndex = 0; tIndex < betweenT.length && !placed; tIndex += 1) {
+          const tNoise = rand2d(seedInt + pair.i * 31 + tIndex * 11, seedInt + pair.j * 47, seedInt + 20123);
+          const t = clamp(betweenT[tIndex] + (tNoise - 0.5) * 0.06, 0.28, 0.72);
+          for (const band of lateralBands) {
+            const sway = band * lateralStep;
+            const along = (band % 2 === 0) ? 0 : Math.sign(band) * alongStep;
+            const centerX = pair.a.x + pair.dx * t + px * sway + nx * along;
+            const centerY = pair.a.y + pair.dy * t + py * sway + ny * along;
+            if (tryAddPlacementForCenter(centerX, centerY, defaultSpacing)) {
+              placed = true;
+              break;
+            }
+          }
+        }
+      }
+
+      if (placements.length < targetCount && relaxedPairs.length > 0) {
+        const spiralPairLimit = Math.min(
+          relaxedPairs.length,
+          Math.max(targetCount * 8, 24)
+        );
+        for (let pairIndex = 0; pairIndex < spiralPairLimit; pairIndex += 1) {
+          if (placements.length >= targetCount) break;
+          const pair = relaxedPairs[pairIndex];
+          const midX = (pair.a.x + pair.b.x) * 0.5;
+          const midY = (pair.a.y + pair.b.y) * 0.5;
+          const baseAngle = rand2d(seedInt + pair.i * 67, seedInt + pair.j * 83, seedInt + 30911) * Math.PI * 2;
+          const maxRadius = clamp(Math.round(pair.edgeGap + 12), 8, 38);
+          let placed = false;
+          for (let radius = 0; radius <= maxRadius && !placed; radius += 1) {
+            const steps = Math.max(8, radius * 8);
+            for (let step = 0; step < steps; step += 1) {
+              const angle = baseAngle + (step / steps) * Math.PI * 2;
+              const centerX = midX + Math.cos(angle) * radius;
+              const centerY = midY + Math.sin(angle) * radius;
+              if (tryAddPlacementForCenter(centerX, centerY, defaultSpacing)) {
+                placed = true;
+                break;
+              }
+            }
+          }
+        }
+      }
+    }
+
+    if (placements.length >= targetCount || islands.length < 2) return placements;
+    const fallbackPairs = [];
+    for (let i = 0; i < islands.length; i += 1) {
+      const a = islands[i];
+      if (!a) continue;
+      for (let j = i + 1; j < islands.length; j += 1) {
+        const b = islands[j];
+        if (!b) continue;
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const dist = Math.hypot(dx, dy);
+        if (dist <= 0.001) continue;
+        const edgeGap = dist - (a.radius + b.radius);
+        if (edgeGap < 1) continue;
+        fallbackPairs.push({ a, b, dx, dy, dist, edgeGap });
+      }
+    }
+
+    if (fallbackPairs.length === 0) return placements;
+
+    const fallbackRng = makeRng((seedInt ^ 0x8d3a5f91) >>> 0);
+    for (let attempt = 0; attempt < SHIPWRECK_CONFIG.pairAttempts * 2; attempt += 1) {
+      if (placements.length >= targetCount) break;
+      const pair = fallbackPairs[Math.floor(fallbackRng() * fallbackPairs.length)];
+      if (!pair) continue;
+      const nx = pair.dx / pair.dist;
+      const ny = pair.dy / pair.dist;
+      const px = -ny;
+      const py = nx;
+      const t = 0.28 + fallbackRng() * 0.44;
+      const lateralSpan = clamp(Math.max(1, pair.edgeGap * 0.4), 1, 10);
+      const lateral = (fallbackRng() - 0.5) * lateralSpan;
+      const centerX = pair.a.x + pair.dx * t + px * lateral;
+      const centerY = pair.a.y + pair.dy * t + py * lateral;
+      const spacing = placements.length > 0 ? defaultSpacing : relaxedSpacing;
+      tryAddPlacementForCenter(centerX, centerY, spacing);
     }
 
     return placements;
@@ -12435,11 +14105,20 @@
     if (!world || !Array.isArray(state.structures)) return false;
     const seedInt = Number.isFinite(world.seedInt) ? world.seedInt : seedToInt(String(world.seed || "island-1"));
     const placements = generateSeededShipwreckPlacements(world);
+    const existingShipwrecks = getAllSurfaceStructureAnchors("shipwreck");
+    if (placements.length === 0 && existingShipwrecks.length > 0) {
+      for (const structure of existingShipwrecks) {
+        if (!structure.meta) structure.meta = {};
+        structure.meta.seeded = true;
+        structure.storage = sanitizeInventorySlots(structure.storage, SHIPWRECK_STORAGE_SIZE);
+      }
+      return false;
+    }
     const byIndex = new Map();
     const toRemove = [];
     let changed = false;
 
-    for (const structure of getAllSurfaceStructureAnchors("shipwreck")) {
+    for (const structure of existingShipwrecks) {
       const index = Number.isInteger(structure?.meta?.shipwreckIndex) ? structure.meta.shipwreckIndex : null;
       if (index == null || index < 0 || index >= placements.length) {
         toRemove.push(structure);
@@ -12461,10 +14140,14 @@
       const placement = placements[index];
       const existing = byIndex.get(index);
       if (existing) {
-        const validSpot = canUseWaterStructureFootprint(world, "shipwreck", placement.tx, placement.ty, {
+        const currentSpotValid = canUseWaterStructureFootprint(world, "shipwreck", existing.tx, existing.ty, {
           ignoreStructureId: existing.id,
         });
-        if (!validSpot) {
+        if (currentSpotValid) {
+          // Keep existing seeded shipwrecks anchored in-place when still valid.
+        } else if (!canUseWaterStructureFootprint(world, "shipwreck", placement.tx, placement.ty, {
+          ignoreStructureId: existing.id,
+        })) {
           removeStructure(existing);
           changed = true;
           byIndex.delete(index);
@@ -12933,6 +14616,8 @@
     world.nextMonsterId = world.nextMonsterId || 1;
     world.projectiles = [];
     world.nextProjectileId = 1;
+    world.poisonClouds = [];
+    world.nextPoisonCloudId = 1;
     world.animals = world.animals || [];
     world.nextAnimalId = world.nextAnimalId || 1;
     world.animalSpawnTimer = 3;
@@ -12952,6 +14637,7 @@
     state.spawnTile = spawn;
     state.timeOfDay = 0;
     state.isNight = false;
+    state.surfaceDayBurnGraceTimer = 0;
     state.checkpointTimer = 0;
     state.surfaceSpawnTimer = MONSTER.spawnInterval;
     state.surfaceGuardianSpawnTimer = SURFACE_GUARDIAN_CONFIG.spawnInterval;
@@ -13004,9 +14690,17 @@
     ensureGuaranteedOuterWildRobot(world);
     ensureSeedShipFeatures(world);
     ensureMushroomIslandGreenCows(world, passiveTargets.maxAnimals, initialAnimalRng);
+    trimSurfaceAnimalsToIslandCaps(world, null, {
+      spawnIslandHarvestMin: passiveTargets.spawnIslandHarvestMin,
+      mushroomMinPerIsland: MUSHROOM_GREEN_COW_CONFIG.minPerIsland,
+    });
+    trimSurfaceAnimalsToCap(world, passiveTargets.maxAnimals, null, {
+      spawnIslandHarvestMin: passiveTargets.spawnIslandHarvestMin,
+      mushroomMinPerIsland: MUSHROOM_GREEN_COW_CONFIG.minPerIsland,
+    });
 
     state.dirty = true;
-    saveStatus.textContent = "Saving...";
+    setSaveStatus("Saving...");
     state.saveTimer = CONFIG.saveInterval;
 
     setStoredActiveSeed(world.seed);
@@ -13047,6 +14741,8 @@
       applyVillagers(world, preparedSave.villagers);
       world.projectiles = [];
       world.nextProjectileId = 1;
+      world.poisonClouds = [];
+      world.nextPoisonCloudId = 1;
       world.animals = world.animals || [];
       world.nextAnimalId = world.nextAnimalId || 1;
       world.animalSpawnTimer = 3;
@@ -13080,9 +14776,12 @@
           }
           cave.world.projectiles = [];
           cave.world.nextProjectileId = 1;
+          cave.world.poisonClouds = [];
+          cave.world.nextPoisonCloudId = 1;
           if (cave.hostileBlocked) {
             cave.world.monsters = [];
             cave.world.projectiles = [];
+            cave.world.poisonClouds = [];
           }
           cave.world.villagers = cave.world.villagers || [];
           cave.world.nextVillagerId = cave.world.nextVillagerId || 1;
@@ -13097,6 +14796,7 @@
 
       if (Array.isArray(preparedSave.structures)) {
         const orderedStructures = sortStructureEntriesForPlacement(preparedSave.structures);
+        normalizeBridgeEntriesForLoad(world, orderedStructures);
         const bridgeSet = new Set(
           orderedStructures
             .filter((entry) => entry && (entry.type === "bridge" || entry.type === "dock"))
@@ -13107,9 +14807,7 @@
           if (!entry) continue;
           const normalized = { ...entry, type: normalizeLegacyStructureType(entry.type) };
           if (!isStructureValidOnLoad(world, normalized, bridgeSet, anchoredBridgeSet)) continue;
-          const storageSize = normalized.type === "robot"
-            ? ROBOT_STORAGE_SIZE
-            : ((normalized.type === "chest" || normalized.type === "shipwreck") ? CHEST_SIZE : null);
+          const storageSize = getStorageSizeForStructureType(normalized.type, null);
           clearResourcesForFootprint(world, normalized.type, normalized.tx, normalized.ty);
           const structure = addStructure(normalized.type, normalized.tx, normalized.ty, {
             storage: Array.isArray(entry.storage)
@@ -13167,6 +14865,7 @@
       state.winTimer = 0;
       state.winPlayerPos = state.player ? { x: state.player.x, y: state.player.y } : null;
       state.isNight = state.timeOfDay >= CONFIG.dayLength;
+      state.surfaceDayBurnGraceTimer = 0;
       state.surfaceSpawnTimer = MONSTER.spawnInterval;
       state.surfaceGuardianSpawnTimer = SURFACE_GUARDIAN_CONFIG.spawnInterval;
       state.inCave = !!preparedSave.player?.inCave;
@@ -13217,6 +14916,14 @@
       const wildRobotAdded = ensureGuaranteedOuterWildRobot(world);
       const shipFeaturesAdded = ensureSeedShipFeatures(world);
       const mushroomCowsAdded = ensureMushroomIslandGreenCows(world, passiveTargets.maxAnimals, restoreAnimalRng);
+      const islandAnimalTrimmed = trimSurfaceAnimalsToIslandCaps(world, null, {
+        spawnIslandHarvestMin: passiveTargets.spawnIslandHarvestMin,
+        mushroomMinPerIsland: MUSHROOM_GREEN_COW_CONFIG.minPerIsland,
+      });
+      const cappedAnimalTrimmed = trimSurfaceAnimalsToCap(world, passiveTargets.maxAnimals, null, {
+        spawnIslandHarvestMin: passiveTargets.spawnIslandHarvestMin,
+        mushroomMinPerIsland: MUSHROOM_GREEN_COW_CONFIG.minPerIsland,
+      });
 
       state.targetResource = null;
       state.activeStation = null;
@@ -13231,9 +14938,11 @@
         || wildRobotAdded
         || shipFeaturesAdded
         || mushroomCowsAdded > 0
-        || harvestAnimalsAdded > 0;
+        || harvestAnimalsAdded > 0
+        || islandAnimalTrimmed > 0
+        || cappedAnimalTrimmed > 0;
       if (state.dirty && !netIsClientReady()) {
-        saveStatus.textContent = "Saving...";
+        setSaveStatus("Saving...");
       }
 
       setStoredActiveSeed(world.seed);
@@ -13290,13 +14999,44 @@
     return isWalkableAtWorld(state.world, x, y);
   }
 
+  function normalizeResourceStage(resource) {
+    if (!resource || resource.type !== "tree") return "alive";
+    const stage = typeof resource.stage === "string" ? resource.stage : "alive";
+    if (stage === "stump" || stage === "sapling" || stage === "alive") {
+      return stage;
+    }
+    return "alive";
+  }
+
+  function applyResourceStageNormalization(resource) {
+    if (!resource) return false;
+    const nextStage = normalizeResourceStage(resource);
+    if (resource.stage !== nextStage) {
+      resource.stage = nextStage;
+      return true;
+    }
+    return false;
+  }
+
+  function isTreeRegrowthStage(resource) {
+    return !!resource
+      && resource.type === "tree"
+      && typeof resource.stage === "string"
+      && resource.stage !== "alive";
+  }
+
+  function isResourceInteractable(resource) {
+    if (!resource || resource.removed) return false;
+    if (resource.type === "tree") return !isTreeRegrowthStage(resource);
+    return true;
+  }
+
   function findNearestResource(world, player) {
     if (!world || !Array.isArray(world.resources)) return null;
     let closest = null;
     let closestDist = Infinity;
     for (const res of world.resources) {
-      if (res.removed) continue;
-      if (res.stage && res.stage !== "alive") continue;
+      if (!isResourceInteractable(res)) continue;
       const dx = res.x - player.x;
       const dy = res.y - player.y;
       const dist = Math.hypot(dx, dy);
@@ -13313,8 +15053,7 @@
     let closest = null;
     let closestDist = Infinity;
     for (const res of world.resources) {
-      if (!res || res.removed) continue;
-      if (res.stage && res.stage !== "alive") continue;
+      if (!isResourceInteractable(res)) continue;
       const dist = Math.hypot(res.x - position.x, res.y - position.y);
       if (dist < range && dist < closestDist) {
         closest = res;
@@ -13613,15 +15352,32 @@
       && Number.isFinite(target.aggroRange);
   }
 
+  function isPassiveAnimalTarget(target) {
+    if (!target || typeof target.type !== "string") return false;
+    return target.type === "goat" || target.type === "boar" || target.type === "green_cow";
+  }
+
   function getAppliedAttackDamage(player, target) {
     const swordTier = getSwordTier(player);
+    const maxSwordTier = Math.max(0, SWORD_TIER_DATA.length - 1);
     let damage = Math.max(1, Math.floor(getAttackDamage(player)));
     if (isHostileMobTarget(target)) {
       const scale = SWORD_DAMAGE_VS_MONSTER_SCALE[swordTier] ?? 1;
       damage = Math.max(1, Math.floor(damage * scale));
     }
+    if (isPassiveAnimalTarget(target)) {
+      const targetMaxHp = Number(target.maxHp);
+      const targetHp = Number(target.hp);
+      if (Number.isFinite(targetMaxHp) && targetMaxHp > 1 && Number.isFinite(targetHp) && targetHp >= targetMaxHp) {
+        if (swordTier >= maxSwordTier) {
+          damage = Math.max(damage, targetMaxHp);
+        } else {
+          damage = Math.min(damage, Math.max(1, targetMaxHp - 1));
+        }
+      }
+    }
     // Diamond sword should reliably two-tap full-health targets instead of randomly one-shotting.
-    if (swordTier >= 5 && target) {
+    if (swordTier >= 5 && target && isHostileMobTarget(target)) {
       const targetMaxHp = Number(target.maxHp);
       const targetHp = Number(target.hp);
       if (Number.isFinite(targetMaxHp) && targetMaxHp > 1 && Number.isFinite(targetHp) && targetHp >= targetMaxHp) {
@@ -13737,7 +15493,7 @@
     return { tx, ty };
   }
 
-  function canPlaceInteriorItem(house, itemId, tx, ty) {
+  function canPlaceInteriorItem(house, itemId, tx, ty, options = null) {
     const interior = getHouseInterior(house);
     const itemDef = ITEMS[itemId];
     if (!interior || !itemDef) return { ok: false, reason: "No interior" };
@@ -13749,8 +15505,119 @@
       return { ok: false, reason: "Doorway" };
     }
     const occupied = getInteriorStructureAt(house, tx, ty);
-    if (occupied) return { ok: false, reason: "Occupied" };
+    const ignoreTx = Number.isInteger(options?.ignoreTx) ? options.ignoreTx : null;
+    const ignoreTy = Number.isInteger(options?.ignoreTy) ? options.ignoreTy : null;
+    if (occupied && !(occupied.tx === ignoreTx && occupied.ty === ignoreTy)) {
+      return { ok: false, reason: "Occupied" };
+    }
     return { ok: true };
+  }
+
+  function getInteriorPlaceItemId(placeType) {
+    if (typeof placeType !== "string" || !placeType.length) return null;
+    return PLACE_TYPE_TO_ITEM_ID[placeType] || null;
+  }
+
+  function getInteriorMoveLabel(type) {
+    return STRUCTURE_DEFS[type]?.name || ITEMS[getInteriorPlaceItemId(type)]?.name || "Item";
+  }
+
+  function getActiveHouseRelocation() {
+    if (!state.houseRelocation || !state.activeHouse) return null;
+    const relocation = state.houseRelocation;
+    if (
+      relocation.houseTx !== state.activeHouse.tx
+      || relocation.houseTy !== state.activeHouse.ty
+    ) {
+      return null;
+    }
+    return relocation;
+  }
+
+  function beginHouseRelocation() {
+    if (!state.player?.inHut || !state.activeHouse) return false;
+    if (state.activeChest || state.activeStation) return false;
+    const target = state.nearInteriorMoveTarget;
+    if (!target || !isInteriorPlaceType(target.type)) {
+      setPrompt("No furniture nearby", 0.8);
+      return false;
+    }
+    state.houseRelocation = {
+      houseTx: state.activeHouse.tx,
+      houseTy: state.activeHouse.ty,
+      sourceTx: target.tx,
+      sourceTy: target.ty,
+      type: target.type,
+    };
+    setPrompt(`Moving ${getInteriorMoveLabel(target.type)} (E place, Space cancel)`, 1.1);
+    return true;
+  }
+
+  function cancelHouseRelocation(showPrompt = true) {
+    const relocation = getActiveHouseRelocation();
+    if (!relocation) return false;
+    const label = getInteriorMoveLabel(relocation.type);
+    state.houseRelocation = null;
+    if (showPrompt) setPrompt(`Stopped moving ${label}`, 0.85);
+    return true;
+  }
+
+  function placeHouseRelocation() {
+    const relocation = getActiveHouseRelocation();
+    if (!relocation || !state.activeHouse) return false;
+    const targetItemId = getInteriorPlaceItemId(relocation.type);
+    if (!targetItemId) {
+      cancelHouseRelocation(false);
+      setPrompt("Cannot move that item", 0.9);
+      return false;
+    }
+    const tile = getInteriorPlacementTile();
+    if (!tile) return false;
+    const placement = canPlaceInteriorItem(state.activeHouse, targetItemId, tile.tx, tile.ty, {
+      ignoreTx: relocation.sourceTx,
+      ignoreTy: relocation.sourceTy,
+    });
+    if (!placement.ok) {
+      setPrompt(placement.reason, 0.9);
+      return false;
+    }
+    if (tile.tx === relocation.sourceTx && tile.ty === relocation.sourceTy) {
+      cancelHouseRelocation(false);
+      setPrompt(`${getInteriorMoveLabel(relocation.type)} unchanged`, 0.8);
+      return false;
+    }
+    if (netIsClient()) {
+      const requestId = `${net.playerId}-house-move-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+      net.pendingHouseMoves.set(requestId, {
+        type: relocation.type,
+      });
+      sendToHost({
+        type: "houseMove",
+        requestId,
+        houseTx: state.activeHouse.tx,
+        houseTy: state.activeHouse.ty,
+        fromTx: relocation.sourceTx,
+        fromTy: relocation.sourceTy,
+        toTx: tile.tx,
+        toTy: tile.ty,
+      });
+      state.houseRelocation = null;
+      setPrompt(`Moving ${getInteriorMoveLabel(relocation.type)}...`, 0.9);
+      return true;
+    }
+
+    const source = getInteriorStructureAt(state.activeHouse, relocation.sourceTx, relocation.sourceTy);
+    if (!source || source.type !== relocation.type) {
+      cancelHouseRelocation(false);
+      setPrompt("That item moved already", 0.9);
+      return false;
+    }
+    source.tx = tile.tx;
+    source.ty = tile.ty;
+    state.houseRelocation = null;
+    markDirty();
+    setPrompt(`${getInteriorMoveLabel(relocation.type)} moved`, 0.9);
+    return true;
   }
 
   function findNearestInteriorStructure(player, house, predicate) {
@@ -13782,6 +15649,7 @@
       x: Math.floor(interior.width / 2) + 0.5,
       y: interior.height - 1.1,
     };
+    state.houseRelocation = null;
     closeStationMenu();
     closeChest();
     closeShipRepairPanel();
@@ -13797,6 +15665,7 @@
     state.player.inHut = false;
     state.activeHouse = null;
     state.housePlayer = null;
+    state.houseRelocation = null;
     state.nearBed = null;
     closeStationMenu();
     closeChest();
@@ -14356,7 +16225,7 @@
   }
 
   function applyHarvestToResource(world, resource, damage, awardItems, emitSfx = true) {
-    if (!resource || resource.removed) return;
+    if (!isResourceInteractable(resource)) return;
     const dropId = getResourceDropId(resource);
     if (!dropId) return;
     const dropQty = getResourceDropQty(resource);
@@ -14440,7 +16309,7 @@
   }
 
   function attemptHarvest(resource) {
-    if (!resource) return;
+    if (!isResourceInteractable(resource)) return;
 
     const dropId = getResourceDropId(resource);
     if (!dropId) return;
@@ -14531,11 +16400,26 @@
     const gradient = iconCtx.createLinearGradient(0, 0, 0, size);
     gradient.addColorStop(0, tintColor(bg, 0.2));
     gradient.addColorStop(1, tintColor(bg, -0.18));
-    drawRoundedRect(iconCtx, 1.5, 1.5, size - 3, size - 3, 6);
+    drawRoundedRect(iconCtx, 1.1, 1.1, size - 2.2, size - 2.2, 6);
     iconCtx.fillStyle = gradient;
     iconCtx.fill();
-    iconCtx.strokeStyle = border;
-    iconCtx.lineWidth = 1.4;
+    iconCtx.save();
+    drawRoundedRect(iconCtx, 1.1, 1.1, size - 2.2, size - 2.2, 6);
+    iconCtx.clip();
+    const sheen = iconCtx.createLinearGradient(0, 0, 0, size * 0.72);
+    sheen.addColorStop(0, "rgba(255,255,255,0.28)");
+    sheen.addColorStop(1, "rgba(255,255,255,0)");
+    iconCtx.fillStyle = sheen;
+    iconCtx.fillRect(0, 0, size, size * 0.72);
+    iconCtx.restore();
+
+    drawRoundedRect(iconCtx, 1.1, 1.1, size - 2.2, size - 2.2, 6);
+    iconCtx.strokeStyle = "rgba(255,255,255,0.92)";
+    iconCtx.lineWidth = 1;
+    iconCtx.stroke();
+    drawRoundedRect(iconCtx, 2.1, 2.1, size - 4.2, size - 4.2, 5);
+    iconCtx.strokeStyle = tintColor(border, 0.08);
+    iconCtx.lineWidth = 0.9;
     iconCtx.stroke();
 
     const cx = size * 0.5;
@@ -14668,6 +16552,10 @@
       case "jungle_stone":
       case "snow_stone":
       case "volcanic_stone":
+      case "mangrove_stone":
+      case "redwood_stone":
+      case "ashlands_stone":
+      case "marsh_stone":
         iconCtx.fillStyle = ITEMS[itemId]?.color || "#9ea8b8";
         iconCtx.beginPath();
         iconCtx.moveTo(cx - s * 0.24, cy + s * 0.18);
@@ -14701,6 +16589,35 @@
           iconCtx.stroke();
         }
         break;
+      case "wayfinder_stone":
+        iconCtx.fillStyle = "#77b5c9";
+        iconCtx.beginPath();
+        iconCtx.arc(cx, cy, s * 0.21, 0, Math.PI * 2);
+        iconCtx.fill();
+        iconCtx.strokeStyle = "#d9f5ff";
+        iconCtx.lineWidth = 1.2;
+        iconCtx.beginPath();
+        iconCtx.arc(cx, cy, s * 0.21, 0, Math.PI * 2);
+        iconCtx.stroke();
+        iconCtx.fillStyle = "#e3fbff";
+        iconCtx.beginPath();
+        iconCtx.arc(cx, cy, s * 0.06, 0, Math.PI * 2);
+        iconCtx.fill();
+        iconCtx.fillStyle = "#7fd0e8";
+        iconCtx.beginPath();
+        iconCtx.moveTo(cx, cy - s * 0.2);
+        iconCtx.lineTo(cx - s * 0.06, cy);
+        iconCtx.lineTo(cx + s * 0.06, cy);
+        iconCtx.closePath();
+        iconCtx.fill();
+        iconCtx.fillStyle = "#3e6b8b";
+        iconCtx.beginPath();
+        iconCtx.moveTo(cx, cy + s * 0.2);
+        iconCtx.lineTo(cx - s * 0.06, cy);
+        iconCtx.lineTo(cx + s * 0.06, cy);
+        iconCtx.closePath();
+        iconCtx.fill();
+        break;
       case "raw_meat":
       case "cooked_meat":
         iconCtx.fillStyle = itemId === "raw_meat" ? "#c56662" : "#cf8d5e";
@@ -14724,17 +16641,55 @@
         iconCtx.closePath();
         iconCtx.fill();
         break;
+      case "bone":
+        iconCtx.strokeStyle = "#f2efe5";
+        iconCtx.lineWidth = s * 0.1;
+        iconCtx.beginPath();
+        iconCtx.moveTo(cx - s * 0.16, cy + s * 0.12);
+        iconCtx.lineTo(cx + s * 0.16, cy - s * 0.12);
+        iconCtx.stroke();
+        iconCtx.fillStyle = "#f8f6ee";
+        iconCtx.beginPath();
+        iconCtx.arc(cx - s * 0.18, cy + s * 0.14, s * 0.07, 0, Math.PI * 2);
+        iconCtx.arc(cx - s * 0.1, cy + s * 0.06, s * 0.06, 0, Math.PI * 2);
+        iconCtx.arc(cx + s * 0.18, cy - s * 0.14, s * 0.07, 0, Math.PI * 2);
+        iconCtx.arc(cx + s * 0.1, cy - s * 0.06, s * 0.06, 0, Math.PI * 2);
+        iconCtx.fill();
+        break;
+      case "monster_flesh":
+        iconCtx.fillStyle = "#a44d5d";
+        iconCtx.beginPath();
+        iconCtx.ellipse(cx, cy, s * 0.24, s * 0.17, -0.18, 0, Math.PI * 2);
+        iconCtx.fill();
+        iconCtx.fillStyle = "rgba(255, 203, 214, 0.45)";
+        iconCtx.beginPath();
+        iconCtx.ellipse(cx - s * 0.05, cy - s * 0.03, s * 0.11, s * 0.06, -0.18, 0, Math.PI * 2);
+        iconCtx.fill();
+        iconCtx.strokeStyle = "rgba(84, 24, 34, 0.45)";
+        iconCtx.lineWidth = 1;
+        iconCtx.beginPath();
+        iconCtx.moveTo(cx - s * 0.16, cy + s * 0.03);
+        iconCtx.lineTo(cx + s * 0.15, cy - s * 0.01);
+        iconCtx.moveTo(cx - s * 0.12, cy + s * 0.1);
+        iconCtx.lineTo(cx + s * 0.12, cy + s * 0.06);
+        iconCtx.stroke();
+        break;
       case "bridge":
+      case "village_path":
       case "dock":
-        iconCtx.fillStyle = "#886b43";
+        iconCtx.fillStyle = itemId === "village_path" ? "#8a7752" : "#886b43";
         iconCtx.fillRect(cx - s * 0.26, cy - s * 0.16, s * 0.52, s * 0.32);
-        iconCtx.strokeStyle = "#d2b883";
+        iconCtx.strokeStyle = itemId === "village_path" ? "#d8c690" : "#d2b883";
         iconCtx.lineWidth = 1;
         for (let i = -2; i <= 2; i += 1) {
           iconCtx.beginPath();
           iconCtx.moveTo(cx - s * 0.22, cy + i * s * 0.06);
           iconCtx.lineTo(cx + s * 0.22, cy + i * s * 0.06);
           iconCtx.stroke();
+        }
+        if (itemId === "village_path") {
+          iconCtx.fillStyle = "rgba(80, 66, 45, 0.45)";
+          iconCtx.fillRect(cx - s * 0.05, cy - s * 0.16, s * 0.1, s * 0.32);
         }
         break;
       case "small_house":
@@ -14771,11 +16726,39 @@
         iconCtx.closePath();
         iconCtx.fill();
         break;
-      case "smelter":
       case "sawmill":
+        iconCtx.fillStyle = "#7b5f3f";
+        iconCtx.fillRect(cx - s * 0.24, cy + s * 0.02, s * 0.48, s * 0.15);
+        iconCtx.fillStyle = "#62492e";
+        iconCtx.fillRect(cx - s * 0.21, cy + s * 0.17, s * 0.06, s * 0.12);
+        iconCtx.fillRect(cx + s * 0.15, cy + s * 0.17, s * 0.06, s * 0.12);
+        iconCtx.fillStyle = "#cfd8e5";
+        iconCtx.beginPath();
+        iconCtx.arc(cx + s * 0.06, cy - s * 0.04, s * 0.12, 0, Math.PI * 2);
+        iconCtx.fill();
+        iconCtx.strokeStyle = "#6d7682";
+        iconCtx.lineWidth = 1;
+        iconCtx.stroke();
+        iconCtx.strokeStyle = "rgba(255,255,255,0.55)";
+        iconCtx.lineWidth = 0.8;
+        for (let i = 0; i < 10; i += 1) {
+          const ang = (i / 10) * Math.PI * 2;
+          const ox = Math.cos(ang);
+          const oy = Math.sin(ang);
+          iconCtx.beginPath();
+          iconCtx.moveTo(cx + s * 0.06 + ox * s * 0.08, cy - s * 0.04 + oy * s * 0.08);
+          iconCtx.lineTo(cx + s * 0.06 + ox * s * 0.12, cy - s * 0.04 + oy * s * 0.12);
+          iconCtx.stroke();
+        }
+        iconCtx.fillStyle = "#6e5134";
+        iconCtx.fillRect(cx - s * 0.22, cy - s * 0.03, s * 0.2, s * 0.06);
+        iconCtx.fillStyle = "#4e3a25";
+        iconCtx.fillRect(cx - s * 0.23, cy - s * 0.03, s * 0.03, s * 0.06);
+        break;
+      case "smelter":
       case "kiln":
       case "chest":
-        iconCtx.fillStyle = itemId === "smelter" ? "#95534b" : (itemId === "sawmill" ? "#7c6842" : (itemId === "kiln" ? "#b4765a" : "#8e633a"));
+        iconCtx.fillStyle = itemId === "smelter" ? "#95534b" : (itemId === "kiln" ? "#b4765a" : "#8e633a");
         iconCtx.fillRect(cx - s * 0.2, cy - s * 0.2, s * 0.4, s * 0.4);
         iconCtx.fillStyle = itemId === "chest" ? "#d2bb7a" : "#2a201b";
         iconCtx.fillRect(cx - s * 0.08, cy - s * 0.03, s * 0.16, s * 0.14);
@@ -14797,6 +16780,29 @@
         iconCtx.lineTo(cx + s * 0.27, cy + s * 0.11);
         iconCtx.stroke();
         break;
+      case DEBUG_REPAIRED_BOAT_ITEM_ID:
+        iconCtx.fillStyle = "#7b5e3e";
+        iconCtx.beginPath();
+        iconCtx.moveTo(cx - s * 0.24, cy + s * 0.09);
+        iconCtx.lineTo(cx + s * 0.24, cy + s * 0.09);
+        iconCtx.lineTo(cx + s * 0.14, cy + s * 0.22);
+        iconCtx.lineTo(cx - s * 0.14, cy + s * 0.22);
+        iconCtx.closePath();
+        iconCtx.fill();
+        iconCtx.fillStyle = "#9f7a52";
+        iconCtx.fillRect(cx - s * 0.22, cy + s * 0.03, s * 0.44, s * 0.07);
+        iconCtx.fillStyle = "#d9e9f8";
+        iconCtx.beginPath();
+        iconCtx.moveTo(cx - s * 0.02, cy + s * 0.03);
+        iconCtx.lineTo(cx - s * 0.02, cy - s * 0.18);
+        iconCtx.lineTo(cx + s * 0.16, cy - s * 0.06);
+        iconCtx.lineTo(cx - s * 0.02, cy - s * 0.02);
+        iconCtx.closePath();
+        iconCtx.fill();
+        iconCtx.strokeStyle = "rgba(70, 94, 118, 0.8)";
+        iconCtx.lineWidth = 1;
+        iconCtx.stroke();
+        break;
       case "beacon_core":
       case "beacon":
         iconCtx.fillStyle = itemId === "beacon" ? "#d0b46a" : "#89bedf";
@@ -14813,18 +16819,111 @@
         iconCtx.fillRect(cx - s * 0.03, cy - s * 0.12, s * 0.06, s * 0.24);
         iconCtx.fillRect(cx - s * 0.12, cy - s * 0.03, s * 0.24, s * 0.06);
         break;
+      case "slime_ball":
+        {
+          const ballGrad = iconCtx.createRadialGradient(
+            cx - s * 0.06,
+            cy - s * 0.08,
+            s * 0.03,
+            cx,
+            cy,
+            s * 0.2
+          );
+          ballGrad.addColorStop(0, "#dbffd8");
+          ballGrad.addColorStop(0.55, "#83df74");
+          ballGrad.addColorStop(1, "#3f943f");
+          iconCtx.fillStyle = ballGrad;
+          iconCtx.beginPath();
+          iconCtx.arc(cx, cy, s * 0.2, 0, Math.PI * 2);
+          iconCtx.fill();
+          iconCtx.strokeStyle = "rgba(16, 66, 27, 0.7)";
+          iconCtx.lineWidth = 1;
+          iconCtx.stroke();
+          iconCtx.fillStyle = "rgba(255,255,255,0.5)";
+          iconCtx.beginPath();
+          iconCtx.arc(cx - s * 0.07, cy - s * 0.09, s * 0.06, 0, Math.PI * 2);
+          iconCtx.fill();
+        }
+        break;
+      case "slime_helmet":
+      case "slime_chestplate":
+      case "slime_leggings":
+      case "slime_boots":
+        {
+          const slimeTone = itemId === "slime_helmet"
+            ? "#8ae184"
+            : itemId === "slime_chestplate"
+              ? "#7dd676"
+              : itemId === "slime_leggings"
+                ? "#72ca6d"
+                : "#66be64";
+          const outline = "rgba(20, 66, 24, 0.72)";
+          const sheen = "rgba(234, 255, 233, 0.45)";
+          const gelGrad = iconCtx.createLinearGradient(0, cy - s * 0.2, 0, cy + s * 0.22);
+          gelGrad.addColorStop(0, tintColor(slimeTone, 0.16));
+          gelGrad.addColorStop(1, tintColor(slimeTone, -0.18));
+          iconCtx.fillStyle = gelGrad;
+          iconCtx.strokeStyle = outline;
+          iconCtx.lineWidth = 1;
+          if (itemId === "slime_helmet") {
+            drawRoundedRect(iconCtx, cx - s * 0.2, cy - s * 0.16, s * 0.4, s * 0.3, 5);
+            iconCtx.fill();
+            iconCtx.stroke();
+            iconCtx.clearRect(cx - s * 0.11, cy - s * 0.02, s * 0.22, s * 0.13);
+          } else if (itemId === "slime_chestplate") {
+            drawRoundedRect(iconCtx, cx - s * 0.22, cy - s * 0.17, s * 0.44, s * 0.4, 5);
+            iconCtx.fill();
+            iconCtx.stroke();
+            iconCtx.clearRect(cx - s * 0.07, cy + s * 0.01, s * 0.14, s * 0.18);
+          } else if (itemId === "slime_leggings") {
+            drawRoundedRect(iconCtx, cx - s * 0.2, cy - s * 0.14, s * 0.4, s * 0.36, 5);
+            iconCtx.fill();
+            iconCtx.stroke();
+            iconCtx.clearRect(cx - s * 0.05, cy - s * 0.01, s * 0.1, s * 0.24);
+          } else {
+            drawRoundedRect(iconCtx, cx - s * 0.23, cy - s * 0.02, s * 0.2, s * 0.22, 5);
+            iconCtx.fill();
+            iconCtx.stroke();
+            drawRoundedRect(iconCtx, cx + s * 0.03, cy - s * 0.02, s * 0.2, s * 0.22, 5);
+            iconCtx.fill();
+            iconCtx.stroke();
+          }
+          iconCtx.fillStyle = sheen;
+          iconCtx.beginPath();
+          iconCtx.ellipse(cx - s * 0.07, cy - s * 0.1, s * 0.09, s * 0.05, -0.2, 0, Math.PI * 2);
+          iconCtx.fill();
+        }
+        break;
       default:
-        iconCtx.fillStyle = visual.fg || "#f2f8ff";
-        iconCtx.font = `bold ${Math.floor(size * 0.24)}px Trebuchet MS`;
-        iconCtx.textAlign = "center";
-        iconCtx.textBaseline = "middle";
-        iconCtx.fillText((visual.symbol || "?").slice(0, 3), cx, cy + 1);
+        {
+          const sourceColor = ITEMS[itemId]?.color || visual.border || "#9dbbd9";
+          const coreColor = /^#/.test(sourceColor) ? sourceColor : "#9dbbd9";
+          iconCtx.fillStyle = tintColor(coreColor, -0.2);
+          iconCtx.beginPath();
+          iconCtx.moveTo(cx, cy - s * 0.22);
+          iconCtx.lineTo(cx + s * 0.19, cy - s * 0.05);
+          iconCtx.lineTo(cx + s * 0.14, cy + s * 0.2);
+          iconCtx.lineTo(cx - s * 0.14, cy + s * 0.2);
+          iconCtx.lineTo(cx - s * 0.19, cy - s * 0.05);
+          iconCtx.closePath();
+          iconCtx.fill();
+          iconCtx.strokeStyle = "rgba(255,255,255,0.45)";
+          iconCtx.lineWidth = 1;
+          iconCtx.stroke();
+          iconCtx.fillStyle = "rgba(255,255,255,0.25)";
+          iconCtx.beginPath();
+          iconCtx.moveTo(cx, cy - s * 0.17);
+          iconCtx.lineTo(cx + s * 0.12, cy - s * 0.04);
+          iconCtx.lineTo(cx, cy + s * 0.02);
+          iconCtx.closePath();
+          iconCtx.fill();
+        }
         break;
     }
   }
 
   function getItemTextureUrl(itemId, size = 30) {
-    const key = `${itemId}:${size}`;
+    const key = `${ITEM_TEXTURE_CACHE_VERSION}:${itemId}:${size}`;
     if (itemTextureCache.has(key)) return itemTextureCache.get(key);
     const texCanvas = document.createElement("canvas");
     texCanvas.width = size;
@@ -15089,6 +17188,8 @@
 
   function openStationMenu(structure) {
     if (!structure) return;
+    if (state.activeChest) closeChest();
+    if (state.activeShipRepair) closeShipRepairPanel();
     if (structure.type === "robot") {
       ensureRobotMeta(structure);
       if (structure.meta?.wildSpawn) {
@@ -15121,6 +17222,17 @@
     stationMenu.classList.add("hidden");
   }
 
+  function getStorageSizeForStructureType(type, fallback = CHEST_SIZE) {
+    if (type === "robot") return ROBOT_STORAGE_SIZE;
+    if (type === "shipwreck") return SHIPWRECK_STORAGE_SIZE;
+    if (type === "chest") return CHEST_SIZE;
+    if (fallback == null) return null;
+    const normalizedFallback = Number(fallback);
+    return Number.isInteger(normalizedFallback) && normalizedFallback > 0
+      ? normalizedFallback
+      : CHEST_SIZE;
+  }
+
   function isSurfaceStorageStructure(structure) {
     return !!structure
       && !structure.removed
@@ -15135,10 +17247,10 @@
 
   function openChest(structure) {
     if (!structure) return;
+    if (state.activeStation) closeStationMenu();
+    if (state.activeShipRepair) closeShipRepairPanel();
     if (!structure.storage) {
-      structure.storage = createEmptyInventory(
-        structure.type === "robot" ? ROBOT_STORAGE_SIZE : SHIPWRECK_STORAGE_SIZE
-      );
+      structure.storage = createEmptyInventory(getStorageSizeForStructureType(structure.type, CHEST_SIZE));
     }
     state.activeChest = structure;
     if (chestPanelTitle) {
@@ -15391,7 +17503,7 @@
       ty: structure.ty,
       storage: structure.storage
         ? structure.storage.map((slot) => ({ id: slot.id, qty: slot.qty }))
-        : createEmptyInventory(structure.type === "robot" ? ROBOT_STORAGE_SIZE : CHEST_SIZE),
+        : createEmptyInventory(getStorageSizeForStructureType(structure.type, CHEST_SIZE)),
     });
   }
 
@@ -15400,6 +17512,27 @@
     return state.structures.filter((structure) => (
       structure && !structure.removed && structure.type === "robot"
     ));
+  }
+
+  function isRobotRunningActiveTask(robot) {
+    if (!robot || robot.manualStop) return false;
+    if (robot.recallActive) return true;
+    if (!isRobotMode(robot.mode)) return false;
+    return robot.state === "moving"
+      || robot.state === "mining"
+      || robot.state === "waiting"
+      || robot.state === "returning"
+      || robot.state === "recalling";
+  }
+
+  function getRecallEligibleRobotStructures() {
+    const eligible = [];
+    for (const structure of getActiveRobotStructures()) {
+      const robot = ensureRobotMeta(structure);
+      if (!robot || !isRobotRunningActiveTask(robot)) continue;
+      eligible.push(structure);
+    }
+    return eligible;
   }
 
   function getRobotRecallStatus() {
@@ -15435,7 +17568,7 @@
     if (!bench || bench.type !== "bench") return 0;
     let changed = false;
     let robotCount = 0;
-    for (const structure of getActiveRobotStructures()) {
+    for (const structure of getRecallEligibleRobotStructures()) {
       const robot = ensureRobotMeta(structure);
       if (!robot) continue;
       robotCount += 1;
@@ -15501,9 +17634,9 @@
       setPrompt("Stand near a crafting bench", 1);
       return;
     }
-    const robots = getActiveRobotStructures();
-    if (robots.length === 0) {
-      setPrompt("No robots deployed", 1.1);
+    const eligibleRobots = getRecallEligibleRobotStructures();
+    if (eligibleRobots.length === 0) {
+      setPrompt("No active robot tasks", 1.1);
       renderBuildMenu();
       return;
     }
@@ -15528,7 +17661,7 @@
 
   function renderBuildRobotControls() {
     if (!buildRobotControls || !toggleRobotRecallBtn || !buildRobotControlsHint) return;
-    const robotCount = getActiveRobotStructures().length;
+    const robotCount = getRecallEligibleRobotStructures().length;
     const bench = getNearbyCraftingBench();
     if (robotCount <= 0 || !bench) {
       buildRobotControls.classList.add("hidden");
@@ -15744,7 +17877,16 @@
       if (net.enabled) sendPlayerUpdate();
       markDirty();
       playSfx("ui");
-      setPrompt(`${recipe.name} unlocked`, 1.2);
+      const armorPoints = getArmorPoints(state.player);
+      if (SLIME_ARMOR.pieces.some((piece) => piece.unlock === unlockKey)) {
+        if (armorPoints >= SLIME_ARMOR.maxPoints) {
+          setPrompt("Full Slime Armor equipped", 1.4);
+        } else {
+          setPrompt(`${recipe.name} equipped (${armorPoints}/${SLIME_ARMOR.maxPoints} armor)`, 1.4);
+        }
+      } else {
+        setPrompt(`${recipe.name} unlocked`, 1.2);
+      }
       return;
     }
 
@@ -16225,7 +18367,7 @@
       setPrompt("Host only", 1);
       return;
     }
-    const seed = normalizeSeedValue(state.surfaceWorld?.seed || "island-1");
+    const seed = normalizeSeedValue(state.surfaceWorld?.seed || getStoredActiveSeed() || "island-1");
     const confirmed = window.confirm(`Reset world "${seed}" and clear all progress?`);
     if (!confirmed) return;
     try {
@@ -16346,10 +18488,8 @@
     }
     state.timeOfDay = 0;
     state.isNight = false;
+    state.surfaceDayBurnGraceTimer = MONSTER_DAY_BURN.dayStartGrace;
     state.surfaceSpawnTimer = MONSTER.spawnInterval;
-    if (state.surfaceWorld) {
-      igniteSurfaceMonstersForDay(state.surfaceWorld);
-    }
     updateTimeUI();
     setPrompt("Time set to day", 1);
     markDirty();
@@ -16365,6 +18505,7 @@
     }
     state.timeOfDay = CONFIG.dayLength + 0.05;
     state.isNight = true;
+    state.surfaceDayBurnGraceTimer = 0;
     state.surfaceSpawnTimer = 0.01;
     updateTimeUI();
     setPrompt("Time set to night", 1);
@@ -16772,7 +18913,26 @@
     if (!Array.isArray(world.resources)) return;
     if (!Array.isArray(world.resourceGrid)) world.resourceGrid = createResourceGrid(world.size);
     if (!Array.isArray(world.respawnTasks)) world.respawnTasks = [];
+    if (!Number.isFinite(world.resourceGridAuditTimer)) {
+      world.resourceGridAuditTimer = 4 + Math.random() * 2;
+    }
+    world.resourceGridAuditTimer -= dt;
+    if (world.resourceGridAuditTimer <= 0) {
+      world.resourceGridAuditTimer = 6 + Math.random() * 2.5;
+      if (hasResourceGridInconsistency(world)) {
+        const fixed = rebuildWorldResourceGrid(world);
+        if (fixed) {
+          markDirty();
+          if (state.debugUnlocked) {
+            console.warn("[QA] Resource grid inconsistency repaired");
+          }
+        }
+      }
+    }
     for (const res of world.resources) {
+      if (applyResourceStageNormalization(res)) {
+        markDirty();
+      }
       if (res.hitTimer > 0) res.hitTimer -= dt;
       if (res.type === "tree" && res.stage && res.stage !== "alive") {
         if (res.removed) {
@@ -16938,29 +19098,31 @@
     const prevNight = state.isNight;
     state.timeOfDay = (state.timeOfDay + dt) % cycle;
     state.isNight = state.timeOfDay >= CONFIG.dayLength;
+    if (!state.isNight && state.surfaceDayBurnGraceTimer > 0) {
+      state.surfaceDayBurnGraceTimer = Math.max(0, state.surfaceDayBurnGraceTimer - dt);
+    }
     if (state.isNight !== prevNight) {
       updateTimeUI();
       state.surfaceSpawnTimer = MONSTER.spawnInterval;
-      if (!state.isNight && state.surfaceWorld) {
-        igniteSurfaceMonstersForDay(state.surfaceWorld);
-      }
+      state.surfaceDayBurnGraceTimer = state.isNight ? 0 : MONSTER_DAY_BURN.dayStartGrace;
     }
   }
 
   function damagePlayer(amount, source = null) {
     if (!state.player) return;
     if (state.player.invincible > 0) return;
-    state.player.hp = Math.max(0, state.player.hp - amount);
+    const appliedDamage = getReducedDamageForArmor(amount, state.player);
+    state.player.hp = Math.max(0, state.player.hp - appliedDamage);
     state.player.invincible = 0.6;
     if (source?.monsterType) {
       playSfx("monsterAttackHit", {
         monsterType: source.monsterType,
         inCave: !!state.inCave,
-        intensity: 0.45 + Math.min(1, Number(amount) / 14) * 0.55,
+        intensity: 0.45 + Math.min(1, Number(appliedDamage) / 14) * 0.55,
       });
     }
     playSfx("damage", {
-      intensity: 0.7 + Math.min(1, Number(amount) / 16) * 0.6,
+      intensity: 0.7 + Math.min(1, Number(appliedDamage) / 16) * 0.6,
     });
     updateHealthUI();
     if (state.player.hp <= 0) {
@@ -17144,6 +19306,7 @@
       dir: { x: 0, y: 0 },
     };
     world.monsters.push(monster);
+    return monster;
   }
 
   function rollDropQty(spec) {
@@ -17177,6 +19340,65 @@
       const jitterY = (Math.random() - 0.5) * 12;
       spawnDrop(itemId, qty, monster.x + jitterX, monster.y + jitterY, world);
     }
+  }
+
+  function getMonsterSplitSpec(monster) {
+    if (!monster) return null;
+    const split = getMonsterVariant(monster.type)?.splitInto;
+    if (!split || typeof split !== "object") return null;
+    const childType = typeof split.type === "string" ? split.type : "";
+    if (!childType || !MONSTER_VARIANTS[childType]) return null;
+    const count = clamp(Math.floor(Number(split.count) || 0), 0, 12);
+    if (count <= 0) return null;
+    return { childType, count };
+  }
+
+  function spawnMonsterSplitChildren(world, monster) {
+    const splitSpec = getMonsterSplitSpec(monster);
+    if (!world || !monster || !splitSpec) return 0;
+    const parentPos = getEntityWorldPosition(monster, false);
+    if (!parentPos) return 0;
+    const isSurfaceWorld = world === (state.surfaceWorld || state.world);
+    let spawned = 0;
+    const angleBase = Math.random() * Math.PI * 2;
+    for (let i = 0; i < splitSpec.count; i += 1) {
+      const ringAngle = angleBase + (i / splitSpec.count) * Math.PI * 2;
+      let spawnPos = null;
+      for (let attempt = 0; attempt < 6; attempt += 1) {
+        const jitter = (Math.random() - 0.5) * 0.5;
+        const radius = CONFIG.tileSize * (0.34 + attempt * 0.24);
+        const px = parentPos.x + Math.cos(ringAngle + jitter) * radius;
+        const py = parentPos.y + Math.sin(ringAngle + jitter) * radius;
+        const clamped = clampEntityPositionToWalkable(world, px, py, 4 + attempt * 2);
+        if (!clamped) continue;
+        if (
+          isSurfaceWorld
+          && shouldBlockSurfaceHostilesAtTile(world, clamped.tx, clamped.ty)
+        ) {
+          continue;
+        }
+        spawnPos = clamped;
+        break;
+      }
+      if (!spawnPos) continue;
+      const child = spawnMonster(world, spawnPos.tx, spawnPos.ty, { type: splitSpec.childType });
+      if (!child) continue;
+      child.x = spawnPos.x;
+      child.y = spawnPos.y;
+      child.renderX = spawnPos.x;
+      child.renderY = spawnPos.y;
+      const burstDir = normalizeDirectionVector(
+        spawnPos.x - parentPos.x,
+        spawnPos.y - parentPos.y,
+        Math.cos(ringAngle),
+        Math.sin(ringAngle)
+      );
+      child.dir.x = burstDir.x;
+      child.dir.y = burstDir.y;
+      child.wanderTimer = 0.2 + Math.random() * 0.3;
+      spawned += 1;
+    }
+    return spawned;
   }
 
   function normalizeAnimalType(type) {
@@ -17460,10 +19682,18 @@
       : world.islands;
     if (!preferredIslands.length) return false;
     const forcedType = typeof options?.forceType === "string" ? normalizeAnimalType(options.forceType) : null;
-    const islandAttempts = Math.max(8, Math.min(36, preferredIslands.length * 3));
+    const spawnIsland = getSpawnIsland(world, state.spawnTile);
+    const eligibleIslands = preferredIslands.filter((island) => (
+      island
+      && countPassiveAnimalsOnIsland(world, island) < getPassiveAnimalIslandCap(world, island, spawnIsland)
+    ));
+    if (!eligibleIslands.length) return false;
+    const islandAttempts = Math.max(8, Math.min(36, eligibleIslands.length * 3));
     for (let attempt = 0; attempt < islandAttempts; attempt += 1) {
-      const island = preferredIslands[Math.floor(rng() * preferredIslands.length)];
+      const island = eligibleIslands[Math.floor(rng() * eligibleIslands.length)];
       if (!island) continue;
+      const islandCap = getPassiveAnimalIslandCap(world, island, spawnIsland);
+      if (countPassiveAnimalsOnIsland(world, island) >= islandCap) continue;
       const strictTile = pickAnimalSpawnTileOnIsland(world, island, {
         attempts: 10,
         radiusScale: 0.84,
@@ -17517,6 +19747,29 @@
     return isWorldPositionOnIsland(world, animal.x, animal.y, island, 0.9, 2);
   }
 
+  function countPassiveAnimalsOnIsland(world, island) {
+    if (!world || !island || !Array.isArray(world.animals)) return 0;
+    let count = 0;
+    for (const animal of world.animals) {
+      if (!animal || animal.hp <= 0) continue;
+      if (!isPassiveAnimalTarget(animal)) continue;
+      if (isAnimalOnIsland(world, animal, island)) count += 1;
+    }
+    return count;
+  }
+
+  function getPassiveAnimalIslandCap(world, island, spawnIsland = null) {
+    if (!world || !island) return Infinity;
+    if (isMushroomBiomeId(getIslandBiomeId(world, island))) {
+      return Math.max(1, Math.floor(Number(SURFACE_PASSIVE_ANIMAL_CONFIG.mushroomMaxPerIsland) || 1));
+    }
+    const resolvedSpawnIsland = spawnIsland || getSpawnIsland(world, state.spawnTile);
+    if (resolvedSpawnIsland && island === resolvedSpawnIsland) {
+      return Math.max(1, Math.floor(Number(SURFACE_PASSIVE_ANIMAL_CONFIG.spawnIslandMax) || 1));
+    }
+    return Math.max(1, Math.floor(Number(SURFACE_PASSIVE_ANIMAL_CONFIG.maxPerIsland) || 1));
+  }
+
   function countHarvestAnimalsOnIsland(world, island) {
     if (!world || !island || !Array.isArray(world.animals)) return 0;
     let count = 0;
@@ -17555,14 +19808,17 @@
     return true;
   }
 
-  function ensureSpawnIslandHarvestAnimals(world, spawnTile, minCount = 4, maxAnimals = Infinity, rng = Math.random) {
+  function ensureSpawnIslandHarvestAnimals(world, spawnTile, minCount = SURFACE_PASSIVE_ANIMAL_CONFIG.spawnIslandHarvestMin, maxAnimals = Infinity, rng = Math.random) {
     if (!world || !Array.isArray(world.animals) || !Array.isArray(world.islands)) return 0;
     const spawnIsland = getSpawnIsland(world, spawnTile);
     if (!spawnIsland) return 0;
     const hardCap = Number.isFinite(maxAnimals) ? maxAnimals : Infinity;
+    const islandCap = getPassiveAnimalIslandCap(world, spawnIsland, spawnIsland);
     const target = Math.max(0, Math.floor(minCount) || 0);
     const existing = countHarvestAnimalsOnIsland(world, spawnIsland);
-    const missing = Math.max(0, target - existing);
+    const existingPassive = countPassiveAnimalsOnIsland(world, spawnIsland);
+    const roomOnIsland = Math.max(0, islandCap - existingPassive);
+    const missing = Math.min(roomOnIsland, Math.max(0, target - existing));
     let added = 0;
     for (let i = 0; i < missing; i += 1) {
       if (world.animals.length >= hardCap) break;
@@ -17572,22 +19828,31 @@
     return added;
   }
 
-  function ensureActiveIslandHarvestAnimals(world, islands, minCountPerIsland = 2, maxAnimals = Infinity, rng = Math.random) {
+  function ensureActiveIslandHarvestAnimals(world, islands, minCountPerIsland = SURFACE_PASSIVE_ANIMAL_CONFIG.activeIslandHarvestMin, maxAnimals = Infinity, rng = Math.random) {
     if (!world || !Array.isArray(world.animals) || !Array.isArray(islands) || islands.length === 0) return 0;
     const hardCap = Number.isFinite(maxAnimals) ? maxAnimals : Infinity;
     const baseTarget = Math.max(1, Math.floor(minCountPerIsland) || 1);
+    const spawnIsland = getSpawnIsland(world, state.spawnTile);
     let added = 0;
     for (const island of islands) {
       if (!island) continue;
       if (isMushroomBiomeId(getIslandBiomeId(world, island))) continue;
-      const islandMinimum = isSpawnIsland(world, island) ? 2 : 1;
-      const target = Math.max(baseTarget, islandMinimum);
+      const islandMinimum = isSpawnIsland(world, island)
+        ? Math.max(1, Math.floor(Number(SURFACE_PASSIVE_ANIMAL_CONFIG.spawnIslandHarvestMin) || 1))
+        : 1;
+      const islandCap = getPassiveAnimalIslandCap(world, island, spawnIsland);
+      if (islandCap <= 0) continue;
+      const target = Math.min(islandCap, Math.max(baseTarget, islandMinimum));
+      let existingPassive = countPassiveAnimalsOnIsland(world, island);
+      if (existingPassive >= islandCap) continue;
       const existing = countHarvestAnimalsOnIsland(world, island);
       const missing = Math.max(0, target - existing);
       for (let i = 0; i < missing; i += 1) {
         if (world.animals.length >= hardCap) return added;
+        if (existingPassive >= islandCap) break;
         if (!spawnHarvestAnimalOnIsland(world, island, 2.6, rng)) break;
         added += 1;
+        existingPassive += 1;
       }
     }
     return added;
@@ -17635,13 +19900,19 @@
     if (!world || !Array.isArray(world.islands) || !Array.isArray(world.animals)) return 0;
     const minPerIsland = Math.max(1, Math.floor(MUSHROOM_GREEN_COW_CONFIG.minPerIsland) || 1);
     const hardCap = Number.isFinite(maxAnimals) ? maxAnimals : Infinity;
+    const spawnIsland = getSpawnIsland(world, state.spawnTile);
     let added = 0;
 
     for (const island of world.islands) {
       if (!island) continue;
       if (!isMushroomBiomeId(getIslandBiomeId(world, island))) continue;
+      const islandCap = getPassiveAnimalIslandCap(world, island, spawnIsland);
+      if (islandCap <= 0) continue;
+      let existingPassive = countPassiveAnimalsOnIsland(world, island);
+      if (existingPassive >= islandCap) continue;
+      const effectiveMin = Math.min(minPerIsland, islandCap);
       const existing = countGreenCowsOnIsland(world, island);
-      const missing = Math.max(0, minPerIsland - existing);
+      const missing = Math.max(0, effectiveMin - existing);
       for (let i = 0; i < missing; i += 1) {
         if (world.animals.length >= hardCap) {
           const trimmed = trimSurfaceAnimalsToCap(
@@ -17654,12 +19925,99 @@
             }
           );
           if (trimmed <= 0) return added;
+          existingPassive = countPassiveAnimalsOnIsland(world, island);
         }
+        if (existingPassive >= islandCap) break;
         if (!spawnGreenCowOnMushroomIsland(world, island, rng)) break;
         added += 1;
+        existingPassive += 1;
       }
     }
     return added;
+  }
+
+  function trimSurfaceAnimalsToIslandCaps(world, players = null, options = null) {
+    if (!world || !Array.isArray(world.animals) || !Array.isArray(world.islands)) return 0;
+
+    const spawnIsland = getSpawnIsland(world, state.spawnTile);
+    const spawnIslandHarvestMin = Math.max(
+      0,
+      Math.floor(Number(options?.spawnIslandHarvestMin) || SURFACE_PASSIVE_ANIMAL_CONFIG.spawnIslandHarvestMin)
+    );
+    const mushroomMinPerIsland = Math.max(
+      1,
+      Math.floor(Number(options?.mushroomMinPerIsland) || MUSHROOM_GREEN_COW_CONFIG.minPerIsland)
+    );
+
+    const references = [];
+    if (Array.isArray(players)) {
+      for (const player of players) {
+        if (!player || !Number.isFinite(player.x) || !Number.isFinite(player.y)) continue;
+        references.push({ x: player.x, y: player.y });
+      }
+    }
+    if (references.length === 0 && Number.isFinite(state.player?.x) && Number.isFinite(state.player?.y)) {
+      references.push({ x: state.player.x, y: state.player.y });
+    }
+    if (references.length === 0 && Number.isFinite(state.spawnTile?.x) && Number.isFinite(state.spawnTile?.y)) {
+      references.push({
+        x: (state.spawnTile.x + 0.5) * CONFIG.tileSize,
+        y: (state.spawnTile.y + 0.5) * CONFIG.tileSize,
+      });
+    }
+    if (references.length === 0) {
+      references.push({
+        x: world.size * CONFIG.tileSize * 0.5,
+        y: world.size * CONFIG.tileSize * 0.5,
+      });
+    }
+
+    const getNearestReferenceDistance = (animal) => {
+      let nearest = Infinity;
+      for (const ref of references) {
+        const dist = Math.hypot((animal.x ?? 0) - ref.x, (animal.y ?? 0) - ref.y);
+        if (dist < nearest) nearest = dist;
+      }
+      return nearest;
+    };
+
+    let removed = 0;
+    for (const island of world.islands) {
+      if (!island) continue;
+      const islandCap = getPassiveAnimalIslandCap(world, island, spawnIsland);
+      if (!Number.isFinite(islandCap) || islandCap < 0) continue;
+
+      while (countPassiveAnimalsOnIsland(world, island) > islandCap) {
+        const isSpawn = spawnIsland && island === spawnIsland;
+        const isMushroom = isMushroomBiomeId(getIslandBiomeId(world, island));
+        const harvestCount = isSpawn ? countHarvestAnimalsOnIsland(world, island) : 0;
+        const greenCowCount = isMushroom ? countGreenCowsOnIsland(world, island) : 0;
+        let bestCandidate = null;
+
+        for (let index = 0; index < world.animals.length; index += 1) {
+          const animal = world.animals[index];
+          if (!animal || animal.hp <= 0) continue;
+          if (!isPassiveAnimalTarget(animal)) continue;
+          if (!isAnimalOnIsland(world, animal, island)) continue;
+
+          const type = normalizeAnimalType(animal.type);
+          if (isSpawn && isHarvestAnimalType(type) && harvestCount <= spawnIslandHarvestMin) continue;
+          if (isMushroom && type === "green_cow" && greenCowCount <= mushroomMinPerIsland) continue;
+
+          let score = getNearestReferenceDistance(animal);
+          if (isMushroom && type !== "green_cow") score += 1200;
+          if (isSpawn && !isHarvestAnimalType(type)) score += 600;
+          if (!bestCandidate || score > bestCandidate.score) {
+            bestCandidate = { index, score };
+          }
+        }
+
+        if (!bestCandidate) break;
+        world.animals.splice(bestCandidate.index, 1);
+        removed += 1;
+      }
+    }
+    return removed;
   }
 
   function trimSurfaceAnimalsToCap(world, maxAnimals, players = null, options = null) {
@@ -17799,14 +20157,13 @@
     }
   }
 
-  function buildSurfaceMonsterSpawnOptions(world, tx, ty, island = null, forcePoison = false) {
+  function buildSurfaceMonsterSpawnOptions(world, tx, ty, island = null) {
     const biomeId = Number.isInteger(island?.biomeId)
       ? island.biomeId
       : getSurfaceBiomeIdAtTile(world, tx, ty);
     if (isMushroomBiomeId(biomeId)) return null;
     const biome = BIOMES[biomeId] || BIOMES[0];
-    let type = pickMonsterTypeForBiome(biome, Math.random, state.isNight);
-    if (forcePoison && state.isNight && biome.key === "marsh") type = "marsh_stalker";
+    const type = pickMonsterTypeForBiome(biome, Math.random);
 
     const variant = getMonsterVariant(type);
     const options = { type };
@@ -17872,14 +20229,24 @@
     return active;
   }
 
-  function hasMarshStalkerOnIsland(world, island) {
-    if (!world || !island || !Array.isArray(world.monsters)) return false;
-    return world.monsters.some(
-      (monster) => monster
-        && monster.hp > 0
-        && monster.type === "marsh_stalker"
-        && isWorldPositionOnIsland(world, monster.x, monster.y, island, 1.08, 3)
+  function countSurfaceMarshStalkers(world) {
+    if (!world || !Array.isArray(world.monsters)) return 0;
+    return world.monsters.reduce(
+      (count, monster) => count + Number(monster && monster.hp > 0 && monster.type === "marsh_stalker"),
+      0
     );
+  }
+
+  function countMarshStalkersOnIsland(world, island) {
+    if (!world || !island || !Array.isArray(world.monsters)) return 0;
+    return world.monsters.reduce((count, monster) => (
+      count + Number(
+        monster
+          && monster.hp > 0
+          && monster.type === "marsh_stalker"
+          && isWorldPositionOnIsland(world, monster.x, monster.y, island, 1.08, 3)
+      )
+    ), 0);
   }
 
   function pickSurfaceMonsterSpawnTileOnIsland(world, island, players, options = null) {
@@ -17931,17 +20298,58 @@
   function spawnSurfaceMonsterOnIsland(world, island, players, options = null) {
     if (!world || !island) return false;
     if (isMushroomBiomeId(getIslandBiomeId(world, island))) return false;
-    const biomeId = Number.isInteger(island.biomeId) ? island.biomeId : 0;
-    const biome = BIOMES[biomeId] || BIOMES[0];
-    const forcePoison = state.isNight
-      && biome.key === "marsh"
-      && !hasMarshStalkerOnIsland(world, island);
     const tile = pickSurfaceMonsterSpawnTileOnIsland(world, island, players, options);
     if (!tile) return false;
-    const spawnOptions = buildSurfaceMonsterSpawnOptions(world, tile.tx, tile.ty, island, forcePoison);
+    const spawnOptions = buildSurfaceMonsterSpawnOptions(world, tile.tx, tile.ty, island);
     if (!spawnOptions) return false;
     spawnMonster(world, tile.tx, tile.ty, spawnOptions);
     return true;
+  }
+
+  function spawnDayMarshStalkerOnIsland(world, island, players) {
+    if (!world || !island || state.isNight) return false;
+    const biomeId = Number.isInteger(island.biomeId) ? island.biomeId : getIslandBiomeId(world, island);
+    const biome = BIOMES[biomeId] || BIOMES[0];
+    if (biome.key !== "marsh") return false;
+    if (countSurfaceMarshStalkers(world) >= MARSH_STALKER_DAY_SPAWN.maxTotal) return false;
+    if (countMarshStalkersOnIsland(world, island) >= MARSH_STALKER_DAY_SPAWN.maxPerIsland) return false;
+    const spawnChance = clamp(
+      Number(biome.poisonMonsterChance) || MARSH_STALKER_DAY_SPAWN.defaultChance,
+      MARSH_STALKER_DAY_SPAWN.minChance,
+      MARSH_STALKER_DAY_SPAWN.maxChance
+    );
+    if (Math.random() > spawnChance) return false;
+
+    const tile = pickSurfaceMonsterSpawnTileOnIsland(world, island, players, {
+      attempts: MARSH_STALKER_DAY_SPAWN.attempts,
+      minPlayerDistance: MARSH_STALKER_DAY_SPAWN.minPlayerDistanceTiles * CONFIG.tileSize,
+    });
+    if (!tile) return false;
+    spawnMonster(world, tile.tx, tile.ty, { type: "marsh_stalker" });
+    return true;
+  }
+
+  function spawnDayMarshStalkersForActiveIslands(world, players) {
+    if (!world || !Array.isArray(players) || players.length === 0 || state.isNight) return 0;
+    if (countSurfaceMarshStalkers(world) >= MARSH_STALKER_DAY_SPAWN.maxTotal) return 0;
+    const activeMarshIslands = getSurfaceActiveIslands(world, players).filter((island) => {
+      if (!island) return false;
+      const biomeId = Number.isInteger(island.biomeId) ? island.biomeId : getIslandBiomeId(world, island);
+      const biome = BIOMES[biomeId] || BIOMES[0];
+      return biome.key === "marsh";
+    });
+    if (activeMarshIslands.length === 0) return 0;
+
+    const budget = clamp(Math.floor(MARSH_STALKER_DAY_SPAWN.spawnBudget), 1, 3);
+    const startIndex = Math.floor(Math.random() * activeMarshIslands.length);
+    let spawned = 0;
+    for (let i = 0; i < activeMarshIslands.length; i += 1) {
+      if (spawned >= budget) break;
+      if (countSurfaceMarshStalkers(world) >= MARSH_STALKER_DAY_SPAWN.maxTotal) break;
+      const island = activeMarshIslands[(startIndex + i) % activeMarshIslands.length];
+      if (spawnDayMarshStalkerOnIsland(world, island, players)) spawned += 1;
+    }
+    return spawned;
   }
 
   function countSurfaceNonGuardianMonstersOnIsland(world, island) {
@@ -18360,7 +20768,8 @@
 
   function damageRemotePlayer(player, amount, poison = null, meta = null) {
     if (!player) return;
-    player.hp = Math.max(0, player.hp - amount);
+    const appliedDamage = getReducedDamageForArmor(amount, player);
+    player.hp = Math.max(0, player.hp - appliedDamage);
     const conn = net.connections.get(player.id);
     const poisonDuration = Math.max(0, Number(poison?.duration) || 0);
     const poisonDps = Math.max(0, Number(poison?.dps) || 0);
@@ -18372,7 +20781,7 @@
           type: "damage",
           hp: 0,
           maxHp: player.maxHp,
-          damageAmount: Math.max(0, Number(amount) || 0),
+          damageAmount: Math.max(0, Number(appliedDamage) || 0),
         };
         if (poisonDuration > 0) {
           message.poisonDuration = poisonDuration;
@@ -18388,7 +20797,7 @@
         type: "damage",
         hp: player.hp,
         maxHp: player.maxHp,
-        damageAmount: Math.max(0, Number(amount) || 0),
+        damageAmount: Math.max(0, Number(appliedDamage) || 0),
       };
       if (poisonDuration > 0) {
         message.poisonDuration = poisonDuration;
@@ -18404,25 +20813,81 @@
     if (!world || !monster || !target) return;
     world.projectiles = world.projectiles || [];
     world.nextProjectileId = world.nextProjectileId || 1;
+    const projectileSpec = monster.type === "marsh_stalker" ? POISON_BOTTLE : SKELETON_ARROW;
     const dx = target.x - monster.x;
     const dy = target.y - monster.y;
     const dist = Math.max(1, Math.hypot(dx, dy));
     const baseAngle = Math.atan2(dy, dx);
-    const miss = Math.random() < SKELETON_ARROW.missChance;
-    const spread = (Math.random() - 0.5) * SKELETON_ARROW.spread;
+    const miss = Math.random() < projectileSpec.missChance;
+    const spread = (Math.random() - 0.5) * projectileSpec.spread;
     const missBias = miss
-      ? (Math.random() < 0.5 ? -1 : 1) * (SKELETON_ARROW.missSpread * (0.8 + Math.random() * 0.6))
+      ? (Math.random() < 0.5 ? -1 : 1) * (projectileSpec.missSpread * (0.8 + Math.random() * 0.6))
       : 0;
     const theta = baseAngle + spread + missBias;
+    if (monster.type === "marsh_stalker") {
+      const vx = Math.cos(theta) * POISON_BOTTLE.speed;
+      const vy = Math.sin(theta) * POISON_BOTTLE.speed;
+      const travelTime = clamp((dist + 20) / POISON_BOTTLE.speed, 0.28, POISON_BOTTLE.maxLife);
+      const basePoisonDuration = Math.max(0, Number(poison?.duration) || 0);
+      const basePoisonDps = clamp(
+        Number(poison?.dps) || POISON_STATUS.defaultDps,
+        POISON_STATUS.minDps,
+        POISON_STATUS.maxDps
+      );
+      const poisonDuration = clamp(
+        basePoisonDuration * (0.62 + Math.random() * 0.58),
+        0,
+        POISON_STATUS.maxDuration
+      );
+      const poisonDps = clamp(
+        basePoisonDps * (0.82 + Math.random() * 0.38),
+        POISON_STATUS.minDps,
+        POISON_STATUS.maxDps
+      );
+      world.projectiles.push({
+        id: world.nextProjectileId++,
+        type: "poison_bottle",
+        monsterType: monster.type || "marsh_stalker",
+        x: monster.x + Math.cos(theta) * 13,
+        y: monster.y + Math.sin(theta) * 13,
+        vx,
+        vy,
+        damage: 0,
+        radius: POISON_BOTTLE.radius,
+        life: 0,
+        maxLife: travelTime + 0.22,
+        maxDistance: POISON_BOTTLE.maxDistance,
+        distanceTraveled: 0,
+        poisonDuration,
+        poisonDps,
+        cloudRadius: clamp(
+          POISON_BOTTLE.cloudRadius * (0.9 + Math.random() * 0.2),
+          POISON_CLOUD.minRadius,
+          POISON_CLOUD.maxRadius
+        ),
+        cloudDuration: clamp(
+          POISON_BOTTLE.cloudDuration * (0.88 + Math.random() * 0.24),
+          POISON_CLOUD.minDuration,
+          POISON_CLOUD.maxDuration
+        ),
+        cloudAffectInterval: POISON_BOTTLE.cloudAffectInterval,
+      });
+      return;
+    }
     const vx = Math.cos(theta) * SKELETON_ARROW.speed;
     const vy = Math.sin(theta) * SKELETON_ARROW.speed;
     const travelTime = clamp((dist + 24) / SKELETON_ARROW.speed, 0.35, SKELETON_ARROW.maxLife);
+    const startX = monster.x + Math.cos(theta) * 14;
+    const startY = monster.y + Math.sin(theta) * 14;
+    if (monster.type === "skeleton") {
+      playSkeletonArrowShootWorldSfx(world, startX, startY, 0.76);
+    }
     world.projectiles.push({
       id: world.nextProjectileId++,
       type: "arrow",
       monsterType: monster.type || "crawler",
-      x: monster.x + Math.cos(theta) * 14,
-      y: monster.y + Math.sin(theta) * 14,
+      x: startX,
+      y: startY,
       vx,
       vy,
       damage: baseDamage,
@@ -18559,6 +21024,144 @@
     return { duration, dps };
   }
 
+  function ensurePoisonClouds(world) {
+    if (!world) return [];
+    if (!Array.isArray(world.poisonClouds)) world.poisonClouds = [];
+    if (!Number.isInteger(world.nextPoisonCloudId) || world.nextPoisonCloudId < 1) {
+      world.nextPoisonCloudId = 1;
+    }
+    return world.poisonClouds;
+  }
+
+  function triggerPoisonBottleBreakSfx(world, x, y, intensity = 0.72) {
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+    if (!shouldPlayWorldSfx(world, x, y, CONFIG.tileSize * 13)) return;
+    const worldTag = getLocalWorldAudioTag(world);
+    if (!canPlayLimitedSfx(`monster:poison-bottle:${worldTag}`, 95)) return;
+    playSfx("poisonBottleBreak", {
+      intensity,
+      distance: Math.hypot(x - state.player.x, y - state.player.y),
+    });
+  }
+
+  function spawnPoisonCloud(world, x, y, projectile, isSurface = false) {
+    if (!world || !Number.isFinite(x) || !Number.isFinite(y)) return null;
+    const tx = Math.floor(x / CONFIG.tileSize);
+    const ty = Math.floor(y / CONFIG.tileSize);
+    if (!inBounds(tx, ty, world.size)) return null;
+    if (!world.tiles[tileIndex(tx, ty, world.size)]) return null;
+    if (isSurface && shouldBlockSurfaceHostilesAtTile(world, tx, ty)) return null;
+    const clouds = ensurePoisonClouds(world);
+    if (clouds.length >= POISON_CLOUD.maxActive) {
+      clouds.sort((a, b) => (Number(b?.life) || 0) - (Number(a?.life) || 0));
+      clouds.splice(0, clouds.length - POISON_CLOUD.maxActive + 1);
+    }
+    const poisonDuration = clamp(
+      Number(projectile?.poisonDuration) || 0,
+      0,
+      POISON_STATUS.maxDuration
+    );
+    if (poisonDuration <= 0) return null;
+    const cloud = {
+      id: world.nextPoisonCloudId++,
+      x,
+      y,
+      life: 0,
+      maxLife: clamp(
+        Number(projectile?.cloudDuration) || POISON_BOTTLE.cloudDuration,
+        POISON_CLOUD.minDuration,
+        POISON_CLOUD.maxDuration
+      ),
+      radius: clamp(
+        Number(projectile?.cloudRadius) || POISON_BOTTLE.cloudRadius,
+        POISON_CLOUD.minRadius,
+        POISON_CLOUD.maxRadius
+      ),
+      poisonDuration,
+      poisonDps: clamp(
+        Number(projectile?.poisonDps) || POISON_STATUS.defaultDps,
+        POISON_STATUS.minDps,
+        POISON_STATUS.maxDps
+      ),
+      affectInterval: clamp(
+        Number(projectile?.cloudAffectInterval) || POISON_BOTTLE.cloudAffectInterval,
+        POISON_CLOUD.minAffectInterval,
+        POISON_CLOUD.maxAffectInterval
+      ),
+      monsterType: projectile?.monsterType || "marsh_stalker",
+      nextAffectByPlayer: Object.create(null),
+    };
+    clouds.push(cloud);
+    return cloud;
+  }
+
+  function applyPoisonPayloadToPlayer(target, poisonPayload, monsterType = "marsh_stalker") {
+    if (!target || !poisonPayload) return;
+    if (Number.isFinite(target.hp) && target.hp <= 0) return;
+    if (target.id === (net.playerId || "local")) {
+      applyPoisonStatus(poisonPayload.duration, poisonPayload.dps);
+    } else if (net.isHost) {
+      damageRemotePlayer(target, 0, poisonPayload, {
+        monsterType,
+        attackKind: "projectile",
+      });
+    }
+  }
+
+  function updateMonsterPoisonClouds(world, dt, players, isSurface) {
+    if (!world) return;
+    const clouds = ensurePoisonClouds(world);
+    if (clouds.length === 0) return;
+    const playerRadius = CONFIG.playerRadius * 0.68;
+    for (let i = clouds.length - 1; i >= 0; i -= 1) {
+      const cloud = clouds[i];
+      if (!cloud || !Number.isFinite(cloud.x) || !Number.isFinite(cloud.y)) {
+        clouds.splice(i, 1);
+        continue;
+      }
+      cloud.life = (Number(cloud.life) || 0) + dt;
+      if (cloud.life >= (Number(cloud.maxLife) || 0.01)) {
+        clouds.splice(i, 1);
+        continue;
+      }
+
+      const radius = clamp(
+        Number(cloud.radius) || POISON_BOTTLE.cloudRadius,
+        POISON_CLOUD.minRadius,
+        POISON_CLOUD.maxRadius
+      );
+      const poisonPayload = {
+        duration: clamp(Number(cloud.poisonDuration) || 0, 0, POISON_STATUS.maxDuration),
+        dps: clamp(
+          Number(cloud.poisonDps) || POISON_STATUS.defaultDps,
+          POISON_STATUS.minDps,
+          POISON_STATUS.maxDps
+        ),
+      };
+      if (poisonPayload.duration <= 0) continue;
+      const affectInterval = clamp(
+        Number(cloud.affectInterval) || POISON_BOTTLE.cloudAffectInterval,
+        POISON_CLOUD.minAffectInterval,
+        POISON_CLOUD.maxAffectInterval
+      );
+      if (!cloud.nextAffectByPlayer || typeof cloud.nextAffectByPlayer !== "object") {
+        cloud.nextAffectByPlayer = Object.create(null);
+      }
+
+      for (const target of players) {
+        if (!target || !Number.isFinite(target.x) || !Number.isFinite(target.y)) continue;
+        if (isSurface && target.inHut && !target.inCave) continue;
+        const dist = Math.hypot(target.x - cloud.x, target.y - cloud.y);
+        if (dist > radius + playerRadius) continue;
+        const playerId = String(target.id || "local");
+        const nextAffectAt = Math.max(0, Number(cloud.nextAffectByPlayer[playerId]) || 0);
+        if (cloud.life + 0.0001 < nextAffectAt) continue;
+        applyPoisonPayloadToPlayer(target, poisonPayload, cloud.monsterType || "marsh_stalker");
+        cloud.nextAffectByPlayer[playerId] = cloud.life + affectInterval;
+      }
+    }
+  }
+
   function updateMonsterProjectiles(world, dt, players, isSurface) {
     if (!world) return;
     if (!Array.isArray(world.projectiles) || world.projectiles.length === 0) return;
@@ -18569,12 +21172,23 @@
         world.projectiles.splice(i, 1);
         continue;
       }
+      if (!Number.isFinite(projectile.x) || !Number.isFinite(projectile.y)) {
+        world.projectiles.splice(i, 1);
+        continue;
+      }
+      const projectileType = projectile.type || "arrow";
+      const isPoisonBottle = projectileType === "poison_bottle";
       const prevX = projectile.x;
       const prevY = projectile.y;
       const canHearProjectile = shouldPlayWorldSfx(world, prevX, prevY, CONFIG.tileSize * 12);
       projectile.life = (projectile.life || 0) + dt;
-      if (projectile.life > (projectile.maxLife || SKELETON_ARROW.maxLife)) {
-        if (canHearProjectile) {
+      if (projectile.life > (projectile.maxLife || (isPoisonBottle ? POISON_BOTTLE.maxLife : SKELETON_ARROW.maxLife))) {
+        if (isPoisonBottle) {
+          const spawned = spawnPoisonCloud(world, prevX, prevY, projectile, isSurface);
+          if (spawned && canHearProjectile) {
+            triggerPoisonBottleBreakSfx(world, prevX, prevY, 0.78);
+          }
+        } else if (canHearProjectile) {
           playSfx("monsterAttackMiss", {
             monsterType: projectile.monsterType || "skeleton",
             inCave: !isSurface,
@@ -18588,15 +21202,44 @@
 
       const nextX = prevX + (projectile.vx || 0) * dt;
       const nextY = prevY + (projectile.vy || 0) * dt;
+      if (!Number.isFinite(nextX) || !Number.isFinite(nextY)) {
+        world.projectiles.splice(i, 1);
+        continue;
+      }
+      if (isPoisonBottle) {
+        projectile.distanceTraveled = Math.max(
+          0,
+          (Number(projectile.distanceTraveled) || 0) + Math.hypot(nextX - prevX, nextY - prevY)
+        );
+        if (projectile.distanceTraveled >= (Number(projectile.maxDistance) || POISON_BOTTLE.maxDistance)) {
+          const spawned = spawnPoisonCloud(world, nextX, nextY, projectile, isSurface);
+          if (spawned && canHearProjectile) {
+            triggerPoisonBottleBreakSfx(world, nextX, nextY, 0.8);
+          }
+          world.projectiles.splice(i, 1);
+          continue;
+        }
+      }
       if (
         isSurface
         && shouldBlockSurfaceHostilesAtTile(world, Math.floor(nextX / CONFIG.tileSize), Math.floor(nextY / CONFIG.tileSize))
       ) {
+        if (isPoisonBottle) {
+          const spawned = spawnPoisonCloud(world, prevX, prevY, projectile, isSurface);
+          if (spawned && canHearProjectile) {
+            triggerPoisonBottleBreakSfx(world, prevX, prevY, 0.76);
+          }
+        }
         world.projectiles.splice(i, 1);
         continue;
       }
       if (!isWalkableAtWorld(world, nextX, nextY)) {
-        if (canHearProjectile) {
+        if (isPoisonBottle) {
+          const spawned = spawnPoisonCloud(world, nextX, nextY, projectile, isSurface);
+          if (spawned && canHearProjectile) {
+            triggerPoisonBottleBreakSfx(world, nextX, nextY, 0.8);
+          }
+        } else if (canHearProjectile) {
           playSfx("monsterAttackMiss", {
             monsterType: projectile.monsterType || "skeleton",
             inCave: !isSurface,
@@ -18614,27 +21257,37 @@
       for (const target of players) {
         if (isSurface && target.inHut && !target.inCave) continue;
         const d = pointSegmentDistance(target.x, target.y, prevX, prevY, nextX, nextY);
-        if (d > playerRadius + (projectile.radius || SKELETON_ARROW.radius)) continue;
-        const amount = Math.max(1, Math.floor(projectile.damage || MONSTER.damage));
+        if (d > playerRadius + (projectile.radius || (isPoisonBottle ? POISON_BOTTLE.radius : SKELETON_ARROW.radius))) continue;
         const poisonPayload = Number(projectile.poisonDuration) > 0
           ? {
               duration: Math.max(0, Number(projectile.poisonDuration) || 0),
               dps: Math.max(0, Number(projectile.poisonDps) || 0),
             }
           : null;
-        if (target.id === (net.playerId || "local")) {
+        if (isPoisonBottle) {
           if (poisonPayload) {
-            applyPoisonStatus(poisonPayload.duration, poisonPayload.dps);
+            applyPoisonPayloadToPlayer(target, poisonPayload, projectile.monsterType || "marsh_stalker");
           }
-          damagePlayer(amount, {
-            monsterType: projectile.monsterType || "skeleton",
-            attackKind: "projectile",
-          });
-        } else if (net.isHost) {
-          damageRemotePlayer(target, amount, poisonPayload, {
-            monsterType: projectile.monsterType || "skeleton",
-            attackKind: "projectile",
-          });
+          const spawned = spawnPoisonCloud(world, nextX, nextY, projectile, isSurface);
+          if (spawned && canHearProjectile) {
+            triggerPoisonBottleBreakSfx(world, nextX, nextY, 0.86);
+          }
+        } else {
+          const amount = Math.max(1, Math.floor(projectile.damage || MONSTER.damage));
+          if (target.id === (net.playerId || "local")) {
+            if (poisonPayload) {
+              applyPoisonStatus(poisonPayload.duration, poisonPayload.dps);
+            }
+            damagePlayer(amount, {
+              monsterType: projectile.monsterType || "skeleton",
+              attackKind: "projectile",
+            });
+          } else if (net.isHost) {
+            damageRemotePlayer(target, amount, poisonPayload, {
+              monsterType: projectile.monsterType || "skeleton",
+              attackKind: "projectile",
+            });
+          }
         }
         world.projectiles.splice(i, 1);
         hit = true;
@@ -18758,12 +21411,15 @@
     if (!world) return;
     if (!world.monsters) world.monsters = [];
     if (!world.projectiles) world.projectiles = [];
+    if (!world.poisonClouds) world.poisonClouds = [];
     if (!world.nextProjectileId) world.nextProjectileId = 1;
+    if (!world.nextPoisonCloudId) world.nextPoisonCloudId = 1;
 
     if (isSurface) {
       if (players.length === 0) {
         // No surface players active: clear transient arrows so they do not freeze mid-flight.
         world.projectiles = [];
+        world.poisonClouds = [];
         if (state.isNight) return;
       }
       if (state.isNight) {
@@ -18773,8 +21429,15 @@
           ensureSpawnIslandNightMonsters(world, players, 1);
           state.surfaceSpawnTimer = MONSTER.spawnInterval;
         }
-      } else if (Array.isArray(world.monsters) && world.monsters.length > 0) {
-        igniteSurfaceMonstersForDay(world);
+      } else {
+        state.surfaceSpawnTimer -= dt;
+        if (state.surfaceSpawnTimer <= 0) {
+          spawnDayMarshStalkersForActiveIslands(world, players);
+          state.surfaceSpawnTimer = MONSTER.spawnInterval;
+        }
+        if (Array.isArray(world.monsters) && world.monsters.length > 0) {
+          igniteSurfaceMonstersForDay(world);
+        }
       }
       state.surfaceGuardianSpawnTimer -= dt;
       if (state.surfaceGuardianSpawnTimer <= 0) {
@@ -18784,7 +21447,13 @@
     }
 
     updateMonsterProjectiles(world, dt, players, isSurface);
+    updateMonsterPoisonClouds(world, dt, players, isSurface);
     const campfireFearZones = isSurface ? getSurfaceCampfireFearZones(world) : [];
+    const cameraView = getCamera();
+    const activeViewSpan = Math.max(
+      getCameraViewWidth(cameraView),
+      getCameraViewHeight(cameraView)
+    );
 
     for (let i = world.monsters.length - 1; i >= 0; i -= 1) {
       const monster = world.monsters[i];
@@ -18792,6 +21461,7 @@
       if (monster.attackTimer > 0) monster.attackTimer -= dt;
 
       if (monster.hp <= 0) {
+        spawnMonsterSplitChildren(world, monster);
         if (monster.dropLootOnDeath) {
           spawnMonsterDrops(world, monster);
         }
@@ -18814,8 +21484,14 @@
       const { target, targetDist } = getNearestMonsterTarget(monster, players, isSurface);
       const poisonPayload = getMonsterPoisonPayload(monster);
       const dayImmune = isDayImmuneMonster(monster);
+      const burnGraceActive = isSurface && !state.isNight && state.surfaceDayBurnGraceTimer > 0;
+      if (burnGraceActive && !dayImmune) {
+        monster.dayBurning = false;
+        monster.burnTimer = 0;
+        monster.burnDuration = 0;
+      }
 
-      if (isSurface && !state.isNight && !dayImmune) {
+      if (isSurface && !state.isNight && !dayImmune && !burnGraceActive) {
         igniteMonsterForDay(monster);
         monster.burnTimer = Math.max(0, (monster.burnTimer ?? 0) - dt);
         const aggroRange = monster.aggroRange ?? MONSTER.aggroRange;
@@ -18901,7 +21577,7 @@
         monster.burnDuration = 0;
       }
 
-      if (isSurface && targetDist > Math.max(viewWidth, viewHeight) + MONSTER.aggroRange) {
+      if (isSurface && targetDist > activeViewSpan + MONSTER.aggroRange) {
         continue;
       }
 
@@ -18984,11 +21660,13 @@
       if (state.surfaceWorld) {
         state.surfaceWorld.monsters = [];
         state.surfaceWorld.projectiles = [];
+        state.surfaceWorld.poisonClouds = [];
         if (Array.isArray(state.surfaceWorld.caves)) {
           for (const cave of state.surfaceWorld.caves) {
             if (!cave?.world) continue;
             cave.world.monsters = [];
             cave.world.projectiles = [];
+            cave.world.poisonClouds = [];
           }
         }
       }
@@ -19008,6 +21686,9 @@
           if (Array.isArray(cave.world?.projectiles) && cave.world.projectiles.length > 0) {
             cave.world.projectiles = [];
           }
+          if (Array.isArray(cave.world?.poisonClouds) && cave.world.poisonClouds.length > 0) {
+            cave.world.poisonClouds = [];
+          }
           continue;
         }
         const cavePlayers = getPlayersForWorld(cave.world);
@@ -19025,11 +21706,15 @@
     const passiveTargets = getSurfacePassiveAnimalTargets(world);
     const maxAnimals = passiveTargets.maxAnimals;
     const players = getPlayersForWorld(world);
+    const trimmedByIslandCap = trimSurfaceAnimalsToIslandCaps(world, players, {
+      spawnIslandHarvestMin: passiveTargets.spawnIslandHarvestMin,
+      mushroomMinPerIsland: MUSHROOM_GREEN_COW_CONFIG.minPerIsland,
+    });
     const trimmedAnimals = trimSurfaceAnimalsToCap(world, maxAnimals, players, {
       spawnIslandHarvestMin: passiveTargets.spawnIslandHarvestMin,
       mushroomMinPerIsland: MUSHROOM_GREEN_COW_CONFIG.minPerIsland,
     });
-    if (trimmedAnimals > 0) {
+    if (trimmedByIslandCap > 0 || trimmedAnimals > 0) {
       markDirty();
     }
     const immediateSpawnIslandTopUp = ensureSpawnIslandHarvestAnimals(
@@ -19189,10 +21874,12 @@
   function spawnAmbientFishNearCamera(world) {
     if (!world || state.ambientFish.length >= AMBIENT_FISH_CONFIG.maxFish) return;
     const camera = getCamera();
+    const cameraViewWidth = getCameraViewWidth(camera);
+    const cameraViewHeight = getCameraViewHeight(camera);
     const minX = camera.x - CONFIG.tileSize * 2;
     const minY = camera.y - CONFIG.tileSize * 2;
-    const maxX = camera.x + viewWidth + CONFIG.tileSize * 2;
-    const maxY = camera.y + viewHeight + CONFIG.tileSize * 2;
+    const maxX = camera.x + cameraViewWidth + CONFIG.tileSize * 2;
+    const maxY = camera.y + cameraViewHeight + CONFIG.tileSize * 2;
 
     for (let attempt = 0; attempt < 14; attempt += 1) {
       const x = minX + Math.random() * (maxX - minX);
@@ -19242,10 +21929,12 @@
     }
 
     const camera = getCamera();
+    const cameraViewWidth = getCameraViewWidth(camera);
+    const cameraViewHeight = getCameraViewHeight(camera);
     const minX = camera.x - CONFIG.tileSize * 5;
     const minY = camera.y - CONFIG.tileSize * 5;
-    const maxX = camera.x + viewWidth + CONFIG.tileSize * 5;
-    const maxY = camera.y + viewHeight + CONFIG.tileSize * 5;
+    const maxX = camera.x + cameraViewWidth + CONFIG.tileSize * 5;
+    const maxY = camera.y + cameraViewHeight + CONFIG.tileSize * 5;
 
     for (let i = state.ambientFish.length - 1; i >= 0; i -= 1) {
       const fish = state.ambientFish[i];
@@ -20096,13 +22785,15 @@
     if (state.inCave || state.player?.inHut) return;
     const target = getActiveRobotInteractionTarget();
     if (!target) return;
+    const cameraViewWidth = getCameraViewWidth(camera);
+    const cameraViewHeight = getCameraViewHeight(camera);
     const center = getStructureCenterWorld(target);
     const screen = worldToScreen(center.x, center.y, camera);
     if (
       screen.x < -36
       || screen.y < -36
-      || screen.x > viewWidth + 36
-      || screen.y > viewHeight + 36
+      || screen.x > cameraViewWidth + 36
+      || screen.y > cameraViewHeight + 36
     ) {
       return;
     }
@@ -20146,17 +22837,33 @@
   }
 
   function getCamera() {
+    const fovMult = getDebugFovMultiplier();
+    const scale = clamp(1 / fovMult, 0.34, 1);
+    const cameraViewWidth = viewWidth / scale;
+    const cameraViewHeight = viewHeight / scale;
     return {
-      x: state.player.x - viewWidth / 2,
-      y: state.player.y - viewHeight / 2,
+      x: state.player.x - cameraViewWidth / 2,
+      y: state.player.y - cameraViewHeight / 2,
+      scale,
+      viewWidth: cameraViewWidth,
+      viewHeight: cameraViewHeight,
     };
+  }
+
+  function getCameraViewWidth(camera) {
+    return Number.isFinite(camera?.viewWidth) ? camera.viewWidth : viewWidth;
+  }
+
+  function getCameraViewHeight(camera) {
+    return Number.isFinite(camera?.viewHeight) ? camera.viewHeight : viewHeight;
   }
 
   function screenToWorld(screenX, screenY) {
     const camera = getCamera();
+    const scale = Number.isFinite(camera?.scale) ? camera.scale : 1;
     return {
-      x: screenX + camera.x,
-      y: screenY + camera.y,
+      x: (screenX / scale) + camera.x,
+      y: (screenY / scale) + camera.y,
     };
   }
 
@@ -20298,7 +23005,7 @@
 
     const resource = getResourceAt(world, tx, ty);
     if (resource) {
-      if (resource.stage && resource.stage !== "alive") {
+      if (isTreeRegrowthStage(resource)) {
         return { ok: true, clearResourceTiles: [{ tx, ty }] };
       }
       return { ok: false, reason: "Blocked" };
@@ -20657,7 +23364,7 @@
     const target = getSleepBedTarget();
     if (!target) return;
 
-    const crawlDir = normalizeDirectionVector(
+    const approachDir = normalizeDirectionVector(
       target.bedX - target.startX,
       target.bedY - target.startY,
       state.player.facing.x,
@@ -20666,8 +23373,8 @@
     const walkDir = normalizeDirectionVector(
       target.exitX - target.bedX,
       target.exitY - target.bedY,
-      -crawlDir.x,
-      -crawlDir.y
+      -approachDir.x,
+      -approachDir.y
     );
 
     state.sleepSequence = {
@@ -20682,8 +23389,10 @@
       bedY: target.bedY,
       exitX: target.exitX,
       exitY: target.exitY,
-      crawlDirX: crawlDir.x,
-      crawlDirY: crawlDir.y,
+      crawlDirX: approachDir.x,
+      crawlDirY: approachDir.y,
+      sleepDirX: 0,
+      sleepDirY: -1,
       walkDirX: walkDir.x,
       walkDirY: walkDir.y,
     };
@@ -20742,6 +23451,8 @@
         const progress = clamp(sequence.timer / SLEEP_SEQUENCE.fadeOutDuration, 0, 1);
         sequence.fadeAlpha = progress;
         setSleepSequencePosition(sequence, sequence.bedX, sequence.bedY);
+        state.player.facing.x = sequence.sleepDirX;
+        state.player.facing.y = sequence.sleepDirY;
         if (progress >= 1) {
           sequence.phase = "blackout";
           sequence.timer = 0;
@@ -20755,6 +23466,8 @@
       case "blackout": {
         sequence.fadeAlpha = 1;
         setSleepSequencePosition(sequence, sequence.bedX, sequence.bedY);
+        state.player.facing.x = sequence.sleepDirX;
+        state.player.facing.y = sequence.sleepDirY;
         if (sequence.timer >= SLEEP_SEQUENCE.blackoutDuration) {
           sequence.phase = "fadeIn";
           sequence.timer = 0;
@@ -20765,6 +23478,8 @@
         const progress = clamp(sequence.timer / SLEEP_SEQUENCE.fadeInDuration, 0, 1);
         sequence.fadeAlpha = 1 - progress;
         setSleepSequencePosition(sequence, sequence.bedX, sequence.bedY);
+        state.player.facing.x = sequence.sleepDirX;
+        state.player.facing.y = sequence.sleepDirY;
         if (progress >= 1) {
           sequence.phase = "walkOff";
           sequence.timer = 0;
@@ -20797,16 +23512,15 @@
     const sequence = state.sleepSequence;
     if (!sequence || sequence.interior !== inInterior) return null;
     if (
-      sequence.phase !== "toBed"
-      && sequence.phase !== "fadeOut"
+      sequence.phase !== "fadeOut"
       && sequence.phase !== "blackout"
       && sequence.phase !== "fadeIn"
     ) {
       return null;
     }
     return normalizeDirectionVector(
-      sequence.crawlDirX,
-      sequence.crawlDirY,
+      sequence.sleepDirX,
+      sequence.sleepDirY,
       state.player?.facing?.x ?? 1,
       state.player?.facing?.y ?? 0
     );
@@ -20843,6 +23557,9 @@
     }
 
     const inHouse = !!(state.player.inHut && state.activeHouse);
+    if (!inHouse && state.houseRelocation) {
+      state.houseRelocation = null;
+    }
     const combatWorld = getCombatWorld();
     state.targetResource = inHouse ? null : findNearestResource(combatWorld, state.player);
     state.targetMonster = inHouse
@@ -20865,6 +23582,7 @@
       const chest = findNearestInteriorStructure(state.player, state.activeHouse, (entry) => entry.type === "chest");
       const station = findNearestInteriorStructure(state.player, state.activeHouse, (entry) => STRUCTURE_DEFS[entry.type]?.station);
       const bed = findNearestInteriorStructure(state.player, state.activeHouse, (entry) => entry.type === "bed");
+      const movable = findNearestInteriorStructure(state.player, state.activeHouse, (entry) => isInteriorPlaceType(entry.type));
       if (chest) {
         chest.interior = true;
         chest.houseRef = state.activeHouse;
@@ -20877,9 +23595,14 @@
         bed.interior = true;
         bed.houseRef = state.activeHouse;
       }
+      if (movable) {
+        movable.interior = true;
+        movable.houseRef = state.activeHouse;
+      }
       state.nearChest = chest;
       state.nearStation = station;
       state.nearBed = bed;
+      state.nearInteriorMoveTarget = movable;
     } else if (!state.inCave) {
       const nearbyBench = findNearestStructure(state.player, (structure) => structure.type === "bench");
       state.nearBench = !!nearbyBench;
@@ -20891,6 +23614,7 @@
       state.nearCave = findNearestCave(state.surfaceWorld, state.player);
       state.nearHouse = findNearestStructure(state.player, (structure) => isHouseType(structure.type));
       state.nearBed = findNearestStructure(state.player, (structure) => structure.type === "bed");
+      state.nearInteriorMoveTarget = null;
     } else {
       state.nearBench = false;
       state.nearBenchStructure = null;
@@ -20901,6 +23625,7 @@
       state.nearCave = null;
       state.nearHouse = null;
       state.nearBed = null;
+      state.nearInteriorMoveTarget = null;
     }
 
     if (state.activeStation) {
@@ -20953,7 +23678,10 @@
 
     if (state.promptTimer <= 0) {
       const placement = getPlacementItem();
-      if (placement) {
+      const relocation = inHouse ? getActiveHouseRelocation() : null;
+      if (relocation) {
+        setPrompt(`Moving ${getInteriorMoveLabel(relocation.type)} (E place, Space cancel)`);
+      } else if (placement) {
         setPrompt(`Place ${ITEMS[placement.itemId].name}`);
       } else if (inHouse) {
         const interior = getHouseInterior(state.activeHouse);
@@ -20966,6 +23694,7 @@
         else if (state.nearBed && state.isNight) setPrompt("Press E to sleep");
         else if (state.nearChest) setPrompt("Press E to open chest");
         else if (state.nearStation) setPrompt(`Press E to use ${STRUCTURE_DEFS[state.nearStation.type]?.name}`);
+        else if (state.nearInteriorMoveTarget) setPrompt("Press Space / Tap Attack to move furniture");
         else setPrompt("Inside house");
       } else if (state.inCave) {
         const entrance = state.activeCave?.world?.entrance;
@@ -21024,6 +23753,11 @@
     }
 
     if (interactPressed) {
+      if (inHouse && getActiveHouseRelocation()) {
+        placeHouseRelocation();
+        interactPressed = false;
+        return;
+      }
       const placement = getPlacementItem();
       if (placement) {
         attemptPlace();
@@ -21089,6 +23823,16 @@
       } else if (state.inCave) {
         if (state.targetMonster || state.targetAnimal) performAttack();
         else attemptHarvest(state.targetResource);
+      } else if (state.player.inHut) {
+        const slotId = state.inventory?.[activeSlot]?.id || null;
+        const consumableSelected = slotId === "medicine" || slotId === "cooked_meat";
+        if (getActiveHouseRelocation()) {
+          cancelHouseRelocation();
+        } else if (consumableSelected) {
+          useActiveConsumable();
+        } else {
+          beginHouseRelocation();
+        }
       } else if (!state.player.inHut) {
         if (state.targetMonster || state.targetAnimal) performAttack();
         else if (!useActiveConsumable()) attemptHarvest(state.targetResource);
@@ -21119,6 +23863,7 @@
 
   function update(dt) {
     if (!state.world || !state.player) {
+      runDebugQaSelfTests(dt);
       updatePrompt(dt);
       return;
     }
@@ -21157,6 +23902,7 @@
     netTick(dt);
     updatePrompt(dt);
     updateSave(dt);
+    runDebugQaSelfTests(dt);
     if (state.player.hp <= 0 && !state.respawnLock) {
       handlePlayerDeath();
     }
@@ -21371,6 +24117,43 @@
 
     ctx.fillStyle = "#6b8b4c";
     ctx.fillRect(5.8, 1.4, 3.1, 4.8);
+
+    const equipped = getPlayerArmorVisualFlags(state.player);
+    const armorStroke = "rgba(24, 66, 27, 0.52)";
+    const armorSheen = "rgba(238, 255, 237, 0.2)";
+    if (equipped.chestplate) {
+      ctx.fillStyle = "rgba(108, 194, 108, 0.54)";
+      ctx.fillRect(-8.6, -0.5, 15.5, 7.5);
+      ctx.strokeStyle = armorStroke;
+      ctx.lineWidth = 0.9;
+      ctx.strokeRect(-8.6, -0.5, 15.5, 7.5);
+      ctx.fillStyle = armorSheen;
+      ctx.fillRect(-7.3, 0.2, 8, 1.7);
+    }
+    if (equipped.leggings) {
+      ctx.fillStyle = "rgba(95, 176, 98, 0.5)";
+      ctx.fillRect(-7.5, 5.9, 13.2, 3.4);
+      ctx.strokeStyle = armorStroke;
+      ctx.strokeRect(-7.5, 5.9, 13.2, 3.4);
+    }
+    if (equipped.boots) {
+      ctx.fillStyle = "rgba(81, 154, 84, 0.56)";
+      ctx.fillRect(-7.6, 8.8, 4.8, 1.9);
+      ctx.fillRect(-0.2, 8.8, 4.8, 1.9);
+      ctx.strokeStyle = armorStroke;
+      ctx.strokeRect(-7.6, 8.8, 4.8, 1.9);
+      ctx.strokeRect(-0.2, 8.8, 4.8, 1.9);
+    }
+    if (equipped.helmet) {
+      ctx.fillStyle = "rgba(128, 214, 126, 0.58)";
+      ctx.beginPath();
+      ctx.arc(8, -0.2, 5.2, Math.PI, 0);
+      ctx.fill();
+      ctx.strokeStyle = armorStroke;
+      ctx.stroke();
+      ctx.fillStyle = armorSheen;
+      ctx.fillRect(6.4, -2.8, 2.4, 1.1);
+    }
     ctx.restore();
 
     if (name) {
@@ -21378,6 +24161,56 @@
       ctx.fillStyle = "rgba(255, 255, 255, 0.9)";
       ctx.textAlign = "center";
       ctx.fillText(name, screenX, screenY - 18);
+    }
+  }
+
+  function getPlayerArmorVisualFlags(player) {
+    ensurePlayerProgress(player);
+    return {
+      helmet: !!player?.unlocks?.slimeHelmet,
+      chestplate: !!player?.unlocks?.slimeChestplate,
+      leggings: !!player?.unlocks?.slimeLeggings,
+      boots: !!player?.unlocks?.slimeBoots,
+    };
+  }
+
+  function drawPlayerArmorOverlay(centerX, bodyTopY, player) {
+    const equipped = getPlayerArmorVisualFlags(player);
+    const armorStroke = "rgba(24, 66, 27, 0.56)";
+    const armorSheen = "rgba(238, 255, 237, 0.22)";
+    if (equipped.chestplate) {
+      ctx.fillStyle = "rgba(109, 194, 106, 0.58)";
+      ctx.fillRect(centerX - 7, bodyTopY, 14, 10);
+      ctx.strokeStyle = armorStroke;
+      ctx.lineWidth = 1;
+      ctx.strokeRect(centerX - 7, bodyTopY, 14, 10);
+      ctx.fillStyle = armorSheen;
+      ctx.fillRect(centerX - 5.4, bodyTopY + 1.2, 7.6, 2.2);
+    }
+    if (equipped.leggings) {
+      ctx.fillStyle = "rgba(96, 176, 99, 0.52)";
+      ctx.fillRect(centerX - 6.8, bodyTopY + 8.6, 13.6, 4.3);
+      ctx.strokeStyle = armorStroke;
+      ctx.strokeRect(centerX - 6.8, bodyTopY + 8.6, 13.6, 4.3);
+    }
+    if (equipped.boots) {
+      ctx.fillStyle = "rgba(81, 154, 84, 0.58)";
+      ctx.fillRect(centerX - 6.5, bodyTopY + 15.7, 5.5, 2.6);
+      ctx.fillRect(centerX + 1.1, bodyTopY + 15.7, 5.5, 2.6);
+      ctx.strokeStyle = armorStroke;
+      ctx.strokeRect(centerX - 6.5, bodyTopY + 15.7, 5.5, 2.6);
+      ctx.strokeRect(centerX + 1.1, bodyTopY + 15.7, 5.5, 2.6);
+    }
+    if (equipped.helmet) {
+      ctx.fillStyle = "rgba(129, 214, 127, 0.6)";
+      ctx.beginPath();
+      ctx.arc(centerX, bodyTopY - 7, 5.8, Math.PI, 0);
+      ctx.fill();
+      ctx.strokeStyle = armorStroke;
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.fillStyle = armorSheen;
+      ctx.fillRect(centerX - 2, bodyTopY - 10.2, 3, 1.2);
     }
   }
 
@@ -21418,12 +24251,18 @@
     ctx.fillStyle = "#6b8b4c";
     ctx.fillRect(screen.x + 6, screen.y + 3, 4, 7);
 
+    drawPlayerArmorOverlay(screen.x, screen.y, player);
+
     if (name) {
       ctx.font = "12px Trebuchet MS";
       ctx.fillStyle = "rgba(255, 255, 255, 0.9)";
       ctx.textAlign = "center";
       ctx.fillText(name, screen.x, screen.y - 18);
     }
+  }
+
+  function getLocalPlayerBodyColor() {
+    return normalizeHexColor(net.localColor) || "#2f4b6c";
   }
 
   function drawPlayer(camera) {
@@ -21433,18 +24272,20 @@
         return;
       }
     }
+    const bodyColor = getLocalPlayerBodyColor();
     const crawlDir = getActiveSleepCrawlDirection(false);
     if (crawlDir) {
       const px = state.player.renderX ?? state.player.x;
       const py = state.player.renderY ?? state.player.y;
       const screen = worldToScreen(px, py, camera);
-      drawCrawlingPlayerAvatar(screen.x, screen.y, "#2f4b6c", crawlDir, net.localName);
+      drawCrawlingPlayerAvatar(screen.x, screen.y, bodyColor, crawlDir, net.localName);
       return;
     }
-    drawPlayerAvatar(state.player, camera, "#2f4b6c", net.localName);
+    drawPlayerAvatar(state.player, camera, bodyColor, net.localName);
   }
 
   function drawRemotePlayers(camera) {
+    if (!net.enabled) return;
     for (const player of net.players.values()) {
       if (state.inCave) {
         if (!player.inCave || player.caveId !== state.activeCave?.id) continue;
@@ -21521,13 +24362,15 @@
     const mx = Number.isFinite(monster?.x) ? monster.x : monster?.renderX;
     const my = Number.isFinite(monster?.y) ? monster.y : monster?.renderY;
     if (!Number.isFinite(mx) || !Number.isFinite(my)) return;
+    const cameraViewWidth = getCameraViewWidth(camera);
+    const cameraViewHeight = getCameraViewHeight(camera);
     const facingX = resolveEntityFacingX(monster, mx);
     const screen = worldToScreen(mx, my, camera);
     if (
       screen.x < -40 ||
       screen.y < -40 ||
-      screen.x > viewWidth + 40 ||
-      screen.y > viewHeight + 40
+      screen.x > cameraViewWidth + 40 ||
+      screen.y > cameraViewHeight + 40
     ) {
       return;
     }
@@ -21538,7 +24381,9 @@
     ctx.fill();
 
     const type = monster.type || "crawler";
-    const baseColor = monster.color || "#2b2d3a";
+    const baseColor = type === "marsh_stalker"
+      ? "#48b76f"
+      : (monster.color || "#2b2d3a");
     if (type === "marsh_stalker") {
       ctx.fillStyle = baseColor;
       ctx.beginPath();
@@ -21556,6 +24401,54 @@
       ctx.arc(screen.x - 3, screen.y - 2, 1.7, 0, Math.PI * 2);
       ctx.arc(screen.x + 3, screen.y - 2, 1.7, 0, Math.PI * 2);
       ctx.fill();
+    } else if (type === "slime_large" || type === "slime_medium" || type === "slime_small") {
+      const unit = type === "slime_large" ? 13.5 : (type === "slime_medium" ? 10.4 : 7.2);
+      const bodyWidth = unit * 1.46;
+      const bodyHeight = unit * 1.24;
+      const bodyX = screen.x - bodyWidth * 0.5;
+      const bodyY = screen.y - bodyHeight * 0.52;
+      const shellColor = tintColor(baseColor, -0.22);
+      const coreColor = tintColor(baseColor, 0.04);
+      const shineColor = "rgba(220, 255, 220, 0.24)";
+      ctx.fillStyle = shellColor;
+      drawRoundedRect(ctx, bodyX - 1.1, bodyY + 1.2, bodyWidth + 2.2, bodyHeight, unit * 0.22);
+      ctx.fill();
+      const slimeGrad = ctx.createLinearGradient(screen.x, bodyY, screen.x, bodyY + bodyHeight);
+      slimeGrad.addColorStop(0, tintColor(coreColor, 0.22));
+      slimeGrad.addColorStop(1, tintColor(coreColor, -0.12));
+      ctx.fillStyle = slimeGrad;
+      drawRoundedRect(ctx, bodyX, bodyY, bodyWidth, bodyHeight, unit * 0.2);
+      ctx.fill();
+      ctx.fillStyle = shineColor;
+      drawRoundedRect(
+        ctx,
+        bodyX + unit * 0.16,
+        bodyY + unit * 0.12,
+        bodyWidth * 0.42,
+        bodyHeight * 0.28,
+        unit * 0.11
+      );
+      ctx.fill();
+      ctx.strokeStyle = tintColor(baseColor, -0.4);
+      ctx.lineWidth = 1.2;
+      drawRoundedRect(ctx, bodyX, bodyY, bodyWidth, bodyHeight, unit * 0.2);
+      ctx.stroke();
+      ctx.fillStyle = "#17351c";
+      const eyeY = screen.y - unit * 0.04;
+      const eyeOffset = unit * 0.24;
+      const eyeRadius = Math.max(0.9, unit * 0.12);
+      ctx.beginPath();
+      ctx.arc(screen.x - eyeOffset, eyeY, eyeRadius, 0, Math.PI * 2);
+      ctx.arc(screen.x + eyeOffset, eyeY, eyeRadius, 0, Math.PI * 2);
+      ctx.fill();
+      if (type !== "slime_small") {
+        ctx.strokeStyle = "rgba(24, 55, 27, 0.75)";
+        ctx.lineWidth = Math.max(1, unit * 0.1);
+        ctx.beginPath();
+        ctx.moveTo(screen.x - unit * 0.22, screen.y + unit * 0.2);
+        ctx.quadraticCurveTo(screen.x, screen.y + unit * 0.31, screen.x + unit * 0.22, screen.y + unit * 0.2);
+        ctx.stroke();
+      }
     } else if (type === "polar_bear") {
       ctx.fillStyle = tintColor(baseColor, -0.08);
       ctx.beginPath();
@@ -21733,6 +24626,8 @@
     if (!world) return;
     const fx = ensureMonsterBurnFx(world);
     if (!Array.isArray(fx) || fx.length === 0) return;
+    const cameraViewWidth = getCameraViewWidth(camera);
+    const cameraViewHeight = getCameraViewHeight(camera);
     for (const p of fx) {
       if (!p || p.life <= 0 || p.maxLife <= 0) continue;
       const alpha = clamp(p.life / p.maxLife, 0, 1);
@@ -21740,8 +24635,8 @@
       if (
         screen.x < -24
         || screen.y < -24
-        || screen.x > viewWidth + 24
-        || screen.y > viewHeight + 24
+        || screen.x > cameraViewWidth + 24
+        || screen.y > cameraViewHeight + 24
       ) {
         continue;
       }
@@ -21757,22 +24652,111 @@
     }
   }
 
+  function drawPoisonClouds(world, camera) {
+    if (!world || !Array.isArray(world.poisonClouds) || world.poisonClouds.length === 0) return;
+    const cameraViewWidth = getCameraViewWidth(camera);
+    const cameraViewHeight = getCameraViewHeight(camera);
+    const now = performance.now() * 0.001;
+    for (const cloud of world.poisonClouds) {
+      if (!cloud || cloud.maxLife <= 0 || cloud.life >= cloud.maxLife) continue;
+      const px = Number.isFinite(cloud.x) ? cloud.x : cloud.renderX;
+      const py = Number.isFinite(cloud.y) ? cloud.y : cloud.renderY;
+      if (!Number.isFinite(px) || !Number.isFinite(py)) continue;
+      const screen = worldToScreen(px, py, camera);
+      const radius = clamp(
+        Number(cloud.radius) || POISON_BOTTLE.cloudRadius,
+        POISON_CLOUD.minRadius,
+        POISON_CLOUD.maxRadius
+      );
+      const maxDrawRadius = radius * 1.28;
+      if (
+        screen.x < -maxDrawRadius ||
+        screen.y < -maxDrawRadius ||
+        screen.x > cameraViewWidth + maxDrawRadius ||
+        screen.y > cameraViewHeight + maxDrawRadius
+      ) {
+        continue;
+      }
+      const lifeRatio = clamp((Number(cloud.life) || 0) / Math.max(0.001, Number(cloud.maxLife) || 1), 0, 1);
+      const fadeIn = clamp(lifeRatio / 0.24, 0, 1);
+      const fadeOut = clamp((1 - lifeRatio) / 0.56, 0, 1);
+      const alpha = Math.min(fadeIn, fadeOut);
+      if (alpha <= 0.01) continue;
+      const wobble = 0.92 + Math.sin(now * 2.6 + (cloud.id || 0) * 0.73) * 0.09;
+      const drawRadius = radius * wobble;
+
+      ctx.save();
+      ctx.fillStyle = `rgba(26, 96, 62, ${alpha * 0.2})`;
+      ctx.beginPath();
+      ctx.ellipse(screen.x, screen.y + drawRadius * 0.52, drawRadius * 0.86, drawRadius * 0.32, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      const puffCount = 3;
+      for (let i = 0; i < puffCount; i += 1) {
+        const phase = now * (1.4 + i * 0.3) + (cloud.id || 0) * 0.51 + i * 1.97;
+        const offsetR = drawRadius * (0.24 + i * 0.12);
+        const ox = Math.cos(phase) * offsetR * 0.28;
+        const oy = Math.sin(phase * 0.8) * offsetR * 0.2 - drawRadius * (0.1 + i * 0.08);
+        const puffRadius = drawRadius * (0.38 + i * 0.14);
+        ctx.fillStyle = `rgba(91, 195, 118, ${alpha * (0.19 - i * 0.032)})`;
+        ctx.beginPath();
+        ctx.arc(screen.x + ox, screen.y + oy, puffRadius, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+  }
+
   function drawProjectile(projectile, camera) {
-    if (!projectile || projectile.type !== "arrow") return;
+    if (!projectile) return;
+    const type = projectile.type || "arrow";
+    if (type !== "arrow" && type !== "poison_bottle") return;
     const px = Number.isFinite(projectile.x) ? projectile.x : projectile.renderX;
     const py = Number.isFinite(projectile.y) ? projectile.y : projectile.renderY;
     if (!Number.isFinite(px) || !Number.isFinite(py)) return;
+    const cameraViewWidth = getCameraViewWidth(camera);
+    const cameraViewHeight = getCameraViewHeight(camera);
     const screen = worldToScreen(px, py, camera);
     if (
       screen.x < -30 ||
       screen.y < -30 ||
-      screen.x > viewWidth + 30 ||
-      screen.y > viewHeight + 30
+      screen.x > cameraViewWidth + 30 ||
+      screen.y > cameraViewHeight + 30
     ) {
       return;
     }
     const vx = projectile.vx || 0;
     const vy = projectile.vy || 0;
+    if (type === "poison_bottle") {
+      const angle = Math.atan2(vy || 0.0001, vx || 0.0001) + Math.PI * 0.5;
+      const spin = (performance.now() * 0.012) + ((projectile.id || 0) * 0.17);
+      const bodyW = 7.2;
+      const bodyH = 10.5;
+      ctx.save();
+      ctx.translate(screen.x, screen.y);
+      ctx.rotate(angle + spin * 0.02);
+      ctx.fillStyle = "rgba(30, 39, 50, 0.22)";
+      ctx.beginPath();
+      ctx.ellipse(0, 6, 4.8, 1.8, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = "rgba(170, 232, 209, 0.8)";
+      ctx.beginPath();
+      ctx.rect(-bodyW * 0.5, -bodyH * 0.5, bodyW, bodyH);
+      ctx.fill();
+      ctx.fillStyle = "rgba(88, 184, 105, 0.85)";
+      ctx.beginPath();
+      ctx.rect(-bodyW * 0.42, -bodyH * 0.08, bodyW * 0.84, bodyH * 0.5);
+      ctx.fill();
+      ctx.fillStyle = "rgba(192, 158, 96, 0.95)";
+      ctx.fillRect(-1.6, -bodyH * 0.72, 3.2, 2.2);
+      ctx.strokeStyle = "rgba(34, 86, 58, 0.95)";
+      ctx.lineWidth = 1;
+      ctx.strokeRect(-bodyW * 0.5, -bodyH * 0.5, bodyW, bodyH);
+      ctx.restore();
+      return;
+    }
+
     const len = 12;
     const speed = Math.hypot(vx, vy);
     const nx = speed > 0 ? vx / speed : 1;
@@ -21805,6 +24789,8 @@
 
   function drawAmbientFish(camera) {
     if (!Array.isArray(state.ambientFish) || state.ambientFish.length === 0) return;
+    const cameraViewWidth = getCameraViewWidth(camera);
+    const cameraViewHeight = getCameraViewHeight(camera);
     for (const fish of state.ambientFish) {
       if (!fish || fish.life <= 0 || fish.maxLife <= 0) continue;
       const alphaLife = clamp(fish.life / fish.maxLife, 0, 1);
@@ -21814,8 +24800,8 @@
       if (
         screen.x < -20
         || screen.y < -20
-        || screen.x > viewWidth + 20
-        || screen.y > viewHeight + 20
+        || screen.x > cameraViewWidth + 20
+        || screen.y > cameraViewHeight + 20
       ) {
         continue;
       }
@@ -21846,13 +24832,15 @@
     const drawX = Number.isFinite(animal?.x) ? animal.x : animal?.renderX;
     const drawY = Number.isFinite(animal?.y) ? animal.y : animal?.renderY;
     if (!Number.isFinite(drawX) || !Number.isFinite(drawY)) return;
+    const cameraViewWidth = getCameraViewWidth(camera);
+    const cameraViewHeight = getCameraViewHeight(camera);
     const facingX = resolveEntityFacingX(animal, drawX);
     const screen = worldToScreen(drawX, drawY, camera);
     if (
       screen.x < -40 ||
       screen.y < -40 ||
-      screen.x > viewWidth + 40 ||
-      screen.y > viewHeight + 40
+      screen.x > cameraViewWidth + 40 ||
+      screen.y > cameraViewHeight + 40
     ) {
       return;
     }
@@ -21939,12 +24927,14 @@
   function drawVillager(villager, camera) {
     const drawX = villager.renderX ?? villager.x;
     const drawY = villager.renderY ?? villager.y;
+    const cameraViewWidth = getCameraViewWidth(camera);
+    const cameraViewHeight = getCameraViewHeight(camera);
     const screen = worldToScreen(drawX, drawY, camera);
     if (
       screen.x < -40
       || screen.y < -40
-      || screen.x > viewWidth + 40
-      || screen.y > viewHeight + 40
+      || screen.x > cameraViewWidth + 40
+      || screen.y > cameraViewHeight + 40
     ) {
       return;
     }
@@ -21981,6 +24971,8 @@
     if (structure.removed) return;
     const def = STRUCTURE_DEFS[structure.type];
     if (!def) return;
+    const cameraViewWidth = getCameraViewWidth(camera);
+    const cameraViewHeight = getCameraViewHeight(camera);
     const footprint = getStructureFootprint(structure.type);
     const structureWidthPx = footprint.w * CONFIG.tileSize;
     const structureHeightPx = footprint.h * CONFIG.tileSize;
@@ -21999,13 +24991,14 @@
         worldY = drawPos.y - structureHeightPx * 0.5;
       }
     }
-    const screenX = worldX - camera.x;
-    const screenY = worldY - camera.y;
+    const topLeft = worldToScreen(worldX, worldY, camera);
+    const screenX = topLeft.x;
+    const screenY = topLeft.y;
     if (
       screenX < -structureWidthPx ||
       screenY < -structureHeightPx ||
-      screenX > viewWidth + structureWidthPx ||
-      screenY > viewHeight + structureHeightPx
+      screenX > cameraViewWidth + structureWidthPx ||
+      screenY > cameraViewHeight + structureHeightPx
     ) {
       return;
     }
@@ -22138,8 +25131,13 @@
       case "abandoned_ship": {
         const shipPos = getAbandonedShipDisplayPosition(structure, !net.isHost);
         const ship = ensureAbandonedShipMeta(structure);
-        const centerX = (shipPos ? shipPos.x : (structure.tx + footprint.w * 0.5) * CONFIG.tileSize) - camera.x;
-        const centerY = (shipPos ? shipPos.y : (structure.ty + footprint.h * 0.5) * CONFIG.tileSize) - camera.y;
+        const shipCenter = worldToScreen(
+          shipPos ? shipPos.x : (structure.tx + footprint.w * 0.5) * CONFIG.tileSize,
+          shipPos ? shipPos.y : (structure.ty + footprint.h * 0.5) * CONFIG.tileSize,
+          camera
+        );
+        const centerX = shipCenter.x;
+        const centerY = shipCenter.y;
         const angle = shipPos?.angle ?? 0;
         const halfW = structureWidthPx * 0.48;
         const halfH = structureHeightPx * 0.42;
@@ -22352,15 +25350,63 @@
         break;
       }
       case "sawmill": {
-        drawPlanks(baseX, baseY, baseSize, "#8b6a43", true);
+        const tableY = baseY + Math.floor(baseSize * 0.48);
+        const tableH = Math.max(6, Math.floor(baseSize * 0.2));
+        const tableX = baseX + 2;
+        const tableW = baseSize - 4;
+        ctx.fillStyle = "#7b5c39";
+        ctx.fillRect(tableX, tableY, tableW, tableH);
+        ctx.fillStyle = "#6a4d31";
+        ctx.fillRect(tableX + 2, tableY + tableH, 4, Math.max(4, baseSize - (tableY - baseY) - tableH - 2));
+        ctx.fillRect(tableX + tableW - 6, tableY + tableH, 4, Math.max(4, baseSize - (tableY - baseY) - tableH - 2));
+
+        ctx.fillStyle = "rgba(35, 25, 18, 0.28)";
+        ctx.fillRect(tableX + 3, tableY + 2, tableW - 6, 1);
+        ctx.fillRect(tableX + 3, tableY + tableH - 2, tableW - 6, 1);
+
+        const bladeX = baseX + Math.floor(baseSize * 0.6);
+        const bladeY = tableY + 2;
+        const bladeR = Math.max(5, Math.floor(baseSize * 0.18));
+        ctx.fillStyle = "#cfd8e6";
         ctx.beginPath();
-        ctx.fillStyle = "#cfd6e2";
-        ctx.arc(baseX + baseSize / 2, baseY + baseSize / 2, 6, 0, Math.PI * 2);
+        ctx.arc(bladeX, bladeY, bladeR, 0, Math.PI * 2);
         ctx.fill();
-        ctx.strokeStyle = "#6b6f78";
+        ctx.strokeStyle = "#6e7784";
+        ctx.lineWidth = 1.2;
         ctx.stroke();
-        ctx.fillStyle = "#6f5134";
-        ctx.fillRect(baseX + 4, baseY + baseSize - 7, baseSize - 8, 3);
+        ctx.strokeStyle = "rgba(255,255,255,0.55)";
+        ctx.lineWidth = 1;
+        for (let i = 0; i < 12; i += 1) {
+          const ang = (i / 12) * Math.PI * 2;
+          const ox = Math.cos(ang);
+          const oy = Math.sin(ang);
+          ctx.beginPath();
+          ctx.moveTo(bladeX + ox * (bladeR - 2), bladeY + oy * (bladeR - 2));
+          ctx.lineTo(bladeX + ox * (bladeR + 1), bladeY + oy * (bladeR + 1));
+          ctx.stroke();
+        }
+        ctx.fillStyle = "#778190";
+        ctx.beginPath();
+        ctx.arc(bladeX, bladeY, Math.max(1.5, bladeR * 0.25), 0, Math.PI * 2);
+        ctx.fill();
+
+        const feedY = bladeY - 2;
+        ctx.strokeStyle = "rgba(44, 29, 19, 0.5)";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(tableX + 2, feedY - 3);
+        ctx.lineTo(bladeX - bladeR - 2, feedY - 3);
+        ctx.moveTo(tableX + 2, feedY + 3);
+        ctx.lineTo(bladeX - bladeR - 2, feedY + 3);
+        ctx.stroke();
+        ctx.fillStyle = "#8e6842";
+        drawRoundedRect(ctx, tableX + 2, feedY - 2, Math.max(8, bladeX - bladeR - tableX - 5), 4, 1.5);
+        ctx.fill();
+        ctx.fillStyle = "#5c422c";
+        ctx.fillRect(tableX + 2, feedY - 2, 2, 4);
+
+        ctx.fillStyle = "#5f4a31";
+        ctx.fillRect(bladeX + bladeR + 2, feedY - 1, Math.max(6, tableX + tableW - (bladeX + bladeR + 4)), 2);
         break;
       }
       case "kiln": {
@@ -22432,8 +25478,13 @@
       if (structure.removed) continue;
       const def = STRUCTURE_DEFS[structure.type];
       if (!def?.lightRadius) continue;
-      const cx = structure.tx * CONFIG.tileSize + CONFIG.tileSize / 2 - camera.x;
-      const cy = structure.ty * CONFIG.tileSize + CONFIG.tileSize / 2 - camera.y;
+      const light = worldToScreen(
+        structure.tx * CONFIG.tileSize + CONFIG.tileSize / 2,
+        structure.ty * CONFIG.tileSize + CONFIG.tileSize / 2,
+        camera
+      );
+      const cx = light.x;
+      const cy = light.y;
       const radius = def.lightRadius;
       const warmInner = structure.type === "campfire"
         ? "rgba(255, 178, 98, 0.44)"
@@ -22472,12 +25523,18 @@
   function drawBeaconBeam(camera) {
     if (!state.gameWon || state.inCave) return;
     if (state.winTimer > WIN_SEQUENCE.beamDuration) return;
+    const cameraViewHeight = getCameraViewHeight(camera);
     const beacon = state.structures.find((structure) => structure.type === "beacon" && !structure.removed);
     if (!beacon) return;
-    const centerX = (beacon.tx + 0.5) * CONFIG.tileSize - camera.x;
-    const baseY = (beacon.ty + 0.5) * CONFIG.tileSize - camera.y;
+    const beamStart = worldToScreen(
+      (beacon.tx + 0.5) * CONFIG.tileSize,
+      (beacon.ty + 0.5) * CONFIG.tileSize,
+      camera
+    );
+    const centerX = beamStart.x;
+    const baseY = beamStart.y;
     const grow = clamp(state.winTimer / 2.6, 0, 1);
-    const height = viewHeight * (0.3 + 0.7 * grow);
+    const height = cameraViewHeight * (0.3 + 0.7 * grow);
     const beamWidth = 16 + Math.sin(state.winTimer * 6) * 2;
     const alpha = 0.7 * (1 - Math.max(0, (state.winTimer - 7) / 3));
     const topY = baseY - height;
@@ -22498,13 +25555,13 @@
     ctx.restore();
   }
 
-  function drawClimbingPlayer(screenX, screenY) {
+  function drawClimbingPlayer(screenX, screenY, bodyColor = "#2f4b6c") {
     ctx.save();
     ctx.fillStyle = "#f2c38b";
     ctx.beginPath();
     ctx.arc(screenX, screenY - 6, 4, 0, Math.PI * 2);
     ctx.fill();
-    ctx.fillStyle = "#2f4b6c";
+    ctx.fillStyle = bodyColor;
     ctx.fillRect(screenX - 4, screenY, 8, 10);
     ctx.fillStyle = "#4a3a28";
     ctx.fillRect(screenX - 4, screenY + 10, 3, 6);
@@ -22520,10 +25577,11 @@
     const targetX = state.winPlayerPos.x;
     const targetY = state.winPlayerPos.y;
     const offsetY = CONFIG.tileSize * 6;
+    const cameraViewWidth = getCameraViewWidth(camera);
     // Use camera-relative offscreen anchors so helicopter clearly flies in/out on any screen size.
     const offscreenPad = 140;
     const startX = camera.x - offscreenPad;
-    const endX = camera.x + viewWidth + offscreenPad;
+    const endX = camera.x + cameraViewWidth + offscreenPad;
 
     let heliX = targetX;
     let heliY = targetY - offsetY;
@@ -22582,7 +25640,7 @@
       const climbProgress = clamp((t - WIN_SEQUENCE.ladderDropEnd) / (WIN_SEQUENCE.climbEnd - WIN_SEQUENCE.ladderDropEnd), 0, 1);
       const climbY = lerp(targetY, ladderTopY + 6, smoothstep(climbProgress));
       const climbScreen = worldToScreen(heliX, climbY, camera);
-      drawClimbingPlayer(climbScreen.x, climbScreen.y);
+      drawClimbingPlayer(climbScreen.x, climbScreen.y, getLocalPlayerBodyColor());
     }
 
     // Helicopter body
@@ -22698,13 +25756,41 @@
         ctx.lineWidth = 2;
         ctx.strokeRect(px + 2, py + 2, layout.tileSize - 4, layout.tileSize - 4);
       }
+    } else {
+      const relocation = getActiveHouseRelocation();
+      if (relocation) {
+        const targetItemId = getInteriorPlaceItemId(relocation.type);
+        const sourcePx = layout.originX + relocation.sourceTx * layout.tileSize;
+        const sourcePy = layout.originY + relocation.sourceTy * layout.tileSize;
+        ctx.fillStyle = "rgba(255, 214, 122, 0.22)";
+        ctx.fillRect(sourcePx, sourcePy, layout.tileSize, layout.tileSize);
+        ctx.strokeStyle = "rgba(255, 214, 122, 0.95)";
+        ctx.lineWidth = 2;
+        ctx.strokeRect(sourcePx + 2, sourcePy + 2, layout.tileSize - 4, layout.tileSize - 4);
+
+        const tile = getInteriorPlacementTile();
+        if (tile && targetItemId) {
+          const valid = canPlaceInteriorItem(house, targetItemId, tile.tx, tile.ty, {
+            ignoreTx: relocation.sourceTx,
+            ignoreTy: relocation.sourceTy,
+          }).ok;
+          const px = layout.originX + tile.tx * layout.tileSize;
+          const py = layout.originY + tile.ty * layout.tileSize;
+          ctx.fillStyle = valid ? "rgba(120, 210, 255, 0.24)" : "rgba(240, 80, 80, 0.3)";
+          ctx.fillRect(px, py, layout.tileSize, layout.tileSize);
+          ctx.strokeStyle = valid ? "rgba(120, 210, 255, 0.92)" : "rgba(240, 80, 80, 0.92)";
+          ctx.lineWidth = 2;
+          ctx.strokeRect(px + 2, py + 2, layout.tileSize - 4, layout.tileSize - 4);
+        }
+      }
     }
 
     const playerPx = layout.originX + state.housePlayer.x * layout.tileSize;
     const playerPy = layout.originY + state.housePlayer.y * layout.tileSize;
+    const localBodyColor = getLocalPlayerBodyColor();
     const crawlDir = getActiveSleepCrawlDirection(true);
     if (crawlDir) {
-      drawCrawlingPlayerAvatar(playerPx, playerPy + 2, "#2f4b6c", crawlDir);
+      drawCrawlingPlayerAvatar(playerPx, playerPy + 2, localBodyColor, crawlDir);
     } else {
       ctx.fillStyle = "rgba(0,0,0,0.2)";
       ctx.beginPath();
@@ -22714,11 +25800,12 @@
       ctx.beginPath();
       ctx.arc(playerPx, playerPy - 4, 6, 0, Math.PI * 2);
       ctx.fill();
-      ctx.fillStyle = "#2f4b6c";
+      ctx.fillStyle = localBodyColor;
       ctx.fillRect(playerPx - 7, playerPy + 2, 14, 12);
       ctx.fillStyle = "#4a3a28";
       ctx.fillRect(playerPx - 6, playerPy + 14, 5, 6);
       ctx.fillRect(playerPx + 1, playerPy + 14, 5, 6);
+      drawPlayerArmorOverlay(playerPx, playerPy + 2, state.player);
     }
 
     const currentHouseKey = getHouseKey(state.activeHouse);
@@ -22743,6 +25830,7 @@
       ctx.fillStyle = "#4a3a28";
       ctx.fillRect(rx - 6, ry + 14, 5, 6);
       ctx.fillRect(rx + 1, ry + 14, 5, 6);
+      drawPlayerArmorOverlay(rx, ry + 2, remote);
       ctx.font = "12px Trebuchet MS";
       ctx.fillStyle = "rgba(255, 255, 255, 0.9)";
       ctx.textAlign = "center";
@@ -23364,24 +26452,28 @@
     ctx.clearRect(0, 0, viewWidth, viewHeight);
 
     const camera = getCamera();
+    const cameraScale = Number.isFinite(camera?.scale) ? camera.scale : 1;
+    const cameraViewWidth = getCameraViewWidth(camera);
+    const cameraViewHeight = getCameraViewHeight(camera);
+    ctx.setTransform(dpr * cameraScale, 0, 0, dpr * cameraScale, 0, 0);
 
     if (state.inCave) {
       ctx.fillStyle = COLORS.caveWall;
-      ctx.fillRect(0, 0, viewWidth, viewHeight);
+      ctx.fillRect(0, 0, cameraViewWidth, cameraViewHeight);
     } else {
-      const waterGradient = ctx.createLinearGradient(0, 0, 0, viewHeight);
+      const waterGradient = ctx.createLinearGradient(0, 0, 0, cameraViewHeight);
       waterGradient.addColorStop(0, "#245f8e");
       waterGradient.addColorStop(0.5, COLORS.water);
       waterGradient.addColorStop(1, "#1c4f7a");
       ctx.fillStyle = waterGradient;
-      ctx.fillRect(0, 0, viewWidth, viewHeight);
+      ctx.fillRect(0, 0, cameraViewWidth, cameraViewHeight);
       drawAmbientFish(camera);
     }
 
     const startX = Math.max(0, Math.floor(camera.x / CONFIG.tileSize) - 1);
     const startY = Math.max(0, Math.floor(camera.y / CONFIG.tileSize) - 1);
-    const endX = Math.min(state.world.size, Math.ceil((camera.x + viewWidth) / CONFIG.tileSize) + 1);
-    const endY = Math.min(state.world.size, Math.ceil((camera.y + viewHeight) / CONFIG.tileSize) + 1);
+    const endX = Math.min(state.world.size, Math.ceil((camera.x + cameraViewWidth) / CONFIG.tileSize) + 1);
+    const endY = Math.min(state.world.size, Math.ceil((camera.y + cameraViewHeight) / CONFIG.tileSize) + 1);
 
     for (let y = startY; y < endY; y += 1) {
       for (let x = startX; x < endX; x += 1) {
@@ -23427,8 +26519,8 @@
         if (
           screenX < -CONFIG.tileSize ||
           screenY < -CONFIG.tileSize ||
-          screenX > viewWidth + CONFIG.tileSize ||
-          screenY > viewHeight + CONFIG.tileSize
+          screenX > cameraViewWidth + CONFIG.tileSize ||
+          screenY > cameraViewHeight + CONFIG.tileSize
         ) {
           continue;
         }
@@ -23450,7 +26542,7 @@
       for (const landmark of state.world.landmarks) {
         const lx = landmark.x - camera.x;
         const ly = landmark.y - camera.y;
-        if (lx < -24 || ly < -24 || lx > viewWidth + 24 || ly > viewHeight + 24) continue;
+        if (lx < -24 || ly < -24 || lx > cameraViewWidth + 24 || ly > cameraViewHeight + 24) continue;
         ctx.fillStyle = landmark.color || "#86b9d7";
         ctx.beginPath();
         ctx.arc(lx, ly, 6, 0, Math.PI * 2);
@@ -23468,8 +26560,8 @@
       if (
         screen.x < -50 ||
         screen.y < -50 ||
-        screen.x > viewWidth + 50 ||
-        screen.y > viewHeight + 50
+        screen.x > cameraViewWidth + 50 ||
+        screen.y > cameraViewHeight + 50
       ) {
         continue;
       }
@@ -23984,6 +27076,8 @@
       }
     }
 
+    drawPoisonClouds(state.world, camera);
+
     if (!state.inCave) {
       for (const animal of state.world.animals || []) {
         drawAnimal(animal, camera);
@@ -24032,8 +27126,8 @@
       if (
         screen.x < -20 ||
         screen.y < -20 ||
-        screen.x > viewWidth + 20 ||
-        screen.y > viewHeight + 20
+        screen.x > cameraViewWidth + 20 ||
+        screen.y > cameraViewHeight + 20
       ) {
         continue;
       }
@@ -24086,9 +27180,7 @@
     }
 
     if (
-      state.targetResource
-      && !state.targetResource.removed
-      && (!state.targetResource.stage || state.targetResource.stage === "alive")
+      isResourceInteractable(state.targetResource)
     ) {
       const screen = worldToScreen(state.targetResource.x, state.targetResource.y, camera);
       ctx.strokeStyle = "rgba(255, 255, 255, 0.7)";
@@ -24194,18 +27286,25 @@
       drawCaveDarkness(camera);
     } else if (state.isNight && !state.gameWon) {
       ctx.fillStyle = "rgba(8, 14, 24, 0.4)";
-      ctx.fillRect(0, 0, viewWidth, viewHeight);
+      ctx.fillRect(0, 0, cameraViewWidth, cameraViewHeight);
       drawNightLighting(camera);
     }
 
     drawBeaconBeam(camera);
     drawRescueSequence(camera);
+
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     drawGuidanceMapOverlay();
     drawDebugWorldMiniMapOverlay();
     drawSleepTransitionOverlay();
   }
 
   function gameLoop() {
+    qaRuntime.gameLoopStartCount += 1;
+    if (qaRuntime.gameLoopStartCount > 1) {
+      console.warn("[QA] Duplicate gameLoop start blocked");
+      return;
+    }
     let lastTime = performance.now();
 
     function frame(time) {
@@ -24677,16 +27776,23 @@
   }
 
   function init() {
+    qaRuntime.initCallCount += 1;
+    if (qaRuntime.initCallCount > 1) {
+      console.warn("[QA] Duplicate init call blocked to prevent listener stacking");
+      return;
+    }
     loadUserSettings();
     setupSlots();
     setupMobileZoomLock();
     resize();
     if (startScreen) startScreen.classList.remove("hidden");
+    setStartMenuView("main");
     setSettingsTab("settings");
     updateVolumeUI();
     setDebugUnlocked(state.debugUnlocked, false);
     updateDebugSpeedUI();
     updateDebugWorldSpeedUI();
+    updateDebugFovUI();
     updateMosesButton();
     updateInfiniteResourcesButton();
     if (settingsPanel) settingsPanel.classList.add("hidden");
@@ -24788,6 +27894,42 @@
         ensureAudioContext();
       });
     }
+    if (menuPlayBtn) {
+      menuPlayBtn.addEventListener("click", () => {
+        ensureAudioContext();
+        setStartMenuView("play");
+      });
+    }
+    if (menuOptionsBtn) {
+      menuOptionsBtn.addEventListener("click", () => {
+        ensureAudioContext();
+        setStartMenuView("options");
+      });
+    }
+    if (menuQuitBtn) {
+      menuQuitBtn.addEventListener("click", () => {
+        ensureAudioContext();
+        quitFromStartMenu();
+      });
+    }
+    if (menuBackFromPlayBtn) {
+      menuBackFromPlayBtn.addEventListener("click", () => {
+        ensureAudioContext();
+        setStartMenuView("main");
+      });
+    }
+    if (menuBackFromOptionsBtn) {
+      menuBackFromOptionsBtn.addEventListener("click", () => {
+        ensureAudioContext();
+        setStartMenuView("main");
+      });
+    }
+    if (menuResetWorldBtn) {
+      menuResetWorldBtn.addEventListener("click", () => {
+        ensureAudioContext();
+        resetWorldFromSettings();
+      });
+    }
     if (soloBtn) soloBtn.addEventListener("click", () => {
       ensureAudioContext();
       startSolo();
@@ -24827,6 +27969,18 @@
         setSfxVolumeFromPercent(sfxVolumeInput.value);
       });
     }
+    if (menuMusicVolumeInput) {
+      menuMusicVolumeInput.addEventListener("input", () => {
+        ensureAudioContext();
+        setMusicVolumeFromPercent(menuMusicVolumeInput.value);
+      });
+    }
+    if (menuSfxVolumeInput) {
+      menuSfxVolumeInput.addEventListener("input", () => {
+        ensureAudioContext();
+        setSfxVolumeFromPercent(menuSfxVolumeInput.value);
+      });
+    }
     if (debugSpeedInput) {
       debugSpeedInput.addEventListener("input", () => {
         setDebugSpeedFromPercent(debugSpeedInput.value);
@@ -24835,6 +27989,11 @@
     if (debugWorldSpeedInput) {
       debugWorldSpeedInput.addEventListener("input", () => {
         setDebugWorldSpeedFromPercent(debugWorldSpeedInput.value);
+      });
+    }
+    if (debugFovInput) {
+      debugFovInput.addEventListener("input", () => {
+        setDebugFovFromPercent(debugFovInput.value);
       });
     }
     if (resetWorldBtn) resetWorldBtn.addEventListener("click", resetWorldFromSettings);
