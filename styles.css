@@ -1235,7 +1235,7 @@ button:focus-visible {
 }
 
 .start-card {
-  width: min(560px, 92vw);
+  width: min(500px, 84vw);
   position: relative;
   z-index: 3;
   margin: 0 auto;
@@ -1252,7 +1252,7 @@ button:focus-visible {
     0 24px 56px rgba(2, 18, 34, 0.45),
     inset 0 1px 0 rgba(237, 251, 255, 0.55),
     inset 0 -14px 24px rgba(17, 93, 150, 0.24);
-  padding: 22px 26px 24px;
+  padding: 18px 22px 20px;
 }
 
 .start-screen .overlay-card::before {
@@ -1269,9 +1269,9 @@ button:focus-visible {
 }
 
 .start-menu-shell {
-  width: min(420px, 78vw);
+  width: min(380px, 74vw);
   margin: 0 auto;
-  min-height: 390px;
+  min-height: 336px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1280,11 +1280,14 @@ button:focus-visible {
 .start-menu-view {
   display: none;
   width: 100%;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
   animation: startMenuFadeIn 0.2s ease;
 }
 
 .start-menu-view.active {
-  display: block;
+  display: flex;
 }
 
 @keyframes startMenuFadeIn {
@@ -1299,22 +1302,29 @@ button:focus-visible {
 }
 
 .start-menu-stack {
+  width: 100%;
   display: grid;
-  gap: 14px;
+  gap: 12px;
+  justify-items: center;
 }
 
 .start-menu-btn,
 .start-menu-back-btn {
-  width: 100%;
-  min-height: 82px;
+  box-sizing: border-box;
+  width: min(100%, 340px);
+  min-height: 74px;
   border-radius: 999px;
   border: 1px solid rgba(213, 198, 160, 0.95);
   background: linear-gradient(180deg, #f4ebcf 0%, #e8dbb7 46%, #d6c79e 100%);
   color: #264f80;
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Segoe UI", sans-serif;
-  font-size: clamp(24px, 4vw, 64px);
+  font-size: clamp(24px, 3.4vw, 58px);
   font-weight: 800;
   letter-spacing: 0.012em;
+  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   text-shadow: 0 1px 0 rgba(255, 255, 255, 0.42);
   box-shadow:
     0 5px 0 rgba(125, 109, 80, 0.5),
@@ -1337,11 +1347,12 @@ button:focus-visible {
   font-weight: 700;
   color: rgba(229, 244, 255, 0.95);
   text-align: center;
-  margin-bottom: 14px;
+  margin-bottom: 10px;
 }
 
 .start-options-list {
-  margin-bottom: 16px;
+  width: min(100%, 340px);
+  margin: 0 auto 14px;
   display: grid;
   gap: 8px;
 }
@@ -1361,16 +1372,42 @@ button:focus-visible {
   margin-bottom: 8px;
 }
 
+.start-name-input {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 36px;
+  border-radius: 10px;
+  border: 1px solid rgba(186, 215, 238, 0.54);
+  background: linear-gradient(180deg, rgba(18, 74, 116, 0.64), rgba(12, 54, 87, 0.78));
+  color: rgba(236, 247, 255, 0.98);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  padding: 0 10px;
+}
+
+.start-name-input::placeholder {
+  color: rgba(203, 224, 241, 0.72);
+}
+
+.start-name-input:focus {
+  outline: none;
+  border-color: rgba(220, 240, 255, 0.86);
+  box-shadow: 0 0 0 2px rgba(127, 188, 232, 0.28);
+}
+
 .start-menu-back-btn {
-  min-height: 58px;
+  min-height: 56px;
+  width: min(100%, 280px);
   font-size: 22px;
-  margin-top: 2px;
+  margin: 2px auto 0;
 }
 
 .start-menu-utility-btn {
-  width: 100%;
+  width: min(100%, 340px);
   min-height: 44px;
-  margin-bottom: 10px;
+  margin: 0 auto 10px;
   border-radius: 14px;
   border: 1px solid rgba(186, 215, 238, 0.54);
   background: linear-gradient(180deg, rgba(20, 80, 124, 0.76), rgba(12, 56, 89, 0.84));
@@ -1383,26 +1420,26 @@ button:focus-visible {
 
 @media (max-width: 720px) {
   .start-card {
-    width: min(94vw, 430px);
+    width: min(92vw, 400px);
   }
 
   .start-screen .overlay-card {
     border-radius: 30px;
-    padding: 16px 14px 18px;
+    padding: 14px 12px 16px;
   }
 
   .start-menu-shell {
-    width: min(92vw, 360px);
-    min-height: 334px;
+    width: min(90vw, 330px);
+    min-height: 312px;
   }
 
   .start-menu-btn {
-    min-height: 68px;
-    font-size: 31px;
+    min-height: 64px;
+    font-size: 30px;
   }
 
   .start-menu-back-btn {
-    min-height: 52px;
+    min-height: 50px;
     font-size: 20px;
   }
 

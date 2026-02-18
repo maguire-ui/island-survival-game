@@ -54,6 +54,7 @@
   const menuMusicVolumeValue = document.getElementById("menuMusicVolumeValue");
   const menuSfxVolumeInput = document.getElementById("menuSfxVolume");
   const menuSfxVolumeValue = document.getElementById("menuSfxVolumeValue");
+  const menuPlayerNameInput = document.getElementById("menuPlayerName");
   const movePadEl = document.getElementById("movePad");
   const stickEl = document.getElementById("stick");
   const stickKnobEl = document.getElementById("stickKnob");
@@ -819,6 +820,29 @@
     robot: { name: "Robot", color: "#7aa1c6", blocking: false, walkable: true, station: true, storage: true },
   };
 
+  const WAYFINDER_RECIPE_COST = Object.freeze({
+    stone: 8,
+    paper: 4,
+    stick: 4,
+    plank: 2,
+  });
+
+  // Map recipe tuning lives here so we can rebalance quickly later.
+  const MAP_RECIPE_COSTS = Object.freeze({
+    village: Object.freeze({
+      wayfinder_stone: 1,
+      stick: 8,
+      paper: 6,
+      plank: 4,
+    }),
+    cave: Object.freeze({
+      wayfinder_stone: 1,
+      stick: 9,
+      paper: 6,
+      stone: 12,
+    }),
+  });
+
   const BUILD_RECIPES = [
     {
       id: "bridge",
@@ -911,13 +935,13 @@
       id: "village_map",
       name: "Village Map",
       description: "Shows a tracked village zone and all active players.",
-      cost: { gold_ingot: 2, paper: 5, plank: 3, stick: 2 },
+      cost: { ...MAP_RECIPE_COSTS.village },
     },
     {
       id: "cave_map",
       name: "Cave Map",
       description: "Shows a tracked cave zone and all active players.",
-      cost: { gold_ingot: 3, paper: 6, plank: 4, stone: 6, stick: 3 },
+      cost: { ...MAP_RECIPE_COSTS.cave },
     },
     {
       id: "beacon",
@@ -1243,6 +1267,12 @@
         description: "Convert stone into beacon-grade bricks.",
         input: { stone: 2, wood: 1 },
         output: { brick: 1 },
+      },
+      {
+        name: "Fire Wayfinder Stone",
+        description: "Temper a tuned guidance stone used in all map crafting.",
+        input: { ...WAYFINDER_RECIPE_COST },
+        output: { wayfinder_stone: 1 },
       },
     ],
   };
@@ -1642,8 +1672,11 @@
     distantCooldownMs: 220,
   });
   const SETTINGS_KEY = "island_survival_settings_v1";
+  const LEGACY_PLAYER_NAME_KEY = "island_mp_name";
+  const PLAYER_NAME_MAX_LENGTH = 20;
   const DEBUG_PASSCODE = "123";
   const SETTINGS_DEFAULTS = Object.freeze({
+    playerName: "",
     musicVolume: 0.72,
     sfxVolume: 0.62,
     debugUnlocked: false,
@@ -1717,7 +1750,7 @@
   const inventorySlots = [];
   const chestSlots = [];
   const itemTextureCache = new Map();
-  const ITEM_TEXTURE_CACHE_VERSION = 2;
+  const ITEM_TEXTURE_CACHE_VERSION = 3;
   const qaRuntime = {
     runTimer: QA_SELF_TEST_CONFIG.runInterval,
     saveRoundTripTimer: QA_SELF_TEST_CONFIG.saveRoundTripInterval,
@@ -1774,6 +1807,7 @@
     checkpointTimer: 0,
     animalVocalTimer: 2.6,
     settingsTab: "settings",
+    playerName: SETTINGS_DEFAULTS.playerName,
     musicVolume: SETTINGS_DEFAULTS.musicVolume,
     sfxVolume: SETTINGS_DEFAULTS.sfxVolume,
     debugUnlocked: SETTINGS_DEFAULTS.debugUnlocked,
@@ -1933,6 +1967,67 @@
     return Math.min(Math.max(value, min), max);
   }
 
+  function generateDefaultPlayerName() {
+    return `Survivor-${Math.floor(100 + Math.random() * 900)}`;
+  }
+
+  function sanitizePlayerName(value, fallback = "") {
+    const safeFallback = typeof fallback === "string"
+      ? fallback.slice(0, PLAYER_NAME_MAX_LENGTH)
+      : "";
+    if (typeof value !== "string") return safeFallback;
+    const cleaned = value
+      .replace(/[\u0000-\u001f\u007f]/g, "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, PLAYER_NAME_MAX_LENGTH);
+    return cleaned || safeFallback;
+  }
+
+  function getLegacyStoredPlayerName() {
+    try {
+      return sanitizePlayerName(window.localStorage.getItem(LEGACY_PLAYER_NAME_KEY) || "", "");
+    } catch (err) {
+      return "";
+    }
+  }
+
+  function updatePlayerNameUI() {
+    if (!menuPlayerNameInput) return;
+    const name = sanitizePlayerName(net.localName || state.playerName || "", "");
+    if (menuPlayerNameInput.value !== name) {
+      menuPlayerNameInput.value = name;
+    }
+  }
+
+  function setLocalPlayerName(name, options = {}) {
+    const {
+      persist = true,
+      broadcast = false,
+    } = options;
+    const fallback = sanitizePlayerName(
+      net.localName || state.playerName || getLegacyStoredPlayerName() || generateDefaultPlayerName(),
+      generateDefaultPlayerName()
+    );
+    const nextName = sanitizePlayerName(name, fallback);
+    const changed = nextName !== net.localName || nextName !== state.playerName;
+    net.localName = nextName;
+    state.playerName = nextName;
+    updatePlayerNameUI();
+    if (persist) {
+      saveUserSettings();
+      try {
+        window.localStorage.setItem(LEGACY_PLAYER_NAME_KEY, nextName);
+      } catch (err) {
+        // ignore profile persistence failures
+      }
+    }
+    if (broadcast && changed && net.enabled && state.player && (net.isHost || net.ready)) {
+      sendPlayerUpdate();
+    }
+    return nextName;
+  }
+
   function normalizeHexColor(value) {
     if (typeof value !== "string") return null;
     const trimmed = value.trim();
@@ -2087,6 +2182,7 @@
 
   function saveUserSettings() {
     const payload = {
+      playerName: sanitizePlayerName(state.playerName || net.localName, ""),
       musicVolume: clampVolume(state.musicVolume, SETTINGS_DEFAULTS.musicVolume),
       sfxVolume: clampVolume(state.sfxVolume, SETTINGS_DEFAULTS.sfxVolume),
       debugUnlocked: !!state.debugUnlocked,
@@ -2109,19 +2205,23 @@
     } catch (err) {
       raw = null;
     }
-    if (!raw) return;
+    let loadedName = "";
     try {
-      const data = JSON.parse(raw);
-      state.musicVolume = clampVolume(data.musicVolume, SETTINGS_DEFAULTS.musicVolume);
-      state.sfxVolume = clampVolume(data.sfxVolume, SETTINGS_DEFAULTS.sfxVolume);
-      // Debug access is session-based: always start locked on every load/join.
-      state.debugUnlocked = false;
-      // Always start sessions with infinite resources off; users can toggle it per run.
-      state.debugInfiniteResources = false;
-      state.debugSpeedMultiplier = clampDebugSpeedMultiplier(data.debugSpeedMultiplier);
-      state.debugWorldSpeedMultiplier = clampDebugWorldSpeedMultiplier(data.debugWorldSpeedMultiplier);
-      state.debugFovMultiplier = clampDebugFovMultiplier(data.debugFovMultiplier);
+      if (raw) {
+        const data = JSON.parse(raw);
+        loadedName = sanitizePlayerName(data.playerName, "");
+        state.musicVolume = clampVolume(data.musicVolume, SETTINGS_DEFAULTS.musicVolume);
+        state.sfxVolume = clampVolume(data.sfxVolume, SETTINGS_DEFAULTS.sfxVolume);
+        // Debug access is session-based: always start locked on every load/join.
+        state.debugUnlocked = false;
+        // Always start sessions with infinite resources off; users can toggle it per run.
+        state.debugInfiniteResources = false;
+        state.debugSpeedMultiplier = clampDebugSpeedMultiplier(data.debugSpeedMultiplier);
+        state.debugWorldSpeedMultiplier = clampDebugWorldSpeedMultiplier(data.debugWorldSpeedMultiplier);
+        state.debugFovMultiplier = clampDebugFovMultiplier(data.debugFovMultiplier);
+      }
     } catch (err) {
+      state.playerName = SETTINGS_DEFAULTS.playerName;
       state.musicVolume = SETTINGS_DEFAULTS.musicVolume;
       state.sfxVolume = SETTINGS_DEFAULTS.sfxVolume;
       state.debugUnlocked = false;
@@ -2130,6 +2230,8 @@
       state.debugWorldSpeedMultiplier = SETTINGS_DEFAULTS.debugWorldSpeedMultiplier;
       state.debugFovMultiplier = SETTINGS_DEFAULTS.debugFovMultiplier;
     }
+    const fallbackName = loadedName || getLegacyStoredPlayerName() || generateDefaultPlayerName();
+    setLocalPlayerName(fallbackName, { persist: true, broadcast: false });
   }
 
   function updateVolumeUI() {
@@ -5617,20 +5719,10 @@
   }
 
   function getLocalProfile() {
-    let name = "";
-    try {
-      name = window.localStorage.getItem("island_mp_name") || "";
-    } catch (err) {
-      name = "";
-    }
-    if (!name) {
-      name = `Survivor-${Math.floor(100 + Math.random() * 900)}`;
-      try {
-        window.localStorage.setItem("island_mp_name", name);
-      } catch (err) {
-        // ignore
-      }
-    }
+    const name = setLocalPlayerName(
+      state.playerName || net.localName || getLegacyStoredPlayerName() || generateDefaultPlayerName(),
+      { persist: true, broadcast: false }
+    );
     const color = pickRandomDistinctPlayerColor();
     return { name, color };
   }
@@ -6926,6 +7018,9 @@
     for (const entry of players) {
       if (!entry || !entry.id) continue;
       if (entry.id === net.playerId) {
+        if (typeof entry.name === "string") {
+          setLocalPlayerName(entry.name, { persist: false, broadcast: false });
+        }
         if (typeof entry.hp === "number") state.player.hp = entry.hp;
         if (typeof entry.maxHp === "number") state.player.maxHp = entry.maxHp;
         if (typeof entry.toolTier === "number") state.player.toolTier = entry.toolTier;
@@ -6941,7 +7036,7 @@
       const normalizedColor = normalizeHexColor(entry.color) || normalizeHexColor(prev?.color) || "#6fa8ff";
       next.set(entry.id, {
         id: entry.id,
-        name: entry.name ?? "Survivor",
+        name: sanitizePlayerName(entry.name, prev?.name || "Survivor"),
         color: normalizedColor,
         x: entry.x ?? 0,
         y: entry.y ?? 0,
@@ -7130,7 +7225,7 @@
     if (!net.connections.has(conn.peer)) {
       net.connections.set(conn.peer, conn);
     }
-    const name = typeof message.name === "string" ? message.name.slice(0, 16) : "Survivor";
+    const name = sanitizePlayerName(message?.name, generateDefaultPlayerName());
     const usedColors = getAssignedPlayerColorSet();
     const color = pickRandomDistinctPlayerColor(usedColors);
     const spawn = findSpawnForJoin();
@@ -7196,6 +7291,9 @@
     state.world = state.surfaceWorld || state.world;
     if (state.player) state.player.inHut = false;
     if (message.playerState && state.player) {
+      if (typeof message.playerState.name === "string") {
+        setLocalPlayerName(message.playerState.name, { persist: true, broadcast: false });
+      }
       state.player.x = message.playerState.x ?? state.player.x;
       state.player.y = message.playerState.y ?? state.player.y;
       state.player.hp = message.playerState.hp ?? state.player.hp;
@@ -7219,7 +7317,9 @@
   function handlePlayerUpdate(conn, message) {
     const player = net.players.get(conn.peer);
     if (!player) return;
-    if (typeof message.name === "string") player.name = message.name;
+    if (typeof message.name === "string") {
+      player.name = sanitizePlayerName(message.name, player.name || "Survivor");
+    }
     if (typeof message.x === "number") player.x = message.x;
     if (typeof message.y === "number") player.y = message.y;
     if (message.facing) player.facing = message.facing;
@@ -7263,6 +7363,9 @@
 
   function applyRemotePlayerUpdate(message) {
     if (!message.id || message.id === net.playerId) {
+      if (typeof message?.name === "string") {
+        setLocalPlayerName(message.name, { persist: false, broadcast: false });
+      }
       const syncedColor = normalizeHexColor(message?.color);
       if (syncedColor) net.localColor = syncedColor;
       if (typeof message.hp === "number") {
@@ -7282,7 +7385,7 @@
     const syncedColor = normalizeHexColor(message.color) || normalizeHexColor(current.color) || "#6fa8ff";
     net.players.set(message.id, {
       id: message.id,
-      name: message.name ?? current.name ?? "Survivor",
+      name: sanitizePlayerName(message.name, current.name || "Survivor"),
       color: syncedColor,
       x: typeof message.x === "number" ? message.x : current.x ?? 0,
       y: typeof message.y === "number" ? message.y : current.y ?? 0,
@@ -16394,33 +16497,41 @@
   function drawItemTexture(iconCtx, itemId, size) {
     if (!iconCtx) return;
     iconCtx.clearRect(0, 0, size, size);
+    const frameCtx = iconCtx;
     const visual = ITEM_VISUALS[itemId] || ITEM_VISUALS.wood;
     const border = visual.border || "#9dbbd9";
     const bg = visual.bg || "#355372";
-    const gradient = iconCtx.createLinearGradient(0, 0, 0, size);
+    const gradient = frameCtx.createLinearGradient(0, 0, 0, size);
     gradient.addColorStop(0, tintColor(bg, 0.2));
     gradient.addColorStop(1, tintColor(bg, -0.18));
-    drawRoundedRect(iconCtx, 1.1, 1.1, size - 2.2, size - 2.2, 6);
-    iconCtx.fillStyle = gradient;
-    iconCtx.fill();
-    iconCtx.save();
-    drawRoundedRect(iconCtx, 1.1, 1.1, size - 2.2, size - 2.2, 6);
-    iconCtx.clip();
-    const sheen = iconCtx.createLinearGradient(0, 0, 0, size * 0.72);
+    drawRoundedRect(frameCtx, 1.1, 1.1, size - 2.2, size - 2.2, 6);
+    frameCtx.fillStyle = gradient;
+    frameCtx.fill();
+    frameCtx.save();
+    drawRoundedRect(frameCtx, 1.1, 1.1, size - 2.2, size - 2.2, 6);
+    frameCtx.clip();
+    const sheen = frameCtx.createLinearGradient(0, 0, 0, size * 0.72);
     sheen.addColorStop(0, "rgba(255,255,255,0.28)");
     sheen.addColorStop(1, "rgba(255,255,255,0)");
-    iconCtx.fillStyle = sheen;
-    iconCtx.fillRect(0, 0, size, size * 0.72);
-    iconCtx.restore();
+    frameCtx.fillStyle = sheen;
+    frameCtx.fillRect(0, 0, size, size * 0.72);
+    frameCtx.restore();
 
-    drawRoundedRect(iconCtx, 1.1, 1.1, size - 2.2, size - 2.2, 6);
-    iconCtx.strokeStyle = "rgba(255,255,255,0.92)";
-    iconCtx.lineWidth = 1;
-    iconCtx.stroke();
-    drawRoundedRect(iconCtx, 2.1, 2.1, size - 4.2, size - 4.2, 5);
-    iconCtx.strokeStyle = tintColor(border, 0.08);
-    iconCtx.lineWidth = 0.9;
-    iconCtx.stroke();
+    drawRoundedRect(frameCtx, 1.1, 1.1, size - 2.2, size - 2.2, 6);
+    frameCtx.strokeStyle = tintColor(border, -0.22);
+    frameCtx.lineWidth = 0.9;
+    frameCtx.stroke();
+    drawRoundedRect(frameCtx, 2.1, 2.1, size - 4.2, size - 4.2, 5);
+    frameCtx.strokeStyle = tintColor(border, 0.08);
+    frameCtx.lineWidth = 0.9;
+    frameCtx.stroke();
+
+    const glyphCanvas = document.createElement("canvas");
+    glyphCanvas.width = size;
+    glyphCanvas.height = size;
+    const glyphCtx = glyphCanvas.getContext("2d");
+    if (!glyphCtx) return;
+    iconCtx = glyphCtx;
 
     const cx = size * 0.5;
     const cy = size * 0.5;
@@ -16920,6 +17031,33 @@
         }
         break;
     }
+
+    const outlineCanvas = document.createElement("canvas");
+    outlineCanvas.width = size;
+    outlineCanvas.height = size;
+    const outlineCtx = outlineCanvas.getContext("2d");
+    if (outlineCtx) {
+      outlineCtx.clearRect(0, 0, size, size);
+      outlineCtx.drawImage(glyphCanvas, 0, 0);
+      outlineCtx.globalCompositeOperation = "source-in";
+      outlineCtx.fillStyle = "rgba(246, 251, 255, 0.96)";
+      outlineCtx.fillRect(0, 0, size, size);
+      outlineCtx.globalCompositeOperation = "source-over";
+      const offsets = [
+        [-1, 0],
+        [1, 0],
+        [0, -1],
+        [0, 1],
+      ];
+      frameCtx.save();
+      frameCtx.globalAlpha = 0.72;
+      for (const [ox, oy] of offsets) {
+        frameCtx.drawImage(outlineCanvas, ox, oy);
+      }
+      frameCtx.restore();
+    }
+
+    frameCtx.drawImage(glyphCanvas, 0, 0);
   }
 
   function getItemTextureUrl(itemId, size = 30) {
@@ -27789,6 +27927,7 @@
     setStartMenuView("main");
     setSettingsTab("settings");
     updateVolumeUI();
+    updatePlayerNameUI();
     setDebugUnlocked(state.debugUnlocked, false);
     updateDebugSpeedUI();
     updateDebugWorldSpeedUI();
@@ -27979,6 +28118,27 @@
       menuSfxVolumeInput.addEventListener("input", () => {
         ensureAudioContext();
         setSfxVolumeFromPercent(menuSfxVolumeInput.value);
+      });
+    }
+    if (menuPlayerNameInput) {
+      menuPlayerNameInput.addEventListener("input", () => {
+        const liveName = sanitizePlayerName(menuPlayerNameInput.value, "");
+        menuPlayerNameInput.value = liveName;
+        if (liveName) {
+          setLocalPlayerName(liveName, { persist: false, broadcast: false });
+        }
+      });
+      menuPlayerNameInput.addEventListener("change", () => {
+        setLocalPlayerName(menuPlayerNameInput.value, { persist: true, broadcast: true });
+      });
+      menuPlayerNameInput.addEventListener("blur", () => {
+        setLocalPlayerName(menuPlayerNameInput.value, { persist: true, broadcast: true });
+      });
+      menuPlayerNameInput.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          menuPlayerNameInput.blur();
+        }
       });
     }
     if (debugSpeedInput) {

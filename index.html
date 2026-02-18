@@ -7,7 +7,7 @@
     content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no, viewport-fit=cover"
   />
   <title>Island Survival Game</title>
-  <link rel="stylesheet" href="styles.css?v=20260218-2" />
+  <link rel="stylesheet" href="styles.css?v=20260218-4" />
 </head>
 <body>
   <canvas id="game"></canvas>
@@ -40,6 +40,18 @@
         <div id="startOptionsMenu" class="start-menu-view">
           <div class="start-subhead">Options</div>
           <div class="start-options-list">
+            <label class="start-option-row" for="menuPlayerName">
+              <span>Player Name</span>
+            </label>
+            <input
+              id="menuPlayerName"
+              class="start-name-input"
+              type="text"
+              maxlength="20"
+              placeholder="Survivor"
+              autocomplete="nickname"
+              spellcheck="false"
+            />
             <label class="start-option-row" for="menuMusicVolume">
               <span>Music Volume</span>
               <span id="menuMusicVolumeValue">62%</span>
