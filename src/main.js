@@ -173,14 +173,15 @@
     defaultDps: 1.25,
   });
   const MARSH_STALKER_DAY_SPAWN = Object.freeze({
-    defaultChance: 0.14,
-    minChance: 0.06,
-    maxChance: 0.22,
-    maxTotal: 3,
+    defaultChance: 0.24,
+    minChance: 0.12,
+    maxChance: 0.42,
+    secondaryChance: 0.022,
+    maxTotal: 4,
     maxPerIsland: 1,
-    spawnBudget: 1,
-    attempts: 34,
-    minPlayerDistanceTiles: 4.2,
+    spawnBudget: 2,
+    attempts: 42,
+    minPlayerDistanceTiles: 2.6,
   });
 
   const SKELETON_ARROW = {
@@ -279,7 +280,7 @@
     },
     slime_large: {
       name: "Giant Slime",
-      color: "#4fbf66",
+      color: "#32d95e",
       hp: 24,
       speed: 54,
       damage: 11,
@@ -295,7 +296,7 @@
     },
     slime_medium: {
       name: "Medium Slime",
-      color: "#63cc6f",
+      color: "#55e476",
       hp: 12,
       speed: 66,
       damage: 7,
@@ -311,7 +312,7 @@
     },
     slime_small: {
       name: "Small Slime",
-      color: "#7bdb7f",
+      color: "#79ef95",
       hp: 4,
       speed: 74,
       damage: 0,
@@ -443,6 +444,7 @@
     villagerSmooth: 10,
     robotSmooth: 14,
   };
+  const NET_PENDING_REQUEST_TIMEOUT_SECONDS = 8;
 
   const PLAYER_COLORS = [
     "#f26d6d",
@@ -466,7 +468,7 @@
     "Inventory/hotbar/backpack stacks + pickup/drop + death drop scatter",
     "Crafting bench recipes + cost validation + output grant flow",
     "Build placement rules + bridges/docks + house upgrades",
-    "Station crafting flows (sawmill, smelter, kiln, refinery, lab)",
+    "Station crafting flows (sawmill, smelter, kiln, robot commands)",
     "Storage systems (surface chests, house chests, shipwreck chests, robot cargo)",
     "Chest transfer + destroy-chest behavior + inventory panel stacking",
     "Day/night cycle + world lighting + night/day spawn transitions",
@@ -761,8 +763,8 @@
     { tier: 5, name: "Blood-Hardened Blade", damage: 5 },
   ];
 
-  // Damp sword scaling versus hostile mobs to avoid early one-tap kills.
-  const SWORD_DAMAGE_VS_MONSTER_SCALE = [1, 0.9, 0.84, 0.8, 0.76, 0.72];
+  // Keep early swords fair, then ramp hard at late tiers so progression feels powerful.
+  const SWORD_DAMAGE_VS_MONSTER_SCALE = [1, 1, 1.2, 1.45, 1.75, 2.05];
 
   const SLIME_ARMOR = Object.freeze({
     maxPoints: 20,
@@ -1491,6 +1493,8 @@
     maxTotal: 22,
     maxPerIsland: 2,
     minPlayerDistanceTiles: 4.5,
+    coverageSoftOverflow: 2,
+    coverageSpawnBudget: 2,
   });
 
   const MUSHROOM_GREEN_COW_CONFIG = Object.freeze({
@@ -1750,7 +1754,7 @@
   const inventorySlots = [];
   const chestSlots = [];
   const itemTextureCache = new Map();
-  const ITEM_TEXTURE_CACHE_VERSION = 3;
+  const ITEM_TEXTURE_CACHE_VERSION = 4;
   const qaRuntime = {
     runTimer: QA_SELF_TEST_CONFIG.runInterval,
     saveRoundTripTimer: QA_SELF_TEST_CONFIG.saveRoundTripInterval,
@@ -1848,6 +1852,7 @@
     pendingPlaces: new Map(),
     pendingHousePlaces: new Map(),
     pendingHouseMoves: new Map(),
+    pendingBreaks: new Map(),
     debugBoatPlaceReceipts: new Map(),
     snapshotTimer: NET_CONFIG.snapshotInterval,
     motionTimer: NET_CONFIG.motionInterval,
@@ -2545,6 +2550,32 @@
         qaPushIssue(issues, `[${label}.drop] Invalid quantity`);
       }
     }
+    if (netIsClientReady()) {
+      for (const monster of world.monsters || []) {
+        if (!Number.isFinite(monster?.renderX) || !Number.isFinite(monster?.renderY)) continue;
+        const drift = Math.hypot((monster.renderX ?? monster.x) - monster.x, (monster.renderY ?? monster.y) - monster.y);
+        if (drift > 2) {
+          qaPushIssue(issues, `[${label}] Monster render/hitbox drift detected`);
+          break;
+        }
+      }
+      for (const animal of world.animals || []) {
+        if (!Number.isFinite(animal?.renderX) || !Number.isFinite(animal?.renderY)) continue;
+        const drift = Math.hypot((animal.renderX ?? animal.x) - animal.x, (animal.renderY ?? animal.y) - animal.y);
+        if (drift > 2) {
+          qaPushIssue(issues, `[${label}] Animal render/hitbox drift detected`);
+          break;
+        }
+      }
+      for (const villager of world.villagers || []) {
+        if (!Number.isFinite(villager?.renderX) || !Number.isFinite(villager?.renderY)) continue;
+        const drift = Math.hypot((villager.renderX ?? villager.x) - villager.x, (villager.renderY ?? villager.y) - villager.y);
+        if (drift > 2) {
+          qaPushIssue(issues, `[${label}] Villager render/hitbox drift detected`);
+          break;
+        }
+      }
+    }
     if (hasResourceGridInconsistency(world)) {
       qaPushIssue(issues, `[${label}] Resource grid mismatch`);
     }
@@ -2587,10 +2618,12 @@
         }
       }
       const guardianTotal = countSurfaceGuardians(world);
-      if (guardianTotal > SURFACE_GUARDIAN_CONFIG.maxTotal) {
+      const guardianSoftCap = SURFACE_GUARDIAN_CONFIG.maxTotal
+        + Math.max(0, Math.floor(SURFACE_GUARDIAN_CONFIG.coverageSoftOverflow || 0));
+      if (guardianTotal > guardianSoftCap) {
         qaPushIssue(
           issues,
-          `[surface] Guardian total cap exceeded (${guardianTotal} > ${SURFACE_GUARDIAN_CONFIG.maxTotal})`
+          `[surface] Guardian total cap exceeded (${guardianTotal} > ${guardianSoftCap})`
         );
       }
       const stalkerTotal = countSurfaceMarshStalkers(world);
@@ -2651,6 +2684,52 @@
     }
     if (!Array.isArray(snapshot.structures)) qaPushIssue(issues, "[snapshot] structures missing array");
     if (!Array.isArray(snapshot.players)) qaPushIssue(issues, "[snapshot] players missing array");
+    for (const structure of snapshot.structures || []) {
+      if (!structure || typeof structure.type !== "string") {
+        qaPushIssue(issues, "[snapshot] structure entry missing type");
+        continue;
+      }
+      if (!Number.isInteger(structure.tx) || !Number.isInteger(structure.ty)) {
+        qaPushIssue(issues, `[snapshot] structure ${structure.type} missing integer tile`);
+      }
+      const storageSize = getStorageSizeForStructureType(structure.type, null);
+      if (storageSize && !Array.isArray(structure.storage)) {
+        qaPushIssue(issues, `[snapshot] structure ${structure.type} missing storage array`);
+      }
+      if (structure.type === "robot" && structure.meta?.robot) {
+        if (!Number.isFinite(structure.meta.robot.x) || !Number.isFinite(structure.meta.robot.y)) {
+          qaPushIssue(issues, "[snapshot] robot meta position invalid");
+        }
+      }
+      if (structure.type === "abandoned_ship" && structure.meta?.ship) {
+        if (!Array.isArray(structure.meta.ship.seats)) {
+          qaPushIssue(issues, "[snapshot] abandoned ship seats missing array");
+        }
+      }
+      if (isHouseType(structure.type) && structure.meta?.house) {
+        if (!Array.isArray(structure.meta.house.items)) {
+          qaPushIssue(issues, `[snapshot] ${structure.type} missing interior items array`);
+        }
+      }
+    }
+    for (const cave of snapshot.caves || []) {
+      if (!cave || !Number.isInteger(cave.id)) {
+        qaPushIssue(issues, "[snapshot] cave entry missing numeric id");
+        continue;
+      }
+      if (!Number.isInteger(cave.tx) || !Number.isInteger(cave.ty)) {
+        qaPushIssue(issues, `[snapshot] cave ${cave.id} missing integer surface tile`);
+      }
+      if (!cave.world || typeof cave.world !== "object") {
+        qaPushIssue(issues, `[snapshot] cave ${cave.id} missing world payload`);
+        continue;
+      }
+      for (const key of requiredArrays) {
+        if (!Array.isArray(cave.world[key])) {
+          qaPushIssue(issues, `[snapshot] cave ${cave.id} world.${key} missing array`);
+        }
+      }
+    }
     for (const player of snapshot.players || []) {
       if (!player || typeof player.id !== "string") {
         qaPushIssue(issues, "[snapshot] player entry missing id");
@@ -2661,6 +2740,66 @@
       }
       if (!normalizeHexColor(player.color)) {
         qaPushIssue(issues, `[snapshot] player ${player.id} has invalid color`);
+      }
+    }
+  }
+
+  function qaCheckPendingRequestLifetimes(issues) {
+    const now = performance.now();
+    const timeoutMs = NET_PENDING_REQUEST_TIMEOUT_SECONDS * 1000 + 500;
+    const pendingSets = [
+      { label: "place", map: net.pendingPlaces },
+      { label: "housePlace", map: net.pendingHousePlaces },
+      { label: "houseMove", map: net.pendingHouseMoves },
+      { label: "break", map: net.pendingBreaks },
+    ];
+    for (const entry of pendingSets) {
+      if (!(entry.map instanceof Map)) continue;
+      for (const pending of entry.map.values()) {
+        const requestedAt = Number(pending?.requestedAt);
+        if (!Number.isFinite(requestedAt)) {
+          qaPushIssue(issues, `[net] Pending ${entry.label} request missing timestamp`);
+          break;
+        }
+        if (entry.label === "place") {
+          if (!Number.isInteger(pending?.tx) || !Number.isInteger(pending?.ty) || !pending?.itemId || !pending?.type) {
+            qaPushIssue(issues, "[net] Pending place request missing payload fields");
+            break;
+          }
+        } else if (entry.label === "housePlace") {
+          if (
+            !Number.isInteger(pending?.houseTx)
+            || !Number.isInteger(pending?.houseTy)
+            || !Number.isInteger(pending?.tx)
+            || !Number.isInteger(pending?.ty)
+            || !pending?.itemId
+            || !pending?.type
+          ) {
+            qaPushIssue(issues, "[net] Pending housePlace request missing payload fields");
+            break;
+          }
+        } else if (entry.label === "houseMove") {
+          if (
+            !Number.isInteger(pending?.houseTx)
+            || !Number.isInteger(pending?.houseTy)
+            || !Number.isInteger(pending?.fromTx)
+            || !Number.isInteger(pending?.fromTy)
+            || !Number.isInteger(pending?.toTx)
+            || !Number.isInteger(pending?.toTy)
+          ) {
+            qaPushIssue(issues, "[net] Pending houseMove request missing payload fields");
+            break;
+          }
+        } else if (entry.label === "break") {
+          if (!pending?.type || !Number.isInteger(pending?.tx) || !Number.isInteger(pending?.ty)) {
+            qaPushIssue(issues, "[net] Pending break request missing payload fields");
+            break;
+          }
+        }
+        if (now - requestedAt > timeoutMs) {
+          qaPushIssue(issues, `[net] Pending ${entry.label} request exceeded timeout`);
+          break;
+        }
       }
     }
   }
@@ -2682,14 +2821,62 @@
     return true;
   }
 
+  function qaBuildStructureStorageSignature(structures) {
+    const sortedStructures = sortStructureEntriesForPlacement(
+      Array.isArray(structures) ? structures : []
+    );
+    const normalized = sortedStructures.map((entry) => {
+      const type = normalizeLegacyStructureType(entry?.type);
+      const storageSize = getStorageSizeForStructureType(type, null);
+      const serialized = {
+        type,
+        tx: Math.floor(Number(entry?.tx) || 0),
+        ty: Math.floor(Number(entry?.ty) || 0),
+        storage: Array.isArray(entry?.storage)
+          ? sanitizeInventorySlots(
+              entry.storage,
+              Number.isInteger(storageSize) ? storageSize : entry.storage.length
+            ).map((slot) => ({ id: slot.id || null, qty: Math.floor(Number(slot.qty) || 0) }))
+          : null,
+      };
+      if (entry?.meta?.house?.items && Array.isArray(entry.meta.house.items)) {
+        serialized.houseItems = entry.meta.house.items
+          .map((item) => {
+            const itemType = normalizeLegacyStructureType(item?.type);
+            const itemStorageSize = getStorageSizeForStructureType(itemType, null);
+            return {
+              type: itemType,
+              tx: Math.floor(Number(item?.tx) || 0),
+              ty: Math.floor(Number(item?.ty) || 0),
+              storage: Array.isArray(item?.storage)
+                ? sanitizeInventorySlots(
+                    item.storage,
+                    Number.isInteger(itemStorageSize) ? itemStorageSize : item.storage.length
+                  ).map((slot) => ({ id: slot.id || null, qty: Math.floor(Number(slot.qty) || 0) }))
+                : null,
+            };
+          })
+          .sort((a, b) => (
+            a.tx - b.tx
+            || a.ty - b.ty
+            || String(a.type || "").localeCompare(String(b.type || ""))
+          ));
+      }
+      return serialized;
+    });
+    return JSON.stringify(normalized);
+  }
+
   function qaValidateSaveRoundTrip(issues) {
     if (netIsClientReady()) return;
     const world = state.surfaceWorld || state.world;
     if (!world || !state.player) return;
+    const serializedStructures = serializeStructuresList();
     const before = {
       seed: world.seed,
       inventoryTotals: qaBuildInventoryTotals(state.inventory),
-      structureCount: serializeStructuresList().length,
+      structureCount: serializedStructures.length,
+      structureStorageSignature: qaBuildStructureStorageSignature(serializedStructures),
       dropCount: Array.isArray(world.drops) ? world.drops.length : 0,
       animalCount: Array.isArray(world.animals) ? world.animals.length : 0,
       monsterCount: Array.isArray(world.monsters) ? world.monsters.length : 0,
@@ -2716,6 +2903,10 @@
     }
     if ((Array.isArray(loaded.structures) ? loaded.structures.length : 0) !== before.structureCount) {
       qaPushIssue(issues, "[save/load] Structure count mismatch after reload");
+    }
+    const loadedStorageSignature = qaBuildStructureStorageSignature(loaded.structures);
+    if (loadedStorageSignature !== before.structureStorageSignature) {
+      qaPushIssue(issues, "[save/load] Structure/chest storage mismatch after reload");
     }
     if ((Array.isArray(loaded.drops) ? loaded.drops.length : 0) !== before.dropCount) {
       qaPushIssue(issues, "[save/load] Drop count mismatch after reload");
@@ -2783,6 +2974,7 @@
     if (!net.enabled && net.players.size > 0) {
       qaPushIssue(issues, "[net] Remote player cache present while multiplayer disabled");
     }
+    qaCheckPendingRequestLifetimes(issues);
     qaCheckUniqueNumericIds(state.structures || [], "structures", issues);
     for (const structure of state.structures || []) {
       if (!structure || structure.removed) continue;
@@ -5694,6 +5886,7 @@
 
   function resetMultiplayer(roomId) {
     if (!roomId) return;
+    rollbackAllPendingClientRequests();
     try {
       net.peer?.destroy();
     } catch (err) {
@@ -5708,6 +5901,8 @@
     net.players.clear();
     net.pendingPlaces.clear();
     net.pendingHousePlaces.clear();
+    net.pendingHouseMoves.clear();
+    net.pendingBreaks.clear();
     net.debugBoatPlaceReceipts.clear();
     net.roomId = roomId;
     net.hostId = `${roomId}-host`;
@@ -5803,6 +5998,7 @@
       if (mpJoin) mpJoin.disabled = true;
       return;
     }
+    rollbackAllPendingClientRequests();
     try {
       net.peer?.destroy();
     } catch (err) {
@@ -5815,6 +6011,7 @@
     net.pendingPlaces.clear();
     net.pendingHousePlaces.clear();
     net.pendingHouseMoves.clear();
+    net.pendingBreaks.clear();
     net.debugBoatPlaceReceipts.clear();
     net.isHost = false;
     net.ready = false;
@@ -5848,6 +6045,7 @@
       updateMpStatus("MP: Offline");
       return;
     }
+    rollbackAllPendingClientRequests();
     try {
       net.peer?.destroy();
     } catch (err) {
@@ -5860,6 +6058,7 @@
     net.pendingPlaces.clear();
     net.pendingHousePlaces.clear();
     net.pendingHouseMoves.clear();
+    net.pendingBreaks.clear();
     net.debugBoatPlaceReceipts.clear();
     net.isHost = false;
     net.ready = false;
@@ -5906,6 +6105,7 @@
   }
 
   function startSolo() {
+    rollbackAllPendingClientRequests();
     try {
       net.peer?.destroy();
     } catch (err) {
@@ -5918,6 +6118,7 @@
     net.pendingPlaces.clear();
     net.pendingHousePlaces.clear();
     net.pendingHouseMoves.clear();
+    net.pendingBreaks.clear();
     net.debugBoatPlaceReceipts.clear();
     net.enabled = false;
     net.ready = false;
@@ -6026,6 +6227,7 @@
       } else {
         updateMpStatus("MP: Disconnected");
         net.ready = false;
+        rollbackAllPendingClientRequests("Disconnected: pending actions rolled back");
       }
     });
     conn.on("error", (err) => {
@@ -6142,6 +6344,15 @@
         break;
       case "destroyChest":
         if (net.isHost) handleDestroyChest(conn, message);
+        break;
+      case "houseBreakStructure":
+        if (net.isHost) handleHouseBreakStructure(conn, message);
+        break;
+      case "breakStructure":
+        if (net.isHost) handleBreakStructure(conn, message);
+        break;
+      case "breakStructureResult":
+        if (!net.isHost) handleBreakStructureResult(message);
         break;
       case "sleep":
         if (net.isHost) handleSleepRequest(conn);
@@ -7215,6 +7426,7 @@
       if (endScreen) endScreen.classList.remove("animate");
       if (endScreen) endScreen.classList.remove("text-ready");
     }
+    reconcilePendingClientRequestsFromAuthoritativeState();
     if (inventoryOpen || state.activeChest || state.activeStation || buildMenuOpen()) {
       updateAllSlotUI();
     }
@@ -8092,26 +8304,91 @@
   }
 
   function handleHouseDestroyChest(conn, message) {
-    if (!conn || !message) return;
-    const player = net.players.get(conn.peer);
-    if (!player) return;
-    const house = getStructureAt(message.houseTx, message.houseTy);
-    if (!house || !isHouseType(house.type)) return;
-    if (!canRemotePlayerAccessHouseInterior(player, house, Number(message.tx), Number(message.ty), 2.25)) return;
-    const chest = getInteriorStructureAt(house, message.tx, message.ty);
-    if (!chest || chest.type !== "chest") return;
-    removeInteriorStructure(house, chest);
-    markDirty();
+    handleHouseBreakStructure(conn, message);
   }
 
   function handleDestroyChest(conn, message) {
+    handleBreakStructure(conn, message);
+  }
+
+  function sendBreakStructureResult(conn, requestId, ok, snapshot = null) {
+    if (!conn?.open) return;
+    conn.send({
+      type: "breakStructureResult",
+      requestId,
+      ok: !!ok,
+      snapshot: ok ? snapshot : null,
+    });
+  }
+
+  function handleHouseBreakStructure(conn, message) {
     if (!conn || !message) return;
-    if (typeof message.tx !== "number" || typeof message.ty !== "number") return;
-    const structure = getStructureAt(message.tx, message.ty);
-    if (!structure || structure.type !== "chest") return;
+    const requestId = typeof message.requestId === "string" ? message.requestId : null;
+    const fail = () => sendBreakStructureResult(conn, requestId, false, null);
     const player = net.players.get(conn.peer);
-    if (!player || !canRemotePlayerAccessSurfaceStructure(player, structure, 1.95)) return;
-    destroyChest(structure);
+    if (!player) {
+      fail();
+      return;
+    }
+    const houseTx = Number(message.houseTx);
+    const houseTy = Number(message.houseTy);
+    const tx = Number(message.tx);
+    const ty = Number(message.ty);
+    if (!Number.isInteger(houseTx) || !Number.isInteger(houseTy) || !Number.isInteger(tx) || !Number.isInteger(ty)) {
+      fail();
+      return;
+    }
+    const house = getStructureAt(houseTx, houseTy);
+    if (!house || !isHouseType(house.type)) {
+      fail();
+      return;
+    }
+    if (!canRemotePlayerAccessHouseInterior(player, house, tx, ty, 2.35)) {
+      fail();
+      return;
+    }
+    const target = getInteriorStructureAt(house, tx, ty);
+    if (!target || !isStructurePickupBreakable(target)) {
+      fail();
+      return;
+    }
+    const snapshot = buildStructureBreakSnapshot(target, house);
+    if (!snapshot) {
+      fail();
+      return;
+    }
+    removeStructureFromBreakSnapshot(snapshot);
+    sendBreakStructureResult(conn, requestId, true, snapshot);
+  }
+
+  function handleBreakStructure(conn, message) {
+    if (!conn || !message) return;
+    const requestId = typeof message.requestId === "string" ? message.requestId : null;
+    const fail = () => sendBreakStructureResult(conn, requestId, false, null);
+    const tx = Number(message.tx);
+    const ty = Number(message.ty);
+    if (!Number.isInteger(tx) || !Number.isInteger(ty)) {
+      fail();
+      return;
+    }
+    const structure = getStructureAt(tx, ty);
+    if (!structure || !isStructurePickupBreakable(structure)) {
+      fail();
+      return;
+    }
+    const player = net.players.get(conn.peer);
+    const maxDistance = structure.type === "robot" ? 2.1 : 1.95;
+    if (!player || !canRemotePlayerAccessSurfaceStructure(player, structure, maxDistance)) {
+      fail();
+      return;
+    }
+    const snapshot = buildStructureBreakSnapshot(structure);
+    if (!snapshot) {
+      fail();
+      return;
+    }
+    removeStructureFromBreakSnapshot(snapshot);
+    sendBreakStructureResult(conn, requestId, true, snapshot);
   }
 
   function applySleepSkipToDawn() {
@@ -8221,7 +8498,18 @@
     if (!conn || !message) return;
     const player = net.players.get(conn.peer);
     if (!player) return;
-    const world = getRemoteActionWorldForPlayer(player, message);
+    let world = getRemoteActionWorldForPlayer(player, message);
+    let houseDropCenter = null;
+    if (!world && player.inHut && !player.inCave && message.allowHouseDrop) {
+      const houseCoords = parseHouseKey(player.houseKey);
+      if (houseCoords) {
+        const house = getStructureAt(houseCoords.tx, houseCoords.ty);
+        if (house && isHouseType(house.type)) {
+          world = state.surfaceWorld || state.world;
+          houseDropCenter = getStructureCenterWorld(house);
+        }
+      }
+    }
     if (!world) return;
     const itemId = typeof message.itemId === "string" ? message.itemId : null;
     if (!itemId || !ITEMS[itemId]) return;
@@ -8229,8 +8517,13 @@
     const x = Number.isFinite(message.x) ? message.x : null;
     const y = Number.isFinite(message.y) ? message.y : null;
     if (!Number.isFinite(x) || !Number.isFinite(y)) return;
-    const distFromPlayer = Math.hypot(x - (player.x ?? 0), y - (player.y ?? 0));
-    if (distFromPlayer > CONFIG.tileSize * 6) return;
+    if (houseDropCenter) {
+      const distFromHouse = Math.hypot(x - houseDropCenter.x, y - houseDropCenter.y);
+      if (distFromHouse > CONFIG.tileSize * 6.2) return;
+    } else {
+      const distFromPlayer = Math.hypot(x - (player.x ?? 0), y - (player.y ?? 0));
+      if (distFromPlayer > CONFIG.tileSize * 6) return;
+    }
     spawnDrop(itemId, qty, x, y, world);
   }
 
@@ -8393,9 +8686,216 @@
     }
   }
 
+  function isPendingSurfacePlacementConfirmed(pending) {
+    if (!pending) return false;
+    if (!Number.isInteger(pending.tx) || !Number.isInteger(pending.ty) || !pending.type) return false;
+    const structure = getStructureAt(pending.tx, pending.ty);
+    return !!structure && !structure.removed && structure.type === pending.type && !structure.pending;
+  }
+
+  function rollbackPendingSurfacePlacement(pending) {
+    const result = {
+      confirmed: false,
+      rolledBack: false,
+      inventoryChanged: false,
+      structureChanged: false,
+    };
+    if (isPendingSurfacePlacementConfirmed(pending)) {
+      result.confirmed = true;
+      return result;
+    }
+    if (Number.isInteger(pending?.tx) && Number.isInteger(pending?.ty)) {
+      const structure = getStructureAt(pending.tx, pending.ty);
+      if (structure && !structure.removed && structure.type === pending.type && structure.pending) {
+        removeStructure(structure);
+        result.structureChanged = true;
+        result.rolledBack = true;
+      }
+    }
+    if (Array.isArray(state.inventory) && pending?.itemId && ITEMS[pending.itemId]) {
+      addItem(state.inventory, pending.itemId, 1);
+      result.inventoryChanged = true;
+      result.rolledBack = true;
+    }
+    return result;
+  }
+
+  function isPendingHousePlacementConfirmed(pending) {
+    if (!pending) return false;
+    if (
+      !Number.isInteger(pending.houseTx)
+      || !Number.isInteger(pending.houseTy)
+      || !Number.isInteger(pending.tx)
+      || !Number.isInteger(pending.ty)
+      || !pending.type
+    ) {
+      return false;
+    }
+    const house = getStructureAt(pending.houseTx, pending.houseTy);
+    if (!house || !isHouseType(house.type)) return false;
+    const interior = getInteriorStructureAt(house, pending.tx, pending.ty);
+    return !!interior && !interior.removed && interior.type === pending.type;
+  }
+
+  function rollbackPendingHousePlacement(pending) {
+    const result = {
+      confirmed: false,
+      rolledBack: false,
+      inventoryChanged: false,
+      structureChanged: false,
+    };
+    if (isPendingHousePlacementConfirmed(pending)) {
+      result.confirmed = true;
+      return result;
+    }
+    if (Array.isArray(state.inventory) && pending?.itemId && ITEMS[pending.itemId]) {
+      addItem(state.inventory, pending.itemId, 1);
+      result.inventoryChanged = true;
+      result.rolledBack = true;
+    }
+    return result;
+  }
+
+  function rollbackAllPendingClientRequests(promptMessage = "") {
+    if (!Array.isArray(state.inventory)) {
+      const clearedCount = net.pendingPlaces.size
+        + net.pendingHousePlaces.size
+        + net.pendingHouseMoves.size
+        + net.pendingBreaks.size;
+      net.pendingPlaces.clear();
+      net.pendingHousePlaces.clear();
+      net.pendingHouseMoves.clear();
+      net.pendingBreaks.clear();
+      if (promptMessage && clearedCount > 0) {
+        setPrompt(promptMessage, 1.2);
+      }
+      return { rollbackCount: 0, clearedCount };
+    }
+    let inventoryChanged = false;
+    let structureChanged = false;
+    let rollbackCount = 0;
+    let clearedCount = 0;
+
+    for (const pending of net.pendingPlaces.values()) {
+      const result = rollbackPendingSurfacePlacement(pending);
+      if (result.inventoryChanged) inventoryChanged = true;
+      if (result.structureChanged) structureChanged = true;
+      if (result.rolledBack) rollbackCount += 1;
+      else if (!result.confirmed) clearedCount += 1;
+    }
+    net.pendingPlaces.clear();
+
+    for (const pending of net.pendingHousePlaces.values()) {
+      const result = rollbackPendingHousePlacement(pending);
+      if (result.inventoryChanged) inventoryChanged = true;
+      if (result.structureChanged) structureChanged = true;
+      if (result.rolledBack) rollbackCount += 1;
+      else if (!result.confirmed) clearedCount += 1;
+    }
+    net.pendingHousePlaces.clear();
+
+    if (net.pendingHouseMoves.size > 0) {
+      clearedCount += net.pendingHouseMoves.size;
+      net.pendingHouseMoves.clear();
+    }
+    if (net.pendingBreaks.size > 0) {
+      clearedCount += net.pendingBreaks.size;
+      net.pendingBreaks.clear();
+    }
+
+    if (inventoryChanged) {
+      updateAllSlotUI();
+      structureChanged = true;
+    }
+    if (structureChanged) {
+      markDirty();
+    }
+    if (promptMessage && (rollbackCount > 0 || clearedCount > 0)) {
+      setPrompt(promptMessage, 1.2);
+    }
+    return { rollbackCount, clearedCount };
+  }
+
+  function reconcilePendingClientRequestsFromAuthoritativeState() {
+    if (!netIsClientReady()) return;
+    for (const [requestId, pending] of net.pendingPlaces.entries()) {
+      if (isPendingSurfacePlacementConfirmed(pending)) {
+        net.pendingPlaces.delete(requestId);
+      }
+    }
+    for (const [requestId, pending] of net.pendingHousePlaces.entries()) {
+      if (isPendingHousePlacementConfirmed(pending)) {
+        net.pendingHousePlaces.delete(requestId);
+      }
+    }
+  }
+
+  function expireStalePendingClientRequests() {
+    if (!netIsClientReady()) return;
+    const timeoutMs = NET_PENDING_REQUEST_TIMEOUT_SECONDS * 1000;
+    const now = performance.now();
+    let inventoryChanged = false;
+    let structureChanged = false;
+    let timedOutCount = 0;
+    let rolledBackCount = 0;
+
+    for (const [requestId, pending] of net.pendingPlaces.entries()) {
+      const requestedAt = Number(pending?.requestedAt);
+      if (!Number.isFinite(requestedAt) || (now - requestedAt) <= timeoutMs) continue;
+      const rollback = rollbackPendingSurfacePlacement(pending);
+      if (rollback.inventoryChanged) inventoryChanged = true;
+      if (rollback.structureChanged) structureChanged = true;
+      if (rollback.rolledBack) rolledBackCount += 1;
+      net.pendingPlaces.delete(requestId);
+      timedOutCount += 1;
+    }
+
+    for (const [requestId, pending] of net.pendingHousePlaces.entries()) {
+      const requestedAt = Number(pending?.requestedAt);
+      if (!Number.isFinite(requestedAt) || (now - requestedAt) <= timeoutMs) continue;
+      const rollback = rollbackPendingHousePlacement(pending);
+      if (rollback.inventoryChanged) inventoryChanged = true;
+      if (rollback.structureChanged) structureChanged = true;
+      if (rollback.rolledBack) rolledBackCount += 1;
+      net.pendingHousePlaces.delete(requestId);
+      timedOutCount += 1;
+    }
+
+    for (const [requestId, pending] of net.pendingHouseMoves.entries()) {
+      const requestedAt = Number(pending?.requestedAt);
+      if (!Number.isFinite(requestedAt) || (now - requestedAt) <= timeoutMs) continue;
+      net.pendingHouseMoves.delete(requestId);
+      timedOutCount += 1;
+    }
+
+    for (const [requestId, pending] of net.pendingBreaks.entries()) {
+      const requestedAt = Number(pending?.requestedAt);
+      if (!Number.isFinite(requestedAt) || (now - requestedAt) <= timeoutMs) continue;
+      net.pendingBreaks.delete(requestId);
+      timedOutCount += 1;
+    }
+
+    if (inventoryChanged) {
+      updateAllSlotUI();
+      structureChanged = true;
+    }
+    if (structureChanged) {
+      markDirty();
+    }
+    if (timedOutCount > 0) {
+      setPrompt(
+        rolledBackCount > 0
+          ? "Network timeout: action rolled back"
+          : "Network timeout: pending action cleared",
+        1.2
+      );
+    }
+  }
+
   function netTick(dt) {
     if (!net.enabled) return;
     if (!netIsClientReady()) net.robotPausePingTimer = 0.2;
+    expireStalePendingClientRequests();
     net.playerTimer -= dt;
     if (net.playerTimer <= 0) {
       sendPlayerUpdate();
@@ -11136,6 +11636,19 @@
     return true;
   }
 
+  function canCraftWithInventoryReplacement(inventory, cost, output) {
+    const temp = inventory.map((slot) => ({ id: slot.id, qty: slot.qty }));
+    if (cost && !isInfiniteResourcesEnabled()) {
+      if (!hasCost(temp, cost)) return false;
+      applyCost(temp, cost);
+    }
+    if (!output || typeof output !== "object") return true;
+    for (const [itemId, qty] of Object.entries(output)) {
+      if (addItem(temp, itemId, qty) > 0) return false;
+    }
+    return true;
+  }
+
   function removeItem(inventory, itemId, amount) {
     let remaining = amount;
     for (const slot of inventory) {
@@ -13184,6 +13697,15 @@
   function getHouseKey(structure) {
     if (!structure) return null;
     return `${structure.tx},${structure.ty}`;
+  }
+
+  function parseHouseKey(houseKey) {
+    if (typeof houseKey !== "string" || !houseKey.includes(",")) return null;
+    const [txRaw, tyRaw] = houseKey.split(",");
+    const tx = Number(txRaw);
+    const ty = Number(tyRaw);
+    if (!Number.isInteger(tx) || !Number.isInteger(ty)) return null;
+    return { tx, ty };
   }
 
   function setStructureFootprintInGrid(structure, place) {
@@ -15464,27 +15986,27 @@
     const swordTier = getSwordTier(player);
     const maxSwordTier = Math.max(0, SWORD_TIER_DATA.length - 1);
     let damage = Math.max(1, Math.floor(getAttackDamage(player)));
+    const targetMaxHp = Number(target?.maxHp);
+    const targetHp = Number(target?.hp);
+    const targetAtFullHealth = Number.isFinite(targetMaxHp)
+      && targetMaxHp > 1
+      && Number.isFinite(targetHp)
+      && targetHp >= targetMaxHp;
     if (isHostileMobTarget(target)) {
       const scale = SWORD_DAMAGE_VS_MONSTER_SCALE[swordTier] ?? 1;
       damage = Math.max(1, Math.floor(damage * scale));
+      // Before the final sword tier, prevent full-health one-taps from pure scaling spikes.
+      if (swordTier < maxSwordTier && targetAtFullHealth && damage >= targetMaxHp) {
+        damage = Math.max(1, targetMaxHp - 1);
+      }
     }
     if (isPassiveAnimalTarget(target)) {
-      const targetMaxHp = Number(target.maxHp);
-      const targetHp = Number(target.hp);
       if (Number.isFinite(targetMaxHp) && targetMaxHp > 1 && Number.isFinite(targetHp) && targetHp >= targetMaxHp) {
         if (swordTier >= maxSwordTier) {
           damage = Math.max(damage, targetMaxHp);
         } else {
           damage = Math.min(damage, Math.max(1, targetMaxHp - 1));
         }
-      }
-    }
-    // Diamond sword should reliably two-tap full-health targets instead of randomly one-shotting.
-    if (swordTier >= 5 && target && isHostileMobTarget(target)) {
-      const targetMaxHp = Number(target.maxHp);
-      const targetHp = Number(target.hp);
-      if (Number.isFinite(targetMaxHp) && targetMaxHp > 1 && Number.isFinite(targetHp) && targetHp >= targetMaxHp) {
-        damage = Math.min(damage, Math.max(1, targetMaxHp - 1));
       }
     }
     return damage;
@@ -15693,6 +16215,13 @@
       const requestId = `${net.playerId}-house-move-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
       net.pendingHouseMoves.set(requestId, {
         type: relocation.type,
+        houseTx: state.activeHouse.tx,
+        houseTy: state.activeHouse.ty,
+        fromTx: relocation.sourceTx,
+        fromTy: relocation.sourceTy,
+        toTx: tile.tx,
+        toTy: tile.ty,
+        requestedAt: performance.now(),
       });
       sendToHost({
         type: "houseMove",
@@ -16510,11 +17039,39 @@
     frameCtx.save();
     drawRoundedRect(frameCtx, 1.1, 1.1, size - 2.2, size - 2.2, 6);
     frameCtx.clip();
+    const seed = Array.from(itemId || "item").reduce(
+      (acc, ch, idx) => (((acc * 33) ^ (ch.charCodeAt(0) + idx * 17)) >>> 0),
+      2166136261
+    );
+    const seededNoise = (n) => {
+      const x = Math.sin((seed + n * 12.9898) * 0.013) * 43758.5453;
+      return x - Math.floor(x);
+    };
+    const noiseCount = Math.max(12, Math.floor(size * 0.95));
+    for (let i = 0; i < noiseCount; i += 1) {
+      const px = 1 + seededNoise(i * 1.37) * (size - 2);
+      const py = 1 + seededNoise(i * 2.11) * (size - 2);
+      const dot = 0.45 + seededNoise(i * 3.17) * 0.8;
+      frameCtx.fillStyle = `rgba(255,255,255,${0.02 + seededNoise(i * 2.53) * 0.05})`;
+      frameCtx.fillRect(px, py, dot, dot);
+    }
     const sheen = frameCtx.createLinearGradient(0, 0, 0, size * 0.72);
     sheen.addColorStop(0, "rgba(255,255,255,0.28)");
     sheen.addColorStop(1, "rgba(255,255,255,0)");
     frameCtx.fillStyle = sheen;
     frameCtx.fillRect(0, 0, size, size * 0.72);
+    const rimShadow = frameCtx.createRadialGradient(
+      size * 0.5,
+      size * 0.56,
+      size * 0.18,
+      size * 0.5,
+      size * 0.56,
+      size * 0.72
+    );
+    rimShadow.addColorStop(0, "rgba(0,0,0,0)");
+    rimShadow.addColorStop(1, "rgba(0,0,0,0.22)");
+    frameCtx.fillStyle = rimShadow;
+    frameCtx.fillRect(0, 0, size, size);
     frameCtx.restore();
 
     drawRoundedRect(frameCtx, 1.1, 1.1, size - 2.2, size - 2.2, 6);
@@ -16524,6 +17081,10 @@
     drawRoundedRect(frameCtx, 2.1, 2.1, size - 4.2, size - 4.2, 5);
     frameCtx.strokeStyle = tintColor(border, 0.08);
     frameCtx.lineWidth = 0.9;
+    frameCtx.stroke();
+    drawRoundedRect(frameCtx, 3.15, 3.15, size - 6.3, size - 6.3, 4.3);
+    frameCtx.strokeStyle = "rgba(255,255,255,0.2)";
+    frameCtx.lineWidth = 0.75;
     frameCtx.stroke();
 
     const glyphCanvas = document.createElement("canvas");
@@ -16568,28 +17129,56 @@
       case "wood":
       case "plank":
       case "stick":
-        iconCtx.fillStyle = "#8f6238";
-        iconCtx.fillRect(cx - s * 0.26, cy - s * 0.18, s * 0.52, s * 0.36);
-        iconCtx.strokeStyle = "#c69461";
-        iconCtx.lineWidth = 1.2;
-        iconCtx.strokeRect(cx - s * 0.26, cy - s * 0.18, s * 0.52, s * 0.36);
         if (itemId === "stick") {
           iconCtx.strokeStyle = "#e3c08d";
-          iconCtx.lineWidth = 2;
+          iconCtx.lineWidth = s * 0.09;
           iconCtx.beginPath();
-          iconCtx.moveTo(cx - s * 0.18, cy + s * 0.13);
-          iconCtx.lineTo(cx + s * 0.17, cy - s * 0.12);
-          iconCtx.moveTo(cx - s * 0.18, cy - s * 0.12);
-          iconCtx.lineTo(cx + s * 0.16, cy + s * 0.13);
+          iconCtx.moveTo(cx - s * 0.19, cy + s * 0.14);
+          iconCtx.lineTo(cx + s * 0.16, cy - s * 0.1);
+          iconCtx.moveTo(cx - s * 0.17, cy - s * 0.11);
+          iconCtx.lineTo(cx + s * 0.17, cy + s * 0.14);
           iconCtx.stroke();
+          iconCtx.strokeStyle = "rgba(81, 53, 28, 0.55)";
+          iconCtx.lineWidth = s * 0.028;
+          iconCtx.beginPath();
+          iconCtx.moveTo(cx - s * 0.08, cy + s * 0.06);
+          iconCtx.lineTo(cx + s * 0.08, cy - s * 0.04);
+          iconCtx.stroke();
+        } else if (itemId === "plank") {
+          iconCtx.fillStyle = "#9a6a3f";
+          drawRoundedRect(iconCtx, cx - s * 0.255, cy - s * 0.17, s * 0.51, s * 0.34, 3.5);
+          iconCtx.fill();
+          iconCtx.strokeStyle = "#d7a977";
+          iconCtx.lineWidth = 1;
+          iconCtx.stroke();
+          iconCtx.strokeStyle = "rgba(58, 38, 22, 0.5)";
+          iconCtx.lineWidth = 1;
+          iconCtx.beginPath();
+          iconCtx.moveTo(cx - s * 0.21, cy - s * 0.06);
+          iconCtx.lineTo(cx + s * 0.21, cy - s * 0.06);
+          iconCtx.moveTo(cx - s * 0.21, cy + s * 0.03);
+          iconCtx.lineTo(cx + s * 0.21, cy + s * 0.03);
+          iconCtx.stroke();
+          iconCtx.fillStyle = "rgba(255, 231, 199, 0.32)";
+          iconCtx.fillRect(cx - s * 0.19, cy - s * 0.13, s * 0.18, s * 0.045);
         } else {
-          iconCtx.strokeStyle = "rgba(54,35,20,0.4)";
+          iconCtx.fillStyle = "#855731";
           iconCtx.beginPath();
-          iconCtx.moveTo(cx - s * 0.18, cy - s * 0.11);
-          iconCtx.lineTo(cx + s * 0.18, cy - s * 0.11);
-          iconCtx.moveTo(cx - s * 0.18, cy);
-          iconCtx.lineTo(cx + s * 0.18, cy);
+          iconCtx.ellipse(cx, cy, s * 0.24, s * 0.18, 0, 0, Math.PI * 2);
+          iconCtx.fill();
+          iconCtx.strokeStyle = "#c69461";
+          iconCtx.lineWidth = 1.2;
           iconCtx.stroke();
+          iconCtx.strokeStyle = "rgba(255, 228, 194, 0.35)";
+          iconCtx.lineWidth = 1;
+          iconCtx.beginPath();
+          iconCtx.arc(cx, cy, s * 0.08, 0, Math.PI * 2);
+          iconCtx.arc(cx, cy, s * 0.14, 0, Math.PI * 2);
+          iconCtx.stroke();
+          iconCtx.fillStyle = "rgba(255, 236, 210, 0.2)";
+          iconCtx.beginPath();
+          iconCtx.ellipse(cx - s * 0.09, cy - s * 0.07, s * 0.08, s * 0.05, -0.35, 0, Math.PI * 2);
+          iconCtx.fill();
         }
         break;
       case "grass":
@@ -16625,27 +17214,33 @@
         break;
       case "village_map":
       case "cave_map":
-        iconCtx.fillStyle = itemId === "village_map" ? "#e6dab0" : "#c9d6f1";
-        drawRoundedRect(iconCtx, cx - s * 0.24, cy - s * 0.2, s * 0.48, s * 0.4, 5);
+        iconCtx.fillStyle = itemId === "village_map" ? "#eadfb9" : "#cedcf6";
+        drawRoundedRect(iconCtx, cx - s * 0.25, cy - s * 0.2, s * 0.5, s * 0.4, 5);
         iconCtx.fill();
         iconCtx.strokeStyle = "rgba(76,65,45,0.45)";
         iconCtx.lineWidth = 1;
         iconCtx.stroke();
+        iconCtx.fillStyle = itemId === "village_map" ? "#f6edcc" : "#e3ecff";
+        iconCtx.beginPath();
+        iconCtx.moveTo(cx + s * 0.12, cy - s * 0.2);
+        iconCtx.lineTo(cx + s * 0.25, cy - s * 0.2);
+        iconCtx.lineTo(cx + s * 0.25, cy - s * 0.07);
+        iconCtx.closePath();
+        iconCtx.fill();
         iconCtx.strokeStyle = itemId === "village_map" ? "#3d8f5c" : "#6f8ac8";
         iconCtx.lineWidth = 1.8;
         iconCtx.beginPath();
-        iconCtx.moveTo(cx - s * 0.18, cy + s * 0.05);
+        iconCtx.moveTo(cx - s * 0.18, cy + s * 0.06);
         iconCtx.lineTo(cx - s * 0.03, cy - s * 0.1);
-        iconCtx.lineTo(cx + s * 0.1, cy - s * 0.02);
-        iconCtx.lineTo(cx + s * 0.2, cy - s * 0.12);
+        iconCtx.lineTo(cx + s * 0.08, cy - s * 0.01);
+        iconCtx.lineTo(cx + s * 0.18, cy - s * 0.11);
         iconCtx.stroke();
-        iconCtx.strokeStyle = itemId === "village_map" ? "#b64d4d" : "#f2c66a";
-        iconCtx.lineWidth = 1.5;
+        iconCtx.fillStyle = itemId === "village_map" ? "#c84b4b" : "#e8bf5d";
         iconCtx.beginPath();
-        iconCtx.moveTo(cx + s * 0.12, cy + s * 0.02);
-        iconCtx.lineTo(cx + s * 0.2, cy + s * 0.1);
-        iconCtx.moveTo(cx + s * 0.2, cy + s * 0.02);
-        iconCtx.lineTo(cx + s * 0.12, cy + s * 0.1);
+        iconCtx.arc(cx + s * 0.12, cy + s * 0.03, s * 0.043, 0, Math.PI * 2);
+        iconCtx.fill();
+        iconCtx.strokeStyle = "rgba(50, 42, 28, 0.45)";
+        iconCtx.lineWidth = 0.9;
         iconCtx.stroke();
         break;
       case "stone":
@@ -16667,37 +17262,116 @@
       case "redwood_stone":
       case "ashlands_stone":
       case "marsh_stone":
-        iconCtx.fillStyle = ITEMS[itemId]?.color || "#9ea8b8";
-        iconCtx.beginPath();
-        iconCtx.moveTo(cx - s * 0.24, cy + s * 0.18);
-        iconCtx.lineTo(cx - s * 0.28, cy - s * 0.02);
-        iconCtx.lineTo(cx - s * 0.1, cy - s * 0.24);
-        iconCtx.lineTo(cx + s * 0.16, cy - s * 0.2);
-        iconCtx.lineTo(cx + s * 0.28, cy + s * 0.04);
-        iconCtx.lineTo(cx + s * 0.1, cy + s * 0.22);
-        iconCtx.closePath();
-        iconCtx.fill();
-        iconCtx.fillStyle = "rgba(255,255,255,0.25)";
-        iconCtx.beginPath();
-        iconCtx.arc(cx - s * 0.05, cy - s * 0.1, s * 0.08, 0, Math.PI * 2);
-        iconCtx.fill();
-        if (itemId === "coal") {
-          iconCtx.fillStyle = "rgba(255,255,255,0.08)";
+        if (itemId === "iron_ingot" || itemId === "gold_ingot" || itemId === "ingot") {
+          const ingotBase = itemId === "gold_ingot" ? "#d7b054" : (itemId === "iron_ingot" ? "#bbb8b3" : "#c4b47b");
+          iconCtx.fillStyle = tintColor(ingotBase, -0.12);
           iconCtx.beginPath();
-          iconCtx.arc(cx + s * 0.08, cy + s * 0.03, s * 0.06, 0, Math.PI * 2);
+          iconCtx.moveTo(cx - s * 0.24, cy + s * 0.13);
+          iconCtx.lineTo(cx + s * 0.24, cy + s * 0.13);
+          iconCtx.lineTo(cx + s * 0.16, cy + s * 0.24);
+          iconCtx.lineTo(cx - s * 0.16, cy + s * 0.24);
+          iconCtx.closePath();
           iconCtx.fill();
-        }
-        if (itemId === "gold_ore" || itemId === "gold_ingot") {
-          iconCtx.fillStyle = "rgba(255, 236, 175, 0.35)";
-          iconCtx.fillRect(cx - s * 0.04, cy - s * 0.05, s * 0.18, s * 0.06);
-        }
-        if (itemId === "emerald" || itemId === "diamond") {
-          iconCtx.strokeStyle = "rgba(235, 255, 255, 0.55)";
+          iconCtx.fillStyle = ingotBase;
+          iconCtx.beginPath();
+          iconCtx.moveTo(cx - s * 0.19, cy - s * 0.09);
+          iconCtx.lineTo(cx + s * 0.19, cy - s * 0.09);
+          iconCtx.lineTo(cx + s * 0.25, cy + s * 0.13);
+          iconCtx.lineTo(cx - s * 0.25, cy + s * 0.13);
+          iconCtx.closePath();
+          iconCtx.fill();
+          iconCtx.fillStyle = "rgba(255,255,255,0.32)";
+          iconCtx.fillRect(cx - s * 0.15, cy - s * 0.06, s * 0.17, s * 0.045);
+          iconCtx.strokeStyle = "rgba(74, 59, 34, 0.45)";
+          iconCtx.lineWidth = 1;
+          iconCtx.stroke();
+        } else if (itemId === "brick") {
+          iconCtx.fillStyle = "#a95e44";
+          drawRoundedRect(iconCtx, cx - s * 0.24, cy - s * 0.17, s * 0.48, s * 0.34, 4);
+          iconCtx.fill();
+          iconCtx.strokeStyle = "#e2a07c";
+          iconCtx.lineWidth = 1;
+          iconCtx.stroke();
+          iconCtx.strokeStyle = "rgba(74, 38, 27, 0.45)";
           iconCtx.lineWidth = 1;
           iconCtx.beginPath();
-          iconCtx.moveTo(cx - s * 0.11, cy + s * 0.01);
-          iconCtx.lineTo(cx + s * 0.08, cy - s * 0.12);
+          iconCtx.moveTo(cx - s * 0.24, cy);
+          iconCtx.lineTo(cx + s * 0.24, cy);
+          iconCtx.moveTo(cx - s * 0.1, cy - s * 0.17);
+          iconCtx.lineTo(cx - s * 0.1, cy);
+          iconCtx.moveTo(cx + s * 0.1, cy);
+          iconCtx.lineTo(cx + s * 0.1, cy + s * 0.17);
           iconCtx.stroke();
+        } else if (itemId === "emerald" || itemId === "diamond") {
+          const gemTone = itemId === "emerald" ? "#43c982" : "#78dff1";
+          iconCtx.fillStyle = tintColor(gemTone, -0.15);
+          iconCtx.beginPath();
+          iconCtx.moveTo(cx, cy - s * 0.23);
+          iconCtx.lineTo(cx + s * 0.2, cy - s * 0.08);
+          iconCtx.lineTo(cx + s * 0.12, cy + s * 0.2);
+          iconCtx.lineTo(cx - s * 0.12, cy + s * 0.2);
+          iconCtx.lineTo(cx - s * 0.2, cy - s * 0.08);
+          iconCtx.closePath();
+          iconCtx.fill();
+          iconCtx.fillStyle = gemTone;
+          iconCtx.beginPath();
+          iconCtx.moveTo(cx, cy - s * 0.2);
+          iconCtx.lineTo(cx + s * 0.16, cy - s * 0.06);
+          iconCtx.lineTo(cx + s * 0.1, cy + s * 0.16);
+          iconCtx.lineTo(cx - s * 0.1, cy + s * 0.16);
+          iconCtx.lineTo(cx - s * 0.16, cy - s * 0.06);
+          iconCtx.closePath();
+          iconCtx.fill();
+          iconCtx.strokeStyle = "rgba(231, 255, 255, 0.68)";
+          iconCtx.lineWidth = 1;
+          iconCtx.beginPath();
+          iconCtx.moveTo(cx, cy - s * 0.2);
+          iconCtx.lineTo(cx, cy + s * 0.16);
+          iconCtx.moveTo(cx - s * 0.16, cy - s * 0.06);
+          iconCtx.lineTo(cx + s * 0.16, cy - s * 0.06);
+          iconCtx.stroke();
+        } else {
+          const rockColor = ITEMS[itemId]?.color || "#9ea8b8";
+          iconCtx.fillStyle = rockColor;
+          iconCtx.beginPath();
+          iconCtx.moveTo(cx - s * 0.24, cy + s * 0.18);
+          iconCtx.lineTo(cx - s * 0.28, cy - s * 0.02);
+          iconCtx.lineTo(cx - s * 0.1, cy - s * 0.24);
+          iconCtx.lineTo(cx + s * 0.16, cy - s * 0.2);
+          iconCtx.lineTo(cx + s * 0.28, cy + s * 0.04);
+          iconCtx.lineTo(cx + s * 0.1, cy + s * 0.22);
+          iconCtx.closePath();
+          iconCtx.fill();
+          iconCtx.fillStyle = "rgba(255,255,255,0.25)";
+          iconCtx.beginPath();
+          iconCtx.arc(cx - s * 0.05, cy - s * 0.1, s * 0.08, 0, Math.PI * 2);
+          iconCtx.fill();
+          iconCtx.strokeStyle = "rgba(30, 40, 58, 0.34)";
+          iconCtx.lineWidth = 1;
+          iconCtx.stroke();
+          if (itemId === "coal") {
+            iconCtx.fillStyle = "rgba(255,255,255,0.07)";
+            iconCtx.beginPath();
+            iconCtx.arc(cx + s * 0.08, cy + s * 0.03, s * 0.06, 0, Math.PI * 2);
+            iconCtx.fill();
+          }
+          if (itemId === "gold_ore" || itemId === "iron_ore" || itemId === "ore") {
+            const oreSpeck = itemId === "gold_ore" ? "rgba(255, 231, 148, 0.68)" : "rgba(214, 208, 192, 0.6)";
+            iconCtx.fillStyle = oreSpeck;
+            for (let i = 0; i < 4; i += 1) {
+              const ox = (-0.12 + i * 0.08) * s;
+              const oy = (i % 2 === 0 ? -0.01 : 0.08) * s;
+              iconCtx.fillRect(cx + ox, cy + oy, s * 0.05, s * 0.04);
+            }
+          }
+          if (itemId.endsWith("_stone")) {
+            iconCtx.strokeStyle = "rgba(238, 249, 255, 0.4)";
+            iconCtx.lineWidth = 1;
+            iconCtx.beginPath();
+            iconCtx.moveTo(cx - s * 0.14, cy + s * 0.06);
+            iconCtx.lineTo(cx + s * 0.11, cy - s * 0.08);
+            iconCtx.stroke();
+          }
         }
         break;
       case "wayfinder_stone":
@@ -16709,6 +17383,11 @@
         iconCtx.lineWidth = 1.2;
         iconCtx.beginPath();
         iconCtx.arc(cx, cy, s * 0.21, 0, Math.PI * 2);
+        iconCtx.stroke();
+        iconCtx.strokeStyle = "rgba(33, 68, 95, 0.45)";
+        iconCtx.lineWidth = 1;
+        iconCtx.beginPath();
+        iconCtx.arc(cx, cy, s * 0.15, 0, Math.PI * 2);
         iconCtx.stroke();
         iconCtx.fillStyle = "#e3fbff";
         iconCtx.beginPath();
@@ -16788,52 +17467,111 @@
       case "bridge":
       case "village_path":
       case "dock":
-        iconCtx.fillStyle = itemId === "village_path" ? "#8a7752" : "#886b43";
-        iconCtx.fillRect(cx - s * 0.26, cy - s * 0.16, s * 0.52, s * 0.32);
-        iconCtx.strokeStyle = itemId === "village_path" ? "#d8c690" : "#d2b883";
-        iconCtx.lineWidth = 1;
-        for (let i = -2; i <= 2; i += 1) {
-          iconCtx.beginPath();
-          iconCtx.moveTo(cx - s * 0.22, cy + i * s * 0.06);
-          iconCtx.lineTo(cx + s * 0.22, cy + i * s * 0.06);
-          iconCtx.stroke();
-        }
         if (itemId === "village_path") {
-          iconCtx.fillStyle = "rgba(80, 66, 45, 0.45)";
-          iconCtx.fillRect(cx - s * 0.05, cy - s * 0.16, s * 0.1, s * 0.32);
+          iconCtx.fillStyle = "#8a7752";
+          drawRoundedRect(iconCtx, cx - s * 0.25, cy - s * 0.17, s * 0.5, s * 0.34, 4);
+          iconCtx.fill();
+          iconCtx.strokeStyle = "#d8c690";
+          iconCtx.lineWidth = 1;
+          iconCtx.stroke();
+          iconCtx.strokeStyle = "rgba(92, 74, 48, 0.55)";
+          iconCtx.lineWidth = 1;
+          iconCtx.beginPath();
+          iconCtx.moveTo(cx - s * 0.19, cy - s * 0.05);
+          iconCtx.lineTo(cx + s * 0.18, cy - s * 0.05);
+          iconCtx.moveTo(cx - s * 0.12, cy + s * 0.04);
+          iconCtx.lineTo(cx + s * 0.19, cy + s * 0.04);
+          iconCtx.stroke();
+        } else if (itemId === "dock") {
+          iconCtx.fillStyle = "#8a6b43";
+          iconCtx.fillRect(cx - s * 0.26, cy - s * 0.08, s * 0.52, s * 0.2);
+          iconCtx.fillStyle = "#5f452d";
+          iconCtx.fillRect(cx - s * 0.21, cy + s * 0.12, s * 0.07, s * 0.13);
+          iconCtx.fillRect(cx + s * 0.14, cy + s * 0.12, s * 0.07, s * 0.13);
+          iconCtx.strokeStyle = "#d2b883";
+          iconCtx.lineWidth = 1;
+          for (let i = -2; i <= 2; i += 1) {
+            iconCtx.beginPath();
+            iconCtx.moveTo(cx - s * 0.22, cy + i * s * 0.04);
+            iconCtx.lineTo(cx + s * 0.22, cy + i * s * 0.04);
+            iconCtx.stroke();
+          }
+        } else {
+          iconCtx.fillStyle = "#886b43";
+          iconCtx.fillRect(cx - s * 0.26, cy - s * 0.16, s * 0.52, s * 0.32);
+          iconCtx.strokeStyle = "#d2b883";
+          iconCtx.lineWidth = 1;
+          for (let i = -2; i <= 2; i += 1) {
+            iconCtx.beginPath();
+            iconCtx.moveTo(cx - s * 0.22, cy + i * s * 0.06);
+            iconCtx.lineTo(cx + s * 0.22, cy + i * s * 0.06);
+            iconCtx.stroke();
+          }
         }
         break;
       case "small_house":
       case "medium_house":
       case "large_house":
-        iconCtx.fillStyle = "#8d6946";
-        iconCtx.fillRect(cx - s * 0.2, cy - s * 0.02, s * 0.4, s * 0.24);
-        iconCtx.fillStyle = "#6d4d31";
-        iconCtx.beginPath();
-        iconCtx.moveTo(cx - s * 0.25, cy);
-        iconCtx.lineTo(cx, cy - s * 0.22);
-        iconCtx.lineTo(cx + s * 0.25, cy);
-        iconCtx.closePath();
-        iconCtx.fill();
-        iconCtx.fillStyle = "#3a2a1b";
-        iconCtx.fillRect(cx - s * 0.05, cy + s * 0.06, s * 0.1, s * 0.14);
+        {
+          const scale = itemId === "small_house" ? 0.9 : (itemId === "medium_house" ? 1 : 1.1);
+          const w = s * 0.4 * scale;
+          const h = s * 0.23 * scale;
+          iconCtx.fillStyle = "#8d6946";
+          iconCtx.fillRect(cx - w * 0.5, cy - s * 0.01, w, h);
+          iconCtx.fillStyle = "#6d4d31";
+          iconCtx.beginPath();
+          iconCtx.moveTo(cx - w * 0.62, cy);
+          iconCtx.lineTo(cx, cy - s * 0.23 * scale);
+          iconCtx.lineTo(cx + w * 0.62, cy);
+          iconCtx.closePath();
+          iconCtx.fill();
+          iconCtx.fillStyle = "#3a2a1b";
+          iconCtx.fillRect(cx - s * 0.05, cy + s * 0.06, s * 0.1, s * 0.13);
+          iconCtx.fillStyle = "#e6d2af";
+          iconCtx.fillRect(cx - s * 0.17, cy + s * 0.03, s * 0.07, s * 0.06);
+          if (itemId !== "small_house") {
+            iconCtx.fillRect(cx + s * 0.1, cy + s * 0.03, s * 0.07, s * 0.06);
+          }
+          if (itemId === "large_house") {
+            iconCtx.fillStyle = "#836247";
+            iconCtx.fillRect(cx + s * 0.16, cy - s * 0.07, s * 0.04, s * 0.2);
+          }
+        }
         break;
       case "bed":
         iconCtx.fillStyle = "#d8c7ad";
-        iconCtx.fillRect(cx - s * 0.24, cy - s * 0.12, s * 0.48, s * 0.28);
+        drawRoundedRect(iconCtx, cx - s * 0.24, cy - s * 0.13, s * 0.48, s * 0.3, 4);
+        iconCtx.fill();
         iconCtx.fillStyle = "#7ea0c3";
-        iconCtx.fillRect(cx - s * 0.24, cy - s * 0.12, s * 0.48, s * 0.1);
+        iconCtx.fillRect(cx - s * 0.24, cy - s * 0.13, s * 0.48, s * 0.1);
+        iconCtx.fillStyle = "#eef6ff";
+        drawRoundedRect(iconCtx, cx + s * 0.07, cy - s * 0.08, s * 0.12, s * 0.07, 2.5);
+        iconCtx.fill();
+        iconCtx.strokeStyle = "rgba(86, 70, 51, 0.45)";
+        iconCtx.lineWidth = 1;
+        iconCtx.strokeRect(cx - s * 0.24, cy - s * 0.13, s * 0.48, s * 0.3);
         break;
       case "campfire":
-        iconCtx.fillStyle = "#a86b3e";
+        iconCtx.strokeStyle = "#8a5a34";
+        iconCtx.lineWidth = s * 0.06;
         iconCtx.beginPath();
-        iconCtx.arc(cx, cy, s * 0.14, 0, Math.PI * 2);
-        iconCtx.fill();
+        iconCtx.moveTo(cx - s * 0.16, cy + s * 0.1);
+        iconCtx.lineTo(cx + s * 0.1, cy - s * 0.13);
+        iconCtx.moveTo(cx + s * 0.16, cy + s * 0.1);
+        iconCtx.lineTo(cx - s * 0.1, cy - s * 0.13);
+        iconCtx.stroke();
         iconCtx.fillStyle = "#f7d074";
         iconCtx.beginPath();
-        iconCtx.moveTo(cx, cy - s * 0.18);
-        iconCtx.lineTo(cx - s * 0.09, cy + s * 0.02);
-        iconCtx.lineTo(cx + s * 0.09, cy + s * 0.02);
+        iconCtx.moveTo(cx, cy - s * 0.2);
+        iconCtx.lineTo(cx - s * 0.09, cy - s * 0.01);
+        iconCtx.lineTo(cx + s * 0.09, cy - s * 0.01);
+        iconCtx.closePath();
+        iconCtx.fill();
+        iconCtx.fillStyle = "#f29b41";
+        iconCtx.beginPath();
+        iconCtx.moveTo(cx, cy - s * 0.11);
+        iconCtx.lineTo(cx - s * 0.05, cy + s * 0.02);
+        iconCtx.lineTo(cx + s * 0.05, cy + s * 0.02);
         iconCtx.closePath();
         iconCtx.fill();
         break;
@@ -16869,10 +17607,51 @@
       case "smelter":
       case "kiln":
       case "chest":
-        iconCtx.fillStyle = itemId === "smelter" ? "#95534b" : (itemId === "kiln" ? "#b4765a" : "#8e633a");
-        iconCtx.fillRect(cx - s * 0.2, cy - s * 0.2, s * 0.4, s * 0.4);
-        iconCtx.fillStyle = itemId === "chest" ? "#d2bb7a" : "#2a201b";
-        iconCtx.fillRect(cx - s * 0.08, cy - s * 0.03, s * 0.16, s * 0.14);
+        if (itemId === "chest") {
+          iconCtx.fillStyle = "#8e633a";
+          drawRoundedRect(iconCtx, cx - s * 0.22, cy - s * 0.16, s * 0.44, s * 0.34, 4);
+          iconCtx.fill();
+          iconCtx.fillStyle = "#6d4b2b";
+          iconCtx.fillRect(cx - s * 0.22, cy - s * 0.02, s * 0.44, s * 0.2);
+          iconCtx.fillStyle = "#d2bb7a";
+          iconCtx.fillRect(cx - s * 0.04, cy - s * 0.02, s * 0.08, s * 0.09);
+          iconCtx.strokeStyle = "rgba(50, 34, 19, 0.55)";
+          iconCtx.lineWidth = 1;
+          iconCtx.strokeRect(cx - s * 0.22, cy - s * 0.16, s * 0.44, s * 0.34);
+          iconCtx.beginPath();
+          iconCtx.moveTo(cx - s * 0.22, cy - s * 0.02);
+          iconCtx.lineTo(cx + s * 0.22, cy - s * 0.02);
+          iconCtx.stroke();
+        } else if (itemId === "smelter") {
+          iconCtx.fillStyle = "#95534b";
+          drawRoundedRect(iconCtx, cx - s * 0.2, cy - s * 0.2, s * 0.4, s * 0.4, 4);
+          iconCtx.fill();
+          iconCtx.fillStyle = "#2a201b";
+          drawRoundedRect(iconCtx, cx - s * 0.09, cy - s * 0.02, s * 0.18, s * 0.14, 3);
+          iconCtx.fill();
+          iconCtx.fillStyle = "#f29d4f";
+          iconCtx.beginPath();
+          iconCtx.moveTo(cx, cy - s * 0.01);
+          iconCtx.lineTo(cx - s * 0.05, cy + s * 0.09);
+          iconCtx.lineTo(cx + s * 0.05, cy + s * 0.09);
+          iconCtx.closePath();
+          iconCtx.fill();
+          iconCtx.fillStyle = "#5a3530";
+          iconCtx.fillRect(cx - s * 0.14, cy - s * 0.12, s * 0.28, s * 0.035);
+        } else {
+          iconCtx.fillStyle = "#b4765a";
+          drawRoundedRect(iconCtx, cx - s * 0.2, cy - s * 0.2, s * 0.4, s * 0.4, 4);
+          iconCtx.fill();
+          iconCtx.fillStyle = "#8f5e45";
+          iconCtx.beginPath();
+          iconCtx.arc(cx, cy - s * 0.12, s * 0.08, 0, Math.PI * 2);
+          iconCtx.fill();
+          iconCtx.fillStyle = "#2a201b";
+          drawRoundedRect(iconCtx, cx - s * 0.09, cy - s * 0.01, s * 0.18, s * 0.13, 3);
+          iconCtx.fill();
+          iconCtx.fillStyle = "rgba(255, 225, 193, 0.46)";
+          iconCtx.fillRect(cx - s * 0.05, cy - s * 0.15, s * 0.1, s * 0.03);
+        }
         break;
       case "robot":
         iconCtx.fillStyle = "#456484";
@@ -16916,19 +17695,47 @@
         break;
       case "beacon_core":
       case "beacon":
-        iconCtx.fillStyle = itemId === "beacon" ? "#d0b46a" : "#89bedf";
-        iconCtx.fillRect(cx - s * 0.05, cy - s * 0.2, s * 0.1, s * 0.38);
-        iconCtx.fillStyle = "#f5d975";
-        iconCtx.beginPath();
-        iconCtx.arc(cx, cy - s * 0.2, s * 0.08, 0, Math.PI * 2);
-        iconCtx.fill();
+        if (itemId === "beacon_core") {
+          iconCtx.fillStyle = "#89bedf";
+          iconCtx.beginPath();
+          iconCtx.moveTo(cx, cy - s * 0.23);
+          iconCtx.lineTo(cx + s * 0.14, cy - s * 0.08);
+          iconCtx.lineTo(cx + s * 0.08, cy + s * 0.19);
+          iconCtx.lineTo(cx - s * 0.08, cy + s * 0.19);
+          iconCtx.lineTo(cx - s * 0.14, cy - s * 0.08);
+          iconCtx.closePath();
+          iconCtx.fill();
+          iconCtx.strokeStyle = "rgba(221, 247, 255, 0.72)";
+          iconCtx.lineWidth = 1;
+          iconCtx.stroke();
+          iconCtx.fillStyle = "rgba(235, 255, 255, 0.35)";
+          iconCtx.fillRect(cx - s * 0.03, cy - s * 0.14, s * 0.06, s * 0.2);
+        } else {
+          iconCtx.fillStyle = "#d0b46a";
+          iconCtx.fillRect(cx - s * 0.06, cy - s * 0.18, s * 0.12, s * 0.36);
+          iconCtx.fillStyle = "#8f7440";
+          iconCtx.fillRect(cx - s * 0.14, cy + s * 0.16, s * 0.28, s * 0.05);
+          iconCtx.fillStyle = "#f5d975";
+          iconCtx.beginPath();
+          iconCtx.arc(cx, cy - s * 0.2, s * 0.09, 0, Math.PI * 2);
+          iconCtx.fill();
+          iconCtx.strokeStyle = "rgba(255, 242, 180, 0.8)";
+          iconCtx.lineWidth = 1;
+          iconCtx.stroke();
+        }
         break;
       case "medicine":
         iconCtx.fillStyle = "#71bc84";
-        iconCtx.fillRect(cx - s * 0.18, cy - s * 0.18, s * 0.36, s * 0.36);
+        drawRoundedRect(iconCtx, cx - s * 0.2, cy - s * 0.19, s * 0.4, s * 0.38, 5);
+        iconCtx.fill();
+        iconCtx.fillStyle = "rgba(255, 255, 255, 0.22)";
+        iconCtx.fillRect(cx - s * 0.15, cy - s * 0.14, s * 0.14, s * 0.05);
         iconCtx.fillStyle = "#f2fff4";
-        iconCtx.fillRect(cx - s * 0.03, cy - s * 0.12, s * 0.06, s * 0.24);
-        iconCtx.fillRect(cx - s * 0.12, cy - s * 0.03, s * 0.24, s * 0.06);
+        iconCtx.fillRect(cx - s * 0.03, cy - s * 0.11, s * 0.06, s * 0.22);
+        iconCtx.fillRect(cx - s * 0.11, cy - s * 0.03, s * 0.22, s * 0.06);
+        iconCtx.strokeStyle = "rgba(34, 79, 47, 0.55)";
+        iconCtx.lineWidth = 1;
+        iconCtx.strokeRect(cx - s * 0.2, cy - s * 0.19, s * 0.4, s * 0.38);
         break;
       case "slime_ball":
         {
@@ -17403,6 +18210,7 @@
     }
     if (destroyChestBtn) {
       destroyChestBtn.classList.toggle("hidden", structure.type !== "chest");
+      destroyChestBtn.textContent = "Break & Pickup";
     }
     openInventory();
     chestPanel.classList.remove("hidden");
@@ -17413,7 +18221,10 @@
   function closeChest() {
     state.activeChest = null;
     chestPanel.classList.add("hidden");
-    if (destroyChestBtn) destroyChestBtn.classList.remove("hidden");
+    if (destroyChestBtn) {
+      destroyChestBtn.classList.remove("hidden");
+      destroyChestBtn.textContent = "Break & Pickup";
+    }
     if (chestPanelTitle) chestPanelTitle.textContent = "Chest";
     if (chestPanelHint) chestPanelHint.textContent = "Click items to quick-transfer between chest and inventory.";
     closeInventory();
@@ -18038,7 +18849,7 @@
     }
 
     const output = getRecipeOutput(recipe);
-    if (!canAddItems(state.inventory, output)) {
+    if (!canCraftWithInventoryReplacement(state.inventory, recipe.cost, output)) {
       setPrompt("Inventory full", 1.2);
       return;
     }
@@ -18158,8 +18969,11 @@
         }
         card.appendChild(cost);
         const btn = document.createElement("button");
-        const hasInput = !!getAvailableStationRecipeInput(recipe, state.inventory);
-        const hasSpace = canAddItems(state.inventory, recipe.output);
+        const selectedInput = getAvailableStationRecipeInput(recipe, state.inventory);
+        const hasInput = !!selectedInput;
+        const hasSpace = hasInput
+          ? canCraftWithInventoryReplacement(state.inventory, selectedInput, recipe.output)
+          : false;
         const canAfford = hasInput && hasSpace;
         btn.textContent = canAfford ? "Refine" : "Locked";
         btn.disabled = !canAfford;
@@ -18174,6 +18988,37 @@
       }
       stationOptions.appendChild(card);
     }
+
+    appendStructureBreakCard(stationOptions, state.activeStation);
+  }
+
+  function appendStructureBreakCard(container, structure) {
+    if (!container || !isStructurePickupBreakable(structure)) return;
+    const itemId = getStructurePickupItemId(structure.type);
+    const structureLabel = STRUCTURE_DEFS[structure.type]?.name || ITEMS[itemId]?.name || "Structure";
+    const card = document.createElement("div");
+    card.className = "recipe-card";
+    const title = document.createElement("div");
+    title.className = "recipe-title";
+    title.textContent = "Relocate";
+    const desc = document.createElement("div");
+    desc.className = "recipe-desc";
+    desc.textContent = `Break this ${structureLabel.toLowerCase()} and pack it back into your inventory.`;
+    const hint = document.createElement("div");
+    hint.className = "recipe-cost";
+    hint.textContent = "If inventory is full, overflow drops on nearby ground.";
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "danger-btn";
+    btn.textContent = "Break & Pickup";
+    btn.addEventListener("click", () => {
+      requestBreakStructure(structure);
+    });
+    card.appendChild(title);
+    card.appendChild(desc);
+    card.appendChild(hint);
+    card.appendChild(btn);
+    container.appendChild(card);
   }
 
   function setRobotMode(structure, mode) {
@@ -18372,6 +19217,8 @@
     bubble.className = "robot-menu-bubble";
     bubble.textContent = getRobotModeHint(robot.mode, robot.manualStop);
     stationOptions.appendChild(bubble);
+
+    appendStructureBreakCard(stationOptions, structure);
   }
 
   function craftStationRecipe(recipe) {
@@ -18381,7 +19228,7 @@
       setPrompt("Not enough resources", 1.2);
       return;
     }
-    if (!canAddItems(state.inventory, recipe.output)) {
+    if (!canCraftWithInventoryReplacement(state.inventory, selectedInput, recipe.output)) {
       setPrompt("Inventory full", 1.2);
       return;
     }
@@ -18395,54 +19242,235 @@
     setPrompt(`${recipe.name} complete`, 1.2);
   }
 
-  function destroyChest(chest) {
-    if (!chest) return;
-    const worldX = (chest.tx + 0.5) * CONFIG.tileSize;
-    const worldY = (chest.ty + 0.5) * CONFIG.tileSize;
-    const dropWorld = state.surfaceWorld || state.world;
+  function getStructurePickupItemId(structureType) {
+    if (typeof structureType !== "string" || !structureType.length) return null;
+    return PLACE_TYPE_TO_ITEM_ID[structureType] || null;
+  }
 
-    if (chest.storage) {
-      chest.storage.forEach((slot, index) => {
-        if (!slot.id) return;
-        const angle = (index / CHEST_SIZE) * Math.PI * 2;
-        const offsetX = Math.cos(angle) * 10;
-        const offsetY = Math.sin(angle) * 10;
-        spawnDrop(slot.id, slot.qty, worldX + offsetX, worldY + offsetY, dropWorld);
+  function isStructurePickupBreakable(structure) {
+    if (!structure || structure.removed) return false;
+    if (structure.type === "chest") return true;
+    if (!STRUCTURE_DEFS[structure.type]?.station) return false;
+    return !!getStructurePickupItemId(structure.type);
+  }
+
+  function cloneStructureStorageForBreak(structure) {
+    const size = getStorageSizeForStructureType(structure?.type, null);
+    if (!size || !Array.isArray(structure?.storage)) return [];
+    return sanitizeInventorySlots(structure.storage, size)
+      .filter((slot) => !!slot.id && slot.qty > 0)
+      .map((slot) => ({ id: slot.id, qty: slot.qty }));
+  }
+
+  function buildStructureBreakSnapshot(structure, houseRef = null) {
+    if (!isStructurePickupBreakable(structure)) return null;
+    const itemId = getStructurePickupItemId(structure.type);
+    if (!itemId) return null;
+    const house = houseRef || structure.houseRef || null;
+    return {
+      type: structure.type,
+      itemId,
+      tx: structure.tx,
+      ty: structure.ty,
+      interior: !!structure.interior,
+      houseTx: Number.isInteger(house?.tx) ? house.tx : null,
+      houseTy: Number.isInteger(house?.ty) ? house.ty : null,
+      storage: cloneStructureStorageForBreak(structure),
+    };
+  }
+
+  function getBreakSnapshotDropAnchor(snapshot) {
+    const world = state.surfaceWorld || state.world;
+    let tx = Number(snapshot?.tx);
+    let ty = Number(snapshot?.ty);
+    if (snapshot?.interior && Number.isInteger(snapshot?.houseTx) && Number.isInteger(snapshot?.houseTy)) {
+      tx = snapshot.houseTx;
+      ty = snapshot.houseTy;
+    }
+    if (!Number.isFinite(tx) || !Number.isFinite(ty)) {
+      tx = Math.floor((state.player?.x || 0) / CONFIG.tileSize);
+      ty = Math.floor((state.player?.y || 0) / CONFIG.tileSize);
+    }
+    return {
+      world,
+      x: (Math.floor(tx) + 0.5) * CONFIG.tileSize,
+      y: (Math.floor(ty) + 0.5) * CONFIG.tileSize,
+    };
+  }
+
+  function emitBreakOverflowDrop(itemId, qty, x, y, world) {
+    if (!itemId || qty <= 0 || !ITEMS[itemId]) return;
+    if (netIsClientReady()) {
+      sendToHost({
+        type: "dropItem",
+        world: "surface",
+        allowHouseDrop: !!state.player?.inHut,
+        caveId: null,
+        itemId,
+        qty,
+        x,
+        y,
+      });
+      return;
+    }
+    spawnDrop(itemId, qty, x, y, world || (state.surfaceWorld || state.world));
+  }
+
+  function grantBreakSnapshotRewards(snapshot) {
+    if (!snapshot?.itemId || !ITEMS[snapshot.itemId]) {
+      return { dropped: 0, packedLabel: "Structure" };
+    }
+    const anchor = getBreakSnapshotDropAnchor(snapshot);
+    let dropped = 0;
+    const storage = Array.isArray(snapshot.storage) ? snapshot.storage : [];
+    for (let i = 0; i < storage.length; i += 1) {
+      const slot = storage[i];
+      if (!slot?.id || !ITEMS[slot.id]) continue;
+      const qty = clamp(Math.floor(Number(slot.qty) || 0), 1, MAX_STACK);
+      const left = addItem(state.inventory, slot.id, qty);
+      if (left > 0) {
+        dropped += left;
+        const angle = (i / Math.max(1, storage.length)) * Math.PI * 2;
+        const dx = Math.cos(angle) * 12;
+        const dy = Math.sin(angle) * 12;
+        emitBreakOverflowDrop(slot.id, left, anchor.x + dx, anchor.y + dy, anchor.world);
+      }
+    }
+
+    const packedLeft = addItem(state.inventory, snapshot.itemId, 1);
+    if (packedLeft > 0) {
+      dropped += packedLeft;
+      emitBreakOverflowDrop(snapshot.itemId, packedLeft, anchor.x, anchor.y, anchor.world);
+    }
+
+    updateAllSlotUI();
+    markDirty();
+    const packedLabel = ITEMS[snapshot.itemId]?.name || STRUCTURE_DEFS[snapshot.type]?.name || "Structure";
+    return { dropped, packedLabel };
+  }
+
+  function removeStructureFromBreakSnapshot(snapshot) {
+    if (!snapshot) return false;
+    if (snapshot.interior) {
+      if (!Number.isInteger(snapshot.houseTx) || !Number.isInteger(snapshot.houseTy)) return false;
+      const house = getStructureAt(snapshot.houseTx, snapshot.houseTy);
+      if (!house || !isHouseType(house.type)) return false;
+      const target = getInteriorStructureAt(house, snapshot.tx, snapshot.ty);
+      if (!target) return false;
+      if (state.activeChest === target) closeChest();
+      if (state.activeStation === target) closeStationMenu();
+      removeInteriorStructure(house, target);
+      markDirty();
+      return true;
+    }
+
+    const target = getStructureAt(snapshot.tx, snapshot.ty);
+    if (!target) return false;
+    if (state.activeChest === target) closeChest();
+    if (state.activeStation === target) closeStationMenu();
+    removeStructure(target);
+    markDirty();
+    return true;
+  }
+
+  function performLocalBreakAndPickup(structure, snapshotOverride = null) {
+    const snapshot = snapshotOverride || buildStructureBreakSnapshot(structure);
+    if (!snapshot) return false;
+    const reward = grantBreakSnapshotRewards(snapshot);
+    removeStructureFromBreakSnapshot(snapshot);
+    playSfx("ui");
+    if (reward.dropped > 0) {
+      setPrompt("Inventory full: overflow dropped nearby", 1.3);
+    } else {
+      setPrompt(`${reward.packedLabel} moved to inventory`, 1.1);
+    }
+    return true;
+  }
+
+  function requestBreakStructure(structure) {
+    if (!isStructurePickupBreakable(structure)) return false;
+    if (!netIsClientReady()) {
+      return performLocalBreakAndPickup(structure);
+    }
+    const requestId = `${net.playerId || "client"}-break-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    const houseRef = structure?.houseRef || null;
+    net.pendingBreaks.set(requestId, {
+      type: structure.type,
+      tx: Number.isInteger(structure?.tx) ? structure.tx : null,
+      ty: Number.isInteger(structure?.ty) ? structure.ty : null,
+      interior: !!structure?.interior,
+      houseTx: Number.isInteger(houseRef?.tx) ? houseRef.tx : null,
+      houseTy: Number.isInteger(houseRef?.ty) ? houseRef.ty : null,
+      requestedAt: performance.now(),
+    });
+    if (structure.interior) {
+      sendToHost({
+        type: "houseBreakStructure",
+        requestId,
+        houseTx: structure.houseRef?.tx,
+        houseTy: structure.houseRef?.ty,
+        tx: structure.tx,
+        ty: structure.ty,
+      });
+    } else {
+      sendToHost({
+        type: "breakStructure",
+        requestId,
+        tx: structure.tx,
+        ty: structure.ty,
       });
     }
+    if (state.activeChest === structure) closeChest();
+    if (state.activeStation === structure) closeStationMenu();
+    setPrompt("Breaking...", 0.9);
+    return true;
+  }
 
-    removeStructure(chest);
-    if (state.activeChest === chest) {
-      closeChest();
+  function handleBreakStructureResult(message) {
+    if (!message?.requestId) return;
+    const pending = net.pendingBreaks.get(message.requestId);
+    if (!pending) return;
+    net.pendingBreaks.delete(message.requestId);
+    if (!message.ok) {
+      setPrompt("Break failed", 1.1);
+      return;
     }
-    markDirty();
+    const raw = message.snapshot;
+    if (!raw || typeof raw !== "object") {
+      setPrompt("Break failed", 1.1);
+      return;
+    }
+    const type = typeof raw.type === "string" ? raw.type : null;
+    const itemId = getStructurePickupItemId(type);
+    if (!type || !itemId) {
+      setPrompt("Break failed", 1.1);
+      return;
+    }
+    const snapshot = {
+      type,
+      itemId,
+      tx: Math.floor(Number(raw.tx)),
+      ty: Math.floor(Number(raw.ty)),
+      interior: !!raw.interior,
+      houseTx: Number.isInteger(raw.houseTx) ? raw.houseTx : null,
+      houseTy: Number.isInteger(raw.houseTy) ? raw.houseTy : null,
+      storage: Array.isArray(raw.storage)
+        ? sanitizeInventorySlots(raw.storage, getStorageSizeForStructureType(type, CHEST_SIZE))
+          .filter((slot) => !!slot.id && slot.qty > 0)
+          .map((slot) => ({ id: slot.id, qty: slot.qty }))
+        : [],
+    };
+    if (!Number.isInteger(snapshot.tx) || !Number.isInteger(snapshot.ty)) {
+      setPrompt("Break failed", 1.1);
+      return;
+    }
+    performLocalBreakAndPickup(null, snapshot);
   }
 
   function destroyActiveChest() {
     const chest = state.activeChest;
-    if (!chest) return;
-    if (chest.type !== "chest") return;
-    if (chest.interior) {
-      if (netIsClient()) {
-        sendToHost({
-          type: "houseDestroyChest",
-          houseTx: chest.houseRef?.tx,
-          houseTy: chest.houseRef?.ty,
-          tx: chest.tx,
-          ty: chest.ty,
-        });
-      }
-      removeInteriorStructure(chest.houseRef, chest);
-      closeChest();
-      markDirty();
-      return;
-    }
-    if (netIsClient()) {
-      sendToHost({ type: "destroyChest", tx: chest.tx, ty: chest.ty });
-      closeChest();
-      return;
-    }
-    destroyChest(chest);
+    if (!chest || chest.type !== "chest") return;
+    requestBreakStructure(chest);
   }
 
   function setSettingsTab(tab) {
@@ -20375,6 +21403,21 @@
     );
   }
 
+  function isPoisonMonsterPrimaryBiome(biome) {
+    const key = biome?.key;
+    return key === "marsh" || key === "mangrove";
+  }
+
+  function getPoisonMonsterSpawnChanceForBiome(biome) {
+    if (!biome || typeof biome !== "object") return MARSH_STALKER_DAY_SPAWN.secondaryChance;
+    if (!isPoisonMonsterPrimaryBiome(biome)) return MARSH_STALKER_DAY_SPAWN.secondaryChance;
+    return clamp(
+      Number(biome.poisonMonsterChance) || MARSH_STALKER_DAY_SPAWN.defaultChance,
+      MARSH_STALKER_DAY_SPAWN.minChance,
+      MARSH_STALKER_DAY_SPAWN.maxChance
+    );
+  }
+
   function countMarshStalkersOnIsland(world, island) {
     if (!world || !island || !Array.isArray(world.monsters)) return 0;
     return world.monsters.reduce((count, monster) => (
@@ -20444,23 +21487,22 @@
     return true;
   }
 
-  function spawnDayMarshStalkerOnIsland(world, island, players) {
+  function spawnDayMarshStalkerOnIsland(world, island, players, options = null) {
     if (!world || !island || state.isNight) return false;
     const biomeId = Number.isInteger(island.biomeId) ? island.biomeId : getIslandBiomeId(world, island);
+    if (isMushroomBiomeId(biomeId)) return false;
     const biome = BIOMES[biomeId] || BIOMES[0];
-    if (biome.key !== "marsh") return false;
+    const spawnChance = getPoisonMonsterSpawnChanceForBiome(biome);
+    if (spawnChance <= 0) return false;
     if (countSurfaceMarshStalkers(world) >= MARSH_STALKER_DAY_SPAWN.maxTotal) return false;
-    if (countMarshStalkersOnIsland(world, island) >= MARSH_STALKER_DAY_SPAWN.maxPerIsland) return false;
-    const spawnChance = clamp(
-      Number(biome.poisonMonsterChance) || MARSH_STALKER_DAY_SPAWN.defaultChance,
-      MARSH_STALKER_DAY_SPAWN.minChance,
-      MARSH_STALKER_DAY_SPAWN.maxChance
-    );
-    if (Math.random() > spawnChance) return false;
+    const currentOnIsland = countMarshStalkersOnIsland(world, island);
+    if (currentOnIsland >= MARSH_STALKER_DAY_SPAWN.maxPerIsland) return false;
+    const forceSpawn = !!options?.force;
+    if (!forceSpawn && Math.random() > spawnChance) return false;
 
     const tile = pickSurfaceMonsterSpawnTileOnIsland(world, island, players, {
       attempts: MARSH_STALKER_DAY_SPAWN.attempts,
-      minPlayerDistance: MARSH_STALKER_DAY_SPAWN.minPlayerDistanceTiles * CONFIG.tileSize,
+      minPlayerDistance: (forceSpawn ? 1.8 : MARSH_STALKER_DAY_SPAWN.minPlayerDistanceTiles) * CONFIG.tileSize,
     });
     if (!tile) return false;
     spawnMonster(world, tile.tx, tile.ty, { type: "marsh_stalker" });
@@ -20470,23 +21512,49 @@
   function spawnDayMarshStalkersForActiveIslands(world, players) {
     if (!world || !Array.isArray(players) || players.length === 0 || state.isNight) return 0;
     if (countSurfaceMarshStalkers(world) >= MARSH_STALKER_DAY_SPAWN.maxTotal) return 0;
-    const activeMarshIslands = getSurfaceActiveIslands(world, players).filter((island) => {
+    const activeSpawnIslands = getSurfaceActiveIslands(world, players).filter((island) => {
       if (!island) return false;
       const biomeId = Number.isInteger(island.biomeId) ? island.biomeId : getIslandBiomeId(world, island);
-      const biome = BIOMES[biomeId] || BIOMES[0];
-      return biome.key === "marsh";
+      return !isMushroomBiomeId(biomeId);
     });
-    if (activeMarshIslands.length === 0) return 0;
+    if (activeSpawnIslands.length === 0) return 0;
+
+    const activePrimaryIslands = activeSpawnIslands.filter((island) => {
+      const biomeId = Number.isInteger(island.biomeId) ? island.biomeId : getIslandBiomeId(world, island);
+      const biome = BIOMES[biomeId] || BIOMES[0];
+      return isPoisonMonsterPrimaryBiome(biome);
+    });
+    const activeSecondaryIslands = activeSpawnIslands.filter((island) => {
+      const biomeId = Number.isInteger(island.biomeId) ? island.biomeId : getIslandBiomeId(world, island);
+      const biome = BIOMES[biomeId] || BIOMES[0];
+      return !isPoisonMonsterPrimaryBiome(biome);
+    });
+
+    // Guarantee at least one poison thrower appears when players are active on swamp-like islands.
+    let spawned = 0;
+    if (countSurfaceMarshStalkers(world) <= 0 && activePrimaryIslands.length > 0) {
+      const emptyPrimary = activePrimaryIslands.find((island) => countMarshStalkersOnIsland(world, island) <= 0);
+      if (emptyPrimary && spawnDayMarshStalkerOnIsland(world, emptyPrimary, players, { force: true })) {
+        spawned += 1;
+      }
+    }
+
+    const trySpawnFromIslands = (islands, budget) => {
+      if (!Array.isArray(islands) || islands.length === 0 || budget <= 0) return 0;
+      let added = 0;
+      const startIndex = Math.floor(Math.random() * islands.length);
+      for (let i = 0; i < islands.length; i += 1) {
+        if (added >= budget) break;
+        if (countSurfaceMarshStalkers(world) >= MARSH_STALKER_DAY_SPAWN.maxTotal) break;
+        const island = islands[(startIndex + i) % islands.length];
+        if (spawnDayMarshStalkerOnIsland(world, island, players)) added += 1;
+      }
+      return added;
+    };
 
     const budget = clamp(Math.floor(MARSH_STALKER_DAY_SPAWN.spawnBudget), 1, 3);
-    const startIndex = Math.floor(Math.random() * activeMarshIslands.length);
-    let spawned = 0;
-    for (let i = 0; i < activeMarshIslands.length; i += 1) {
-      if (spawned >= budget) break;
-      if (countSurfaceMarshStalkers(world) >= MARSH_STALKER_DAY_SPAWN.maxTotal) break;
-      const island = activeMarshIslands[(startIndex + i) % activeMarshIslands.length];
-      if (spawnDayMarshStalkerOnIsland(world, island, players)) spawned += 1;
-    }
+    if (spawned < budget) spawned += trySpawnFromIslands(activePrimaryIslands, budget - spawned);
+    if (spawned < budget) spawned += trySpawnFromIslands(activeSecondaryIslands, budget - spawned);
     return spawned;
   }
 
@@ -20542,37 +21610,106 @@
     ), 0);
   }
 
-  function pickGuardianSpawnTileOnIsland(world, island, players) {
+  function countGuardiansOnIslandByType(world, island, type) {
+    if (!world || !island || !type || !Array.isArray(world.monsters)) return 0;
+    return world.monsters.reduce((count, monster) => (
+      count + Number(
+        monster
+          && monster.hp > 0
+          && monster.type === type
+          && isWorldPositionOnIsland(world, monster.x, monster.y, island, 1.12, 3.5)
+      )
+    ), 0);
+  }
+
+  function replaceNonNativeGuardianOnIsland(world, island, guardianType) {
+    if (!world || !island || !guardianType || !Array.isArray(world.monsters)) return false;
+    let removeIndex = -1;
+    let bestScore = -Infinity;
+    for (let i = 0; i < world.monsters.length; i += 1) {
+      const monster = world.monsters[i];
+      if (!monster || monster.hp <= 0 || !isGuardianMonsterType(monster.type)) continue;
+      if (monster.type === guardianType) continue;
+      if (!isWorldPositionOnIsland(world, monster.x, monster.y, island, 1.12, 3.5)) continue;
+      const score = Math.hypot(monster.x - island.x * CONFIG.tileSize, monster.y - island.y * CONFIG.tileSize);
+      if (score > bestScore) {
+        bestScore = score;
+        removeIndex = i;
+      }
+    }
+    if (removeIndex < 0) return false;
+    world.monsters.splice(removeIndex, 1);
+    return true;
+  }
+
+  function pickGuardianSpawnTileOnIsland(world, island, players, options = null) {
     if (!world || !island) return null;
     const cx = island.x;
     const cy = island.y;
-    const maxRadius = Math.max(4, Math.floor(island.radius * 0.82));
-    for (let attempt = 0; attempt < 30; attempt += 1) {
-      const angle = Math.random() * Math.PI * 2;
-      const dist = (0.15 + Math.random() * 0.8) * maxRadius;
-      const tx = Math.floor(cx + Math.cos(angle) * dist);
-      const ty = Math.floor(cy + Math.sin(angle) * dist);
-      if (!canSpawnMonsterAt(world, tx, ty, false)) continue;
+    const maxRadius = Math.max(4, Math.floor(island.radius * 0.86));
+    const minPlayerDistanceTiles = Number.isFinite(options?.minPlayerDistanceTiles)
+      ? Math.max(0, Number(options.minPlayerDistanceTiles))
+      : SURFACE_GUARDIAN_CONFIG.minPlayerDistanceTiles;
+    const minPlayerDistanceWorld = minPlayerDistanceTiles * CONFIG.tileSize;
+    const attempts = Math.max(1, Math.floor(Number(options?.attempts) || 38));
+    const canUseTile = (tx, ty) => {
+      if (!canSpawnMonsterAt(world, tx, ty, false)) return false;
+      if (!Array.isArray(players) || players.length === 0 || minPlayerDistanceWorld <= 0) return true;
       const wx = (tx + 0.5) * CONFIG.tileSize;
       const wy = (ty + 0.5) * CONFIG.tileSize;
-      const tooCloseToPlayer = players.some(
-        (player) => Math.hypot(player.x - wx, player.y - wy) < (SURFACE_GUARDIAN_CONFIG.minPlayerDistanceTiles * CONFIG.tileSize)
+      return !players.some(
+        (player) => Math.hypot(player.x - wx, player.y - wy) < minPlayerDistanceWorld
       );
-      if (tooCloseToPlayer) continue;
+    };
+
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      const angle = Math.random() * Math.PI * 2;
+      const dist = (0.12 + Math.random() * 0.86) * maxRadius;
+      const tx = Math.floor(cx + Math.cos(angle) * dist);
+      const ty = Math.floor(cy + Math.sin(angle) * dist);
+      if (!canUseTile(tx, ty)) continue;
       return { tx, ty };
+    }
+
+    const fallbackRadius = Math.max(maxRadius, Math.floor((Number(island.radius) || 6) * 1.1));
+    const candidates = [];
+    for (let dy = -fallbackRadius; dy <= fallbackRadius; dy += 1) {
+      for (let dx = -fallbackRadius; dx <= fallbackRadius; dx += 1) {
+        const tx = Math.floor(cx + dx);
+        const ty = Math.floor(cy + dy);
+        const dist = Math.hypot((tx + 0.5) - cx, (ty + 0.5) - cy);
+        if (dist > fallbackRadius) continue;
+        if (!canUseTile(tx, ty)) continue;
+        candidates.push({ tx, ty });
+      }
+    }
+    if (candidates.length > 0) {
+      return candidates[Math.floor(Math.random() * candidates.length)];
     }
     return null;
   }
 
-  function spawnSurfaceGuardianOnIsland(world, island, players) {
+  function spawnSurfaceGuardianOnIsland(world, island, players, options = null) {
     if (!world || !island) return false;
     const biomeId = getIslandBiomeId(world, island);
-    const guardianType = getGuardianTypeForBiomeId(biomeId, island);
+    const guardianType = typeof options?.guardianType === "string"
+      ? options.guardianType
+      : getGuardianTypeForBiomeId(biomeId, island);
     if (!guardianType) return false;
     // Explicit design rule: plains wolves never spawn on the player spawn island.
     if (guardianType === "wolf" && isSpawnIsland(world, island)) return false;
-    if (countGuardiansOnIsland(world, island) >= SURFACE_GUARDIAN_CONFIG.maxPerIsland) return false;
-    const tile = pickGuardianSpawnTileOnIsland(world, island, players);
+    const sameTypeOnIsland = countGuardiansOnIslandByType(world, island, guardianType);
+    if (sameTypeOnIsland > 0 && !options?.allowExtraTypeOnIsland) return false;
+    const currentOnIsland = countGuardiansOnIsland(world, island);
+    if (currentOnIsland >= SURFACE_GUARDIAN_CONFIG.maxPerIsland) {
+      const reserveForNative = !!options?.reserveNativeSlot && sameTypeOnIsland <= 0;
+      if (!reserveForNative) return false;
+      if (!replaceNonNativeGuardianOnIsland(world, island, guardianType)) return false;
+    }
+    const tile = pickGuardianSpawnTileOnIsland(world, island, players, {
+      attempts: options?.attempts,
+      minPlayerDistanceTiles: options?.minPlayerDistanceTiles,
+    });
     if (!tile) return false;
     spawnMonster(world, tile.tx, tile.ty, { type: guardianType });
     return true;
@@ -20582,7 +21719,6 @@
     if (!world || !Array.isArray(players) || players.length === 0) return;
     const activeIslands = getSurfaceActiveIslands(world, players);
     if (activeIslands.length === 0) return;
-    if (countSurfaceGuardians(world) >= SURFACE_GUARDIAN_CONFIG.maxTotal) return;
 
     const targetIslands = activeIslands.filter((island) => {
       if (!island) return false;
@@ -20594,16 +21730,57 @@
     });
     if (targetIslands.length === 0) return;
 
+    const hardCap = SURFACE_GUARDIAN_CONFIG.maxTotal;
+    const softCoverageCap = hardCap + Math.max(0, Math.floor(SURFACE_GUARDIAN_CONFIG.coverageSoftOverflow || 0));
+    const coverageTargets = targetIslands
+      .map((island) => {
+        const biomeId = getIslandBiomeId(world, island);
+        const guardianType = getGuardianTypeForBiomeId(biomeId, island);
+        return { island, guardianType };
+      })
+      .filter((entry) => (
+        entry.guardianType
+        && countGuardiansOnIslandByType(world, entry.island, entry.guardianType) <= 0
+      ))
+      .sort((a, b) => Number(b.guardianType === "polar_bear") - Number(a.guardianType === "polar_bear"));
+
+    let totalGuardians = countSurfaceGuardians(world);
+    if (coverageTargets.length > 0 && totalGuardians < softCoverageCap) {
+      const coverageBudget = Math.max(
+        1,
+        Math.min(
+          Number(SURFACE_GUARDIAN_CONFIG.coverageSpawnBudget) || 1,
+          coverageTargets.length
+        )
+      );
+      let coverageSpawned = 0;
+      for (const target of coverageTargets) {
+        if (coverageSpawned >= coverageBudget) break;
+        if (totalGuardians >= softCoverageCap) break;
+        if (spawnSurfaceGuardianOnIsland(world, target.island, players, {
+          guardianType: target.guardianType,
+          reserveNativeSlot: true,
+          attempts: 56,
+          minPlayerDistanceTiles: Math.max(1.8, SURFACE_GUARDIAN_CONFIG.minPlayerDistanceTiles * 0.62),
+        })) {
+          coverageSpawned += 1;
+          totalGuardians = countSurfaceGuardians(world);
+        }
+      }
+    }
+
+    if (totalGuardians >= hardCap) return;
     const budget = Math.max(1, Math.min(3, Math.ceil(targetIslands.length * 0.3)));
     const startIndex = Math.floor(Math.random() * targetIslands.length);
     let spawned = 0;
 
     for (let i = 0; i < targetIslands.length; i += 1) {
       if (spawned >= budget) break;
-      if (countSurfaceGuardians(world) >= SURFACE_GUARDIAN_CONFIG.maxTotal) break;
+      if (totalGuardians >= hardCap) break;
       const island = targetIslands[(startIndex + i) % targetIslands.length];
       if (spawnSurfaceGuardianOnIsland(world, island, players)) {
         spawned += 1;
+        totalGuardians = countSurfaceGuardians(world);
       }
     }
   }
@@ -23255,7 +24432,15 @@
       }
       if (netIsClient()) {
         const requestId = `${net.playerId}-house-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-        net.pendingHousePlaces.set(requestId, { itemId: placement.itemId });
+        net.pendingHousePlaces.set(requestId, {
+          itemId: placement.itemId,
+          type: placement.itemDef.placeType,
+          houseTx: state.activeHouse.tx,
+          houseTy: state.activeHouse.ty,
+          tx: tile.tx,
+          ty: tile.ty,
+          requestedAt: performance.now(),
+        });
         sendToHost({
           type: "housePlace",
           requestId,
@@ -23347,6 +24532,7 @@
         tx,
         ty,
         type: placement.itemDef.placeType,
+        requestedAt: performance.now(),
       });
       sendToHost({
         type: "place",
@@ -24260,19 +25446,19 @@
     const armorStroke = "rgba(24, 66, 27, 0.52)";
     const armorSheen = "rgba(238, 255, 237, 0.2)";
     if (equipped.chestplate) {
-      ctx.fillStyle = "rgba(108, 194, 108, 0.54)";
-      ctx.fillRect(-8.6, -0.5, 15.5, 7.5);
+      ctx.fillStyle = "rgba(108, 194, 108, 0.4)";
+      ctx.fillRect(-7.9, 0.1, 13.8, 6.3);
       ctx.strokeStyle = armorStroke;
       ctx.lineWidth = 0.9;
-      ctx.strokeRect(-8.6, -0.5, 15.5, 7.5);
+      ctx.strokeRect(-7.9, 0.1, 13.8, 6.3);
       ctx.fillStyle = armorSheen;
-      ctx.fillRect(-7.3, 0.2, 8, 1.7);
+      ctx.fillRect(-6.8, 0.65, 6.2, 1.25);
     }
     if (equipped.leggings) {
       ctx.fillStyle = "rgba(95, 176, 98, 0.5)";
-      ctx.fillRect(-7.5, 5.9, 13.2, 3.4);
+      ctx.fillRect(-7.1, 6.0, 12.2, 3.1);
       ctx.strokeStyle = armorStroke;
-      ctx.strokeRect(-7.5, 5.9, 13.2, 3.4);
+      ctx.strokeRect(-7.1, 6.0, 12.2, 3.1);
     }
     if (equipped.boots) {
       ctx.fillStyle = "rgba(81, 154, 84, 0.56)";
@@ -24283,14 +25469,16 @@
       ctx.strokeRect(-0.2, 8.8, 4.8, 1.9);
     }
     if (equipped.helmet) {
-      ctx.fillStyle = "rgba(128, 214, 126, 0.58)";
+      ctx.fillStyle = "rgba(128, 214, 126, 0.66)";
       ctx.beginPath();
-      ctx.arc(8, -0.2, 5.2, Math.PI, 0);
+      ctx.arc(8, -0.35, 6.15, Math.PI, 0);
       ctx.fill();
+      ctx.fillRect(3.4, -0.45, 9.2, 1.65);
       ctx.strokeStyle = armorStroke;
       ctx.stroke();
+      ctx.strokeRect(3.4, -0.45, 9.2, 1.65);
       ctx.fillStyle = armorSheen;
-      ctx.fillRect(6.4, -2.8, 2.4, 1.1);
+      ctx.fillRect(6.1, -3.35, 2.85, 1.25);
     }
     ctx.restore();
 
@@ -24317,38 +25505,40 @@
     const armorStroke = "rgba(24, 66, 27, 0.56)";
     const armorSheen = "rgba(238, 255, 237, 0.22)";
     if (equipped.chestplate) {
-      ctx.fillStyle = "rgba(109, 194, 106, 0.58)";
-      ctx.fillRect(centerX - 7, bodyTopY, 14, 10);
+      ctx.fillStyle = "rgba(109, 194, 106, 0.44)";
+      ctx.fillRect(centerX - 6.1, bodyTopY + 0.6, 12.2, 8.1);
       ctx.strokeStyle = armorStroke;
       ctx.lineWidth = 1;
-      ctx.strokeRect(centerX - 7, bodyTopY, 14, 10);
+      ctx.strokeRect(centerX - 6.1, bodyTopY + 0.6, 12.2, 8.1);
       ctx.fillStyle = armorSheen;
-      ctx.fillRect(centerX - 5.4, bodyTopY + 1.2, 7.6, 2.2);
+      ctx.fillRect(centerX - 4.8, bodyTopY + 1.8, 5.8, 1.8);
     }
     if (equipped.leggings) {
       ctx.fillStyle = "rgba(96, 176, 99, 0.52)";
-      ctx.fillRect(centerX - 6.8, bodyTopY + 8.6, 13.6, 4.3);
+      ctx.fillRect(centerX - 6.2, bodyTopY + 8.7, 12.4, 4.1);
       ctx.strokeStyle = armorStroke;
-      ctx.strokeRect(centerX - 6.8, bodyTopY + 8.6, 13.6, 4.3);
+      ctx.strokeRect(centerX - 6.2, bodyTopY + 8.7, 12.4, 4.1);
     }
     if (equipped.boots) {
       ctx.fillStyle = "rgba(81, 154, 84, 0.58)";
-      ctx.fillRect(centerX - 6.5, bodyTopY + 15.7, 5.5, 2.6);
-      ctx.fillRect(centerX + 1.1, bodyTopY + 15.7, 5.5, 2.6);
+      ctx.fillRect(centerX - 6.1, bodyTopY + 15.9, 5.1, 2.4);
+      ctx.fillRect(centerX + 1.0, bodyTopY + 15.9, 5.1, 2.4);
       ctx.strokeStyle = armorStroke;
-      ctx.strokeRect(centerX - 6.5, bodyTopY + 15.7, 5.5, 2.6);
-      ctx.strokeRect(centerX + 1.1, bodyTopY + 15.7, 5.5, 2.6);
+      ctx.strokeRect(centerX - 6.1, bodyTopY + 15.9, 5.1, 2.4);
+      ctx.strokeRect(centerX + 1.0, bodyTopY + 15.9, 5.1, 2.4);
     }
     if (equipped.helmet) {
-      ctx.fillStyle = "rgba(129, 214, 127, 0.6)";
+      ctx.fillStyle = "rgba(129, 214, 127, 0.67)";
       ctx.beginPath();
-      ctx.arc(centerX, bodyTopY - 7, 5.8, Math.PI, 0);
+      ctx.arc(centerX, bodyTopY - 7.05, 6.45, Math.PI, 0);
       ctx.fill();
+      ctx.fillRect(centerX - 6.0, bodyTopY - 7.2, 12.0, 2.0);
       ctx.strokeStyle = armorStroke;
       ctx.lineWidth = 1;
       ctx.stroke();
+      ctx.strokeRect(centerX - 6.0, bodyTopY - 7.2, 12.0, 2.0);
       ctx.fillStyle = armorSheen;
-      ctx.fillRect(centerX - 2, bodyTopY - 10.2, 3, 1.2);
+      ctx.fillRect(centerX - 2.3, bodyTopY - 10.85, 3.5, 1.35);
     }
   }
 

@@ -1234,8 +1234,9 @@ button:focus-visible {
   }
 }
 
-.start-card {
+.start-screen .start-card {
   width: min(500px, 84vw);
+  max-width: min(500px, 84vw);
   position: relative;
   z-index: 3;
   margin: 0 auto;
@@ -1302,7 +1303,8 @@ button:focus-visible {
 }
 
 .start-menu-stack {
-  width: 100%;
+  width: min(100%, 340px);
+  margin: 0 auto;
   display: grid;
   gap: 12px;
   justify-items: center;
@@ -1311,7 +1313,7 @@ button:focus-visible {
 .start-menu-btn,
 .start-menu-back-btn {
   box-sizing: border-box;
-  width: min(100%, 340px);
+  width: 100%;
   min-height: 74px;
   border-radius: 999px;
   border: 1px solid rgba(213, 198, 160, 0.95);
@@ -1419,8 +1421,9 @@ button:focus-visible {
 }
 
 @media (max-width: 720px) {
-  .start-card {
+  .start-screen .start-card {
     width: min(92vw, 400px);
+    max-width: min(92vw, 400px);
   }
 
   .start-screen .overlay-card {
