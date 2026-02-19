@@ -442,13 +442,13 @@
 
   const NET_CONFIG = {
     snapshotInterval: 0.3,
-    motionInterval: 0.05,
-    playerSendInterval: 0.04,
+    motionInterval: 0.025,
+    playerSendInterval: 0.025,
     helloRetryInterval: 0.9,
     resyncSilenceThreshold: 1.2,
     resyncRequestCooldown: 0.8,
-    renderSmooth: 12,
-    houseSmooth: 18,
+    renderSmooth: 14,
+    houseSmooth: 22,
     monsterSmooth: 10,
     animalSmooth: 10,
     villagerSmooth: 10,
@@ -469,6 +469,11 @@
     runInterval: 6,
     saveRoundTripInterval: 32,
     maxIssuesPerRun: 32,
+  });
+
+  const MP_DEBUG_SYNC_AUDIT_CONFIG = Object.freeze({
+    interval: 2.8,
+    pendingLimit: 18,
   });
 
   const QA_FEATURE_INVENTORY = Object.freeze([
@@ -498,10 +503,32 @@
     "Pass 4: Multiplayer late-join stress (rapid interactions/race checks)",
   ]);
 
+  const QA_MULTIPLAYER_TRUTH_MAP = Object.freeze([
+    "World generation + seed + biome/island layout + caves: host generates and snapshots; clients apply only.",
+    "Resources (hp/destruction/respawn): host applies harvest + respawn outcomes; clients request harvest.",
+    "Builds/bridges + break/pickup: host validates placement/break and broadcasts resulting state.",
+    "Storage (surface chests/robot cargo/house chests): host validates updates with storage revision guard.",
+    "Stations + processing output: host simulation is authoritative; clients only request interactions.",
+    "Mobs/animals/projectiles/poison clouds: host spawns/updates damage/death/drops; clients render from host state.",
+    "Ground drops + pickups: host spawns/removes; clients request pickup/drop item intent.",
+    "Player hp + damage + respawn: host finalizes hp/damage/respawn; clients apply host messages.",
+    "Win trigger + rescue sequence state: host toggles world win state and snapshots to clients.",
+    "Save/load fields (seed/world/structures/entities/player progress): host save is world truth; clients never overwrite world save.",
+  ]);
+
   const MP_AUTOTEST_LAST_FAILURE_KEY = "mp_autotest_last_failure";
   const MP_AUTOTEST_LOG_MAX_LINES = 280;
   const MP_AUTOTEST_MESSAGE_LOG_SIZE = 200;
   const MP_AUTOTEST_HASH_EPSILON = 1.25;
+  const MP_AUTOTEST_SYNC_DRIFT_LIMIT = CONFIG.tileSize * 0.62;
+  const MP_AUTOTEST_PLAYER_SYNC_DRIFT_LIMIT = CONFIG.tileSize * 0.72;
+  const MP_AUTOTEST_MOTION_GAP_LIMIT = 1.25;
+  const MP_AUTOTEST_ENTITY_SPEED_LIMITS = Object.freeze({
+    monsters: CONFIG.tileSize * 9.4,
+    animals: CONFIG.tileSize * 8.1,
+    villagers: CONFIG.tileSize * 6.4,
+  });
+  const MP_AUTOTEST_MOB_STALL_LIMIT = 22;
   const MP_AUTOTEST_MODES = Object.freeze({
     quick: Object.freeze({
       id: "quick",
@@ -1812,6 +1839,7 @@
     runCount: 0,
     featureInventoryLogged: false,
     passChecklistLogged: false,
+    truthMapLogged: false,
     initCallCount: 0,
     gameLoopStartCount: 0,
   };
@@ -1849,6 +1877,7 @@
     logLines: [],
     runningStatus: "idle",
     savedSeed: null,
+    diagnostics: null,
   };
 
   const state = {
@@ -1946,6 +1975,25 @@
     helloRetryTimer: NET_CONFIG.helloRetryInterval,
     resyncTimer: 0,
     lastHostPacketAt: 0,
+    snapshotSeq: 0,
+    motionSeq: 0,
+    localPlayerSeq: 0,
+    localPlayerAckSeq: -1,
+    lastSnapshotSeq: -1,
+    lastMotionSeq: -1,
+    remotePlayerSeq: new Map(),
+    hostPlayerSeqByPeer: new Map(),
+    remoteInventoryTotalsByPeer: new Map(),
+    remoteInventoryFingerprintByPeer: new Map(),
+    syncAuditTimer: MP_DEBUG_SYNC_AUDIT_CONFIG.interval,
+    syncAuditSeq: 0,
+    pendingSyncAudits: new Map(),
+    syncAuditLedgerTotals: null,
+    syncAuditLedgerFingerprint: "",
+    syncLedgerEventCounter: 0,
+    syncLedgerLastEventCounter: 0,
+    syncLedgerLastEventLabel: "",
+    lastSentPlayerFingerprint: "",
     robotPausePingTimer: 0.2,
     localName: "",
     localColor: "",
@@ -2473,6 +2521,7 @@
       debugPanel.classList.add("hidden");
     }
     if (!state.debugUnlocked) {
+      resetDebugSyncAuditState();
       if (mpAutotest.active) {
         mpAutotestStop({ restoreSeed: true, status: "idle" });
       }
@@ -2507,6 +2556,7 @@
       qaRuntime.saveRoundTripTimer = QA_SELF_TEST_CONFIG.saveRoundTripInterval;
       qaRuntime.featureInventoryLogged = false;
       qaRuntime.passChecklistLogged = false;
+      qaRuntime.truthMapLogged = false;
     }
     updateMpAutotestControls();
     if (persist) saveUserSettings();
@@ -2533,6 +2583,16 @@
     console.groupCollapsed("[QA] Verification pass checklist");
     for (let i = 0; i < QA_VERIFICATION_PASSES.length; i += 1) {
       console.info(`${i + 1}. ${QA_VERIFICATION_PASSES[i]}`);
+    }
+    console.groupEnd();
+  }
+
+  function qaLogMultiplayerTruthMapOnce() {
+    if (qaRuntime.truthMapLogged) return;
+    qaRuntime.truthMapLogged = true;
+    console.groupCollapsed("[QA] Multiplayer truth map (host-authoritative rules)");
+    for (let i = 0; i < QA_MULTIPLAYER_TRUTH_MAP.length; i += 1) {
+      console.info(`${i + 1}. ${QA_MULTIPLAYER_TRUTH_MAP[i]}`);
     }
     console.groupEnd();
   }
@@ -2795,6 +2855,15 @@
       if (storageSize && !Array.isArray(structure.storage)) {
         qaPushIssue(issues, `[snapshot] structure ${structure.type} missing storage array`);
       }
+      const storageRevisionRaw = Number(structure.storageRevision);
+      if (
+        storageSize
+        && (!Number.isFinite(storageRevisionRaw)
+          || Math.floor(storageRevisionRaw) !== storageRevisionRaw
+          || storageRevisionRaw < 0)
+      ) {
+        qaPushIssue(issues, `[snapshot] structure ${structure.type} missing storage revision`);
+      }
       if (structure.type === "robot" && structure.meta?.robot) {
         if (!Number.isFinite(structure.meta.robot.x) || !Number.isFinite(structure.meta.robot.y)) {
           qaPushIssue(issues, "[snapshot] robot meta position invalid");
@@ -2943,6 +3012,7 @@
         type,
         tx: Math.floor(Number(entry?.tx) || 0),
         ty: Math.floor(Number(entry?.ty) || 0),
+        storageRevision: normalizeStorageRevisionValue(entry?.storageRevision),
         storage: Array.isArray(entry?.storage)
           ? sanitizeInventorySlots(
               entry.storage,
@@ -2959,6 +3029,7 @@
               type: itemType,
               tx: Math.floor(Number(item?.tx) || 0),
               ty: Math.floor(Number(item?.ty) || 0),
+              storageRevision: normalizeStorageRevisionValue(item?.storageRevision),
               storage: Array.isArray(item?.storage)
                 ? sanitizeInventorySlots(
                     item.storage,
@@ -3114,6 +3185,7 @@
     if (!state.debugUnlocked) return;
     qaLogFeatureInventoryOnce();
     qaLogVerificationPassesOnce();
+    qaLogMultiplayerTruthMapOnce();
     const step = Math.max(0, Number(dt) || 0);
     qaRuntime.runTimer -= step;
     qaRuntime.saveRoundTripTimer -= step;
@@ -3183,6 +3255,15 @@
     }
     if (!net.enabled && net.players.size > 0) {
       qaPushIssue(issues, "[net] Remote player cache present while multiplayer disabled");
+    }
+    if (!net.enabled && net.pendingSyncAudits instanceof Map && net.pendingSyncAudits.size > 0) {
+      qaPushIssue(issues, "[net] Sync audit queue persisted while multiplayer disabled");
+    }
+    if (net.pendingSyncAudits instanceof Map && net.pendingSyncAudits.size > MP_DEBUG_SYNC_AUDIT_CONFIG.pendingLimit) {
+      qaPushIssue(issues, "[net] Sync audit queue exceeded configured limit");
+    }
+    if (!net.enabled && net.remoteInventoryTotalsByPeer instanceof Map && net.remoteInventoryTotalsByPeer.size > 0) {
+      qaPushIssue(issues, "[net] Remote inventory totals persisted while multiplayer disabled");
     }
     if (net.enabled && net.isHost && net.connections.size > 0 && !state.player) {
       qaPushIssue(issues, "[net] Host has active clients while local player state is missing");
@@ -3303,6 +3384,418 @@
     if (mpAutotestCopyReportBtn) {
       mpAutotestCopyReportBtn.disabled = !unlocked || !mpAutotest.failReport;
     }
+  }
+
+  function createMpAutotestDiagnosticsState() {
+    return {
+      motionByClient: new Map(),
+      syncTracks: new Map(),
+      hostMobPositions: new Map(),
+      hostLastMobMovementAt: 0,
+      eventKeys: new Set(),
+      events: [],
+    };
+  }
+
+  function mpAutotestEnsureDiagnosticsState() {
+    if (!mpAutotest.diagnostics || typeof mpAutotest.diagnostics !== "object") {
+      mpAutotest.diagnostics = createMpAutotestDiagnosticsState();
+    }
+    return mpAutotest.diagnostics;
+  }
+
+  function mpAutotestResetDiagnostics() {
+    mpAutotest.diagnostics = createMpAutotestDiagnosticsState();
+  }
+
+  function mpAutotestRecordDiagnosticEvent(eventKey, message) {
+    const diagnostics = mpAutotestEnsureDiagnosticsState();
+    if (!eventKey || diagnostics.eventKeys.has(eventKey)) return;
+    diagnostics.eventKeys.add(eventKey);
+    diagnostics.events.push(`[${(mpAutotest.elapsed || 0).toFixed(2)}s] ${String(message || eventKey)}`);
+    while (diagnostics.events.length > 80) diagnostics.events.shift();
+  }
+
+  function mpAutotestGetMotionClientStats(clientId) {
+    const diagnostics = mpAutotestEnsureDiagnosticsState();
+    let stats = diagnostics.motionByClient.get(clientId);
+    if (!stats) {
+      stats = {
+        clientId,
+        motionSamples: 0,
+        lastMotionAt: null,
+        maxMotionGap: 0,
+        motionGapViolations: 0,
+        maxEntitySpeed: 0,
+        entityJumpViolations: 0,
+        jumpSamples: [],
+        lastEntities: new Map(),
+      };
+      diagnostics.motionByClient.set(clientId, stats);
+    }
+    return stats;
+  }
+
+  function mpAutotestCollectMotionEntities(message) {
+    const entities = [];
+    const pushWorldEntities = (worldMotion, scope) => {
+      if (!worldMotion || typeof worldMotion !== "object") return;
+      const pushList = (list, kind) => {
+        if (!Array.isArray(list)) return;
+        for (const entry of list) {
+          if (!entry || !Number.isInteger(entry.id)) continue;
+          if (!Number.isFinite(entry.x) || !Number.isFinite(entry.y)) continue;
+          entities.push({
+            key: `${kind}:${scope}:${entry.id}`,
+            kind,
+            scope,
+            id: entry.id,
+            x: entry.x,
+            y: entry.y,
+          });
+        }
+      };
+      pushList(worldMotion.monsters, "monsters");
+      pushList(worldMotion.animals, "animals");
+      pushList(worldMotion.villagers, "villagers");
+    };
+    pushWorldEntities(message?.world, "surface");
+    if (Array.isArray(message?.caves)) {
+      for (const cave of message.caves) {
+        const scope = Number.isInteger(cave?.id) ? `cave:${cave.id}` : "cave:?";
+        pushWorldEntities(cave?.world, scope);
+      }
+    }
+    return entities;
+  }
+
+  function mpAutotestRecordClientMotionDiagnostics(client, message) {
+    if (!client?.id || !message || message.type !== "motion") return;
+    const stats = mpAutotestGetMotionClientStats(client.id);
+    const now = mpAutotest.elapsed;
+    if (Number.isFinite(stats.lastMotionAt)) {
+      const gap = Math.max(0, now - stats.lastMotionAt);
+      stats.maxMotionGap = Math.max(stats.maxMotionGap, gap);
+      if (gap > MP_AUTOTEST_MOTION_GAP_LIMIT) {
+        stats.motionGapViolations += 1;
+        mpAutotestRecordDiagnosticEvent(
+          `motion-gap:${client.id}:${stats.motionGapViolations}`,
+          `motion gap ${gap.toFixed(2)}s on ${client.id}`
+        );
+      }
+    }
+    const entities = mpAutotestCollectMotionEntities(message);
+    const nextEntities = new Map();
+    for (const entity of entities) {
+      nextEntities.set(entity.key, entity);
+    }
+    const dt = Number.isFinite(stats.lastMotionAt) ? Math.max(0.001, now - stats.lastMotionAt) : 0;
+    if (dt > 0 && stats.lastEntities instanceof Map && stats.lastEntities.size > 0) {
+      for (const [key, entry] of nextEntities.entries()) {
+        const prev = stats.lastEntities.get(key);
+        if (!prev) continue;
+        const distance = Math.hypot(entry.x - prev.x, entry.y - prev.y);
+        const speed = distance / dt;
+        stats.maxEntitySpeed = Math.max(stats.maxEntitySpeed, speed);
+        const speedLimit = MP_AUTOTEST_ENTITY_SPEED_LIMITS[entry.kind] || (CONFIG.tileSize * 10);
+        if (speed > speedLimit && distance > CONFIG.tileSize * 0.42) {
+          stats.entityJumpViolations += 1;
+          stats.jumpSamples.push({
+            key,
+            speed,
+            distance,
+            dt,
+          });
+          while (stats.jumpSamples.length > 12) stats.jumpSamples.shift();
+          mpAutotestRecordDiagnosticEvent(
+            `motion-jump:${client.id}:${key}:${stats.entityJumpViolations}`,
+            `${entry.kind} jump speed ${speed.toFixed(1)} on ${client.id}`
+          );
+        }
+      }
+    }
+    stats.lastMotionAt = now;
+    stats.lastEntities = nextEntities;
+    stats.motionSamples += 1;
+  }
+
+  function mpAutotestCanonicalEntityMap(canonical, kind) {
+    const map = new Map();
+    if (!canonical || typeof canonical !== "object") return map;
+    if (kind === "players") {
+      const players = Array.isArray(canonical.players) ? canonical.players : [];
+      for (const entry of players) {
+        if (!entry || !entry.id) continue;
+        const hasHouseCoords = !!entry.inHut && Number.isFinite(entry.houseX) && Number.isFinite(entry.houseY);
+        const posX = hasHouseCoords ? entry.houseX * CONFIG.tileSize : entry.x;
+        const posY = hasHouseCoords ? entry.houseY * CONFIG.tileSize : entry.y;
+        if (!Number.isFinite(posX) || !Number.isFinite(posY)) continue;
+        map.set(String(entry.id), {
+          id: String(entry.id),
+          x: posX,
+          y: posY,
+        });
+      }
+      return map;
+    }
+    const list = Array.isArray(canonical.mobs?.[kind]) ? canonical.mobs[kind] : [];
+    for (const entry of list) {
+      if (!entry || !Number.isInteger(entry.id)) continue;
+      if (!Number.isFinite(entry.x) || !Number.isFinite(entry.y)) continue;
+      const scope = entry.caveId == null ? "surface" : `cave:${entry.caveId}`;
+      map.set(`${scope}:${entry.id}`, {
+        id: entry.id,
+        scope,
+        x: entry.x,
+        y: entry.y,
+      });
+    }
+    return map;
+  }
+
+  function mpAutotestTrackSyncJitter(clientId, kind, entityKey, hostEntry, clientEntry, driftLimit) {
+    const diagnostics = mpAutotestEnsureDiagnosticsState();
+    const key = `${clientId}:${kind}:${entityKey}`;
+    let track = diagnostics.syncTracks.get(key);
+    if (!track) {
+      track = {
+        hostX: hostEntry.x,
+        hostY: hostEntry.y,
+        clientX: clientEntry.x,
+        clientY: clientEntry.y,
+        freezeTicks: 0,
+        jitterTicks: 0,
+        driftTicks: 0,
+      };
+      diagnostics.syncTracks.set(key, track);
+      return null;
+    }
+    const hostStep = Math.hypot(hostEntry.x - track.hostX, hostEntry.y - track.hostY);
+    const clientStep = Math.hypot(clientEntry.x - track.clientX, clientEntry.y - track.clientY);
+    const drift = Math.hypot(hostEntry.x - clientEntry.x, hostEntry.y - clientEntry.y);
+    const teleport = Math.max(hostStep, clientStep) > CONFIG.tileSize * 2.4;
+    if (teleport) {
+      track.freezeTicks = 0;
+      track.jitterTicks = 0;
+      track.driftTicks = 0;
+    } else {
+      if (hostStep > CONFIG.tileSize * 0.12 && clientStep < CONFIG.tileSize * 0.01) {
+        track.freezeTicks += 1;
+      } else {
+        track.freezeTicks = Math.max(0, track.freezeTicks - 0.5);
+      }
+      if (
+        hostStep > CONFIG.tileSize * 0.12
+        && Math.abs(clientStep - hostStep) > CONFIG.tileSize * 0.48
+      ) {
+        track.jitterTicks += 1;
+      } else {
+        track.jitterTicks = Math.max(0, track.jitterTicks - 0.5);
+      }
+      if (drift > driftLimit * 0.75) {
+        track.driftTicks += 1;
+      } else {
+        track.driftTicks = Math.max(0, track.driftTicks - 0.5);
+      }
+    }
+    track.hostX = hostEntry.x;
+    track.hostY = hostEntry.y;
+    track.clientX = clientEntry.x;
+    track.clientY = clientEntry.y;
+
+    if (track.freezeTicks >= 3) {
+      return `${kind} stutter freeze on ${clientId} (${entityKey})`;
+    }
+    if (track.jitterTicks >= 4) {
+      return `${kind} stutter jitter on ${clientId} (${entityKey})`;
+    }
+    if (track.driftTicks >= 4) {
+      return `${kind} persistent drift on ${clientId} (${entityKey})`;
+    }
+    return null;
+  }
+
+  function mpAutotestCheckHostMobActivity(canonical) {
+    const diagnostics = mpAutotestEnsureDiagnosticsState();
+    const nextPositions = new Map();
+    const collect = (list, kind) => {
+      if (!Array.isArray(list)) return;
+      for (const entry of list) {
+        if (!entry || !Number.isInteger(entry.id)) continue;
+        if (!Number.isFinite(entry.x) || !Number.isFinite(entry.y)) continue;
+        const scope = entry.caveId == null ? "surface" : `cave:${entry.caveId}`;
+        nextPositions.set(`${kind}:${scope}:${entry.id}`, { x: entry.x, y: entry.y });
+      }
+    };
+    collect(canonical?.mobs?.monsters, "monsters");
+    collect(canonical?.mobs?.animals, "animals");
+    collect(canonical?.mobs?.villagers, "villagers");
+
+    if (diagnostics.hostMobPositions.size === 0) {
+      diagnostics.hostMobPositions = nextPositions;
+      diagnostics.hostLastMobMovementAt = mpAutotest.elapsed;
+      return null;
+    }
+
+    let moved = 0;
+    for (const [key, next] of nextPositions.entries()) {
+      const prev = diagnostics.hostMobPositions.get(key);
+      if (!prev) {
+        moved += 1;
+        continue;
+      }
+      if (Math.hypot(next.x - prev.x, next.y - prev.y) > CONFIG.tileSize * 0.03) {
+        moved += 1;
+      }
+    }
+    if (moved > 0 || nextPositions.size !== diagnostics.hostMobPositions.size) {
+      diagnostics.hostLastMobMovementAt = mpAutotest.elapsed;
+    }
+    diagnostics.hostMobPositions = nextPositions;
+    const idleSeconds = mpAutotest.elapsed - (diagnostics.hostLastMobMovementAt || 0);
+    if (mpAutotest.mode?.stress && nextPositions.size >= 4 && idleSeconds > MP_AUTOTEST_MOB_STALL_LIMIT) {
+      return `host mob movement stalled ${idleSeconds.toFixed(2)}s`;
+    }
+    return null;
+  }
+
+  function mpAutotestValidateDeepSync(hostHashes) {
+    if (!hostHashes?.canonical) return null;
+    const stallIssue = mpAutotestCheckHostMobActivity(hostHashes.canonical);
+    if (stallIssue) {
+      return {
+        subsystem: "movement",
+        reason: stallIssue,
+      };
+    }
+    const hostMaps = {
+      players: mpAutotestCanonicalEntityMap(hostHashes.canonical, "players"),
+      monsters: mpAutotestCanonicalEntityMap(hostHashes.canonical, "monsters"),
+      animals: mpAutotestCanonicalEntityMap(hostHashes.canonical, "animals"),
+      villagers: mpAutotestCanonicalEntityMap(hostHashes.canonical, "villagers"),
+    };
+    const specs = [
+      { key: "players", driftLimit: MP_AUTOTEST_PLAYER_SYNC_DRIFT_LIMIT },
+      { key: "monsters", driftLimit: MP_AUTOTEST_SYNC_DRIFT_LIMIT },
+      { key: "animals", driftLimit: MP_AUTOTEST_SYNC_DRIFT_LIMIT },
+      { key: "villagers", driftLimit: MP_AUTOTEST_SYNC_DRIFT_LIMIT },
+    ];
+    for (const client of mpAutotest.clients) {
+      if (!client?.connected) continue;
+      const clientCanonical = client.shadow?.lastCanonical;
+      if (!clientCanonical) continue;
+      const clientMaps = {
+        players: mpAutotestCanonicalEntityMap(clientCanonical, "players"),
+        monsters: mpAutotestCanonicalEntityMap(clientCanonical, "monsters"),
+        animals: mpAutotestCanonicalEntityMap(clientCanonical, "animals"),
+        villagers: mpAutotestCanonicalEntityMap(clientCanonical, "villagers"),
+      };
+      for (const spec of specs) {
+        const hostMap = hostMaps[spec.key];
+        const clientMap = clientMaps[spec.key];
+        for (const [entityKey, hostEntry] of hostMap.entries()) {
+          const clientEntry = clientMap.get(entityKey);
+          if (!clientEntry) {
+            return {
+              subsystem: `${spec.key} sync`,
+              reason: `${spec.key} missing on ${client.id}: ${entityKey}`,
+            };
+          }
+          const drift = Math.hypot(hostEntry.x - clientEntry.x, hostEntry.y - clientEntry.y);
+          if (drift > spec.driftLimit) {
+            return {
+              subsystem: `${spec.key} sync`,
+              reason: `${spec.key} drift on ${client.id}: ${entityKey} (${drift.toFixed(2)})`,
+            };
+          }
+          const stutterIssue = mpAutotestTrackSyncJitter(
+            client.id,
+            spec.key,
+            entityKey,
+            hostEntry,
+            clientEntry,
+            spec.driftLimit
+          );
+          if (stutterIssue) {
+            mpAutotestRecordDiagnosticEvent(
+              `sync-jitter:${client.id}:${spec.key}:${entityKey}`,
+              stutterIssue
+            );
+            return {
+              subsystem: `${spec.key} movement`,
+              reason: stutterIssue,
+            };
+          }
+        }
+        for (const entityKey of clientMap.keys()) {
+          if (!hostMap.has(entityKey)) {
+            return {
+              subsystem: `${spec.key} sync`,
+              reason: `${spec.key} ghost entity on ${client.id}: ${entityKey}`,
+            };
+          }
+        }
+      }
+      const motionStats = mpAutotestGetMotionClientStats(client.id);
+      if (motionStats.motionSamples >= 8 && motionStats.motionGapViolations >= 3) {
+        return {
+          subsystem: "motion",
+          reason: `motion cadence stutter on ${client.id} (max gap ${motionStats.maxMotionGap.toFixed(2)}s)`,
+        };
+      }
+      if (motionStats.entityJumpViolations >= 4) {
+        const sample = motionStats.jumpSamples[motionStats.jumpSamples.length - 1];
+        return {
+          subsystem: "motion",
+          reason: `entity jump on ${client.id}: ${sample?.key || "unknown"} speed=${sample?.speed?.toFixed?.(1) || "?"}`,
+        };
+      }
+    }
+    return null;
+  }
+
+  function mpAutotestBuildDiagnosticsSummary() {
+    const diagnostics = mpAutotestEnsureDiagnosticsState();
+    const hostIdleSeconds = Math.max(0, mpAutotest.elapsed - (diagnostics.hostLastMobMovementAt || 0));
+    const clients = [];
+    for (const client of mpAutotest.clients) {
+      if (!client) continue;
+      const motion = diagnostics.motionByClient.get(client.id) || null;
+      clients.push({
+        id: client.id,
+        motionSamples: motion?.motionSamples || 0,
+        maxMotionGap: Number.isFinite(motion?.maxMotionGap) ? motion.maxMotionGap : 0,
+        motionGapViolations: motion?.motionGapViolations || 0,
+        maxEntitySpeed: Number.isFinite(motion?.maxEntitySpeed) ? motion.maxEntitySpeed : 0,
+        entityJumpViolations: motion?.entityJumpViolations || 0,
+      });
+    }
+    return {
+      hostIdleSeconds,
+      clients,
+      eventCount: diagnostics.events.length,
+      recentEvents: diagnostics.events.slice(-8),
+    };
+  }
+
+  function mpAutotestBuildDiagnosticsLines(summary) {
+    if (!summary || typeof summary !== "object") return [];
+    const lines = [
+      "movement diagnostics:",
+      `- host idle (mobs/animals/villagers): ${summary.hostIdleSeconds.toFixed(2)}s`,
+    ];
+    for (const entry of summary.clients || []) {
+      lines.push(
+        `- ${entry.id}: motionSamples=${entry.motionSamples}, maxGap=${entry.maxMotionGap.toFixed(2)}s, gapViolations=${entry.motionGapViolations}, maxEntitySpeed=${entry.maxEntitySpeed.toFixed(1)}, jumpViolations=${entry.entityJumpViolations}`
+      );
+    }
+    if (Array.isArray(summary.recentEvents) && summary.recentEvents.length > 0) {
+      lines.push("- recent diagnostic events:");
+      for (const event of summary.recentEvents) {
+        lines.push(`  ${event}`);
+      }
+    }
+    return lines;
   }
 
   function mpAutotestInventoryFingerprintFromSlots(slots) {
@@ -3501,6 +3994,62 @@
         });
     };
 
+    const normalizeVillagers = (villagers, caveId = null) => {
+      if (!Array.isArray(villagers)) return [];
+      return villagers
+        .filter((entry) => entry && Number.isInteger(entry.id))
+        .map((entry) => ({
+          caveId,
+          id: entry.id,
+          x: Number.isFinite(entry.x) ? entry.x : 0,
+          y: Number.isFinite(entry.y) ? entry.y : 0,
+          homeX: Number.isFinite(entry.homeX) ? entry.homeX : 0,
+          homeY: Number.isFinite(entry.homeY) ? entry.homeY : 0,
+        }))
+        .sort((a, b) => {
+          if ((a.caveId ?? -1) !== (b.caveId ?? -1)) return (a.caveId ?? -1) - (b.caveId ?? -1);
+          return a.id - b.id;
+        });
+    };
+
+    const normalizeProjectiles = (projectiles, caveId = null) => {
+      if (!Array.isArray(projectiles)) return [];
+      return projectiles
+        .filter((entry) => entry && Number.isInteger(entry.id))
+        .map((entry) => ({
+          caveId,
+          id: entry.id,
+          type: String(entry.type || ""),
+          x: Number.isFinite(entry.x) ? entry.x : 0,
+          y: Number.isFinite(entry.y) ? entry.y : 0,
+          vx: Number.isFinite(entry.vx) ? entry.vx : 0,
+          vy: Number.isFinite(entry.vy) ? entry.vy : 0,
+          life: Number.isFinite(entry.life) ? entry.life : 0,
+        }))
+        .sort((a, b) => {
+          if ((a.caveId ?? -1) !== (b.caveId ?? -1)) return (a.caveId ?? -1) - (b.caveId ?? -1);
+          return a.id - b.id;
+        });
+    };
+
+    const normalizePoisonClouds = (clouds, caveId = null) => {
+      if (!Array.isArray(clouds)) return [];
+      return clouds
+        .filter((entry) => entry && Number.isInteger(entry.id))
+        .map((entry) => ({
+          caveId,
+          id: entry.id,
+          x: Number.isFinite(entry.x) ? entry.x : 0,
+          y: Number.isFinite(entry.y) ? entry.y : 0,
+          life: Number.isFinite(entry.life) ? entry.life : 0,
+          radius: Number.isFinite(entry.radius) ? entry.radius : 0,
+        }))
+        .sort((a, b) => {
+          if ((a.caveId ?? -1) !== (b.caveId ?? -1)) return (a.caveId ?? -1) - (b.caveId ?? -1);
+          return a.id - b.id;
+        });
+    };
+
     const normalizePlayers = (players) => {
       if (!Array.isArray(players)) return [];
       return players
@@ -3514,9 +4063,14 @@
           toolTier: Number.isFinite(entry.toolTier) ? entry.toolTier : 0,
           inCave: !!entry.inCave,
           caveId: Number.isInteger(entry.caveId) ? entry.caveId : null,
+          inHut: !!entry.inHut,
           houseKey: entry.houseKey || null,
+          houseX: Number.isFinite(entry.houseX) ? entry.houseX : null,
+          houseY: Number.isFinite(entry.houseY) ? entry.houseY : null,
           name: String(entry.name || ""),
           color: String(entry.color || ""),
+          inventoryFingerprint: String(entry.inventoryFingerprint || ""),
+          inventoryTotalsFingerprint: getInventoryTotalsFingerprint(entry.inventoryTotals),
         }))
         .sort((a, b) => (a.id < b.id ? -1 : (a.id > b.id ? 1 : 0)));
     };
@@ -3527,6 +4081,7 @@
         type: String(entry.type || ""),
         tx: entry.tx,
         ty: entry.ty,
+        storageRevision: normalizeStorageRevisionValue(entry.storageRevision),
         storage: mpAutotestNormalizeStorageSlots(entry.storage),
       }))
       .sort((a, b) => {
@@ -3545,6 +4100,7 @@
         type: entry.type,
         tx: entry.tx,
         ty: entry.ty,
+        storageRevision: entry.storageRevision,
         storageFingerprint: mpAutotestInventoryFingerprintFromSlots(entry.storage),
       }));
 
@@ -3554,6 +4110,7 @@
         type: entry.type,
         tx: entry.tx,
         ty: entry.ty,
+        storageRevision: entry.storageRevision,
         storageFingerprint: mpAutotestInventoryFingerprintFromSlots(entry.storage),
       }));
 
@@ -3561,6 +4118,9 @@
     const drops = normalizeDrops(world.drops, null);
     const monsters = normalizeMonsters(world.monsters, null);
     const animals = normalizeAnimals(world.animals, null);
+    const villagers = normalizeVillagers(world.villagers, null);
+    const projectiles = normalizeProjectiles(world.projectiles, null);
+    const poisonClouds = normalizePoisonClouds(world.poisonClouds, null);
     const players = normalizePlayers(snapshot.players);
 
     for (const caveEntry of caveEntries) {
@@ -3576,6 +4136,9 @@
       drops.push(...normalizeDrops(caveWorld.drops, caveId));
       monsters.push(...normalizeMonsters(caveWorld.monsters, caveId));
       animals.push(...normalizeAnimals(caveWorld.animals, caveId));
+      villagers.push(...normalizeVillagers(caveWorld.villagers, caveId));
+      projectiles.push(...normalizeProjectiles(caveWorld.projectiles, caveId));
+      poisonClouds.push(...normalizePoisonClouds(caveWorld.poisonClouds, caveId));
     }
 
     resources.sort((a, b) => {
@@ -3597,7 +4160,10 @@
       mobs: {
         monsters,
         animals,
+        villagers,
       },
+      projectiles,
+      poisonClouds,
       drops,
       players,
     };
@@ -3613,6 +4179,8 @@
       chests: mpAutotestHashString(mpAutotestStableStringify(canonical.chests)),
       stations: mpAutotestHashString(mpAutotestStableStringify(canonical.stations)),
       mobs: mpAutotestHashString(mpAutotestStableStringify(canonical.mobs)),
+      projectiles: mpAutotestHashString(mpAutotestStableStringify(canonical.projectiles)),
+      poisonClouds: mpAutotestHashString(mpAutotestStableStringify(canonical.poisonClouds)),
       drops: mpAutotestHashString(mpAutotestStableStringify(canonical.drops)),
       players: mpAutotestHashString(mpAutotestStableStringify(canonical.players)),
     };
@@ -3712,6 +4280,18 @@
     return mpAutotest.clients.find((entry) => entry && entry.id === clientId) || null;
   }
 
+  function mpAutotestRefreshShadowPlayerSeqCache(client) {
+    if (!client?.shadow || !Array.isArray(client.shadow.snapshot?.players)) return;
+    const nextMap = new Map();
+    for (const entry of client.shadow.snapshot.players) {
+      if (!entry || !entry.id) continue;
+      const seqRaw = Number.isFinite(entry.seq) ? entry.seq : entry.netSeq;
+      const seq = Number.isFinite(seqRaw) ? Math.max(0, Math.floor(seqRaw)) : 0;
+      nextMap.set(entry.id, seq);
+    }
+    client.shadow.playerSeqById = nextMap;
+  }
+
   function mpAutotestApplyClientMessage(client, message) {
     if (!client || !message || typeof message !== "object") return;
     if (!client.shadow || typeof client.shadow !== "object") {
@@ -3719,25 +4299,68 @@
         snapshot: null,
         lastSnapshotHash: "",
         lastSegmentHashes: null,
+        lastCanonical: null,
+        lastSnapshotAt: 0,
+        lastMotionAt: 0,
+        lastSnapshotSeq: -1,
+        lastMotionSeq: -1,
+        playerSeqById: new Map(),
       };
     }
+    if (!("lastCanonical" in client.shadow)) client.shadow.lastCanonical = null;
+    if (!Number.isFinite(client.shadow.lastSnapshotAt)) client.shadow.lastSnapshotAt = 0;
+    if (!Number.isFinite(client.shadow.lastMotionAt)) client.shadow.lastMotionAt = 0;
+    if (!Number.isFinite(client.shadow.lastSnapshotSeq)) client.shadow.lastSnapshotSeq = -1;
+    if (!Number.isFinite(client.shadow.lastMotionSeq)) client.shadow.lastMotionSeq = -1;
+    if (!(client.shadow.playerSeqById instanceof Map)) client.shadow.playerSeqById = new Map();
     switch (message.type) {
       case "welcome":
         client.connected = true;
         client.playerId = message.playerId || client.id;
         if (message.snapshot) {
           client.shadow.snapshot = mpAutotestClone(message.snapshot, null);
+          client.shadow.lastSnapshotAt = mpAutotest.elapsed;
+          mpAutotestRefreshShadowPlayerSeqCache(client);
         }
         break;
-      case "snapshot":
+      case "snapshot": {
+        const incomingSeq = Number(message.seq);
+        if (Number.isFinite(incomingSeq)) {
+          const normalizedSeq = Math.max(0, Math.floor(incomingSeq));
+          if (normalizedSeq <= client.shadow.lastSnapshotSeq) break;
+          client.shadow.lastSnapshotSeq = normalizedSeq;
+        }
         client.shadow.snapshot = mpAutotestClone(message, null);
+        client.shadow.lastSnapshotAt = mpAutotest.elapsed;
+        mpAutotestRefreshShadowPlayerSeqCache(client);
         break;
-      case "motion":
+      }
+      case "motion": {
+        const incomingSeq = Number(message.seq);
+        if (Number.isFinite(incomingSeq)) {
+          const normalizedSeq = Math.max(0, Math.floor(incomingSeq));
+          if (normalizedSeq <= client.shadow.lastMotionSeq) break;
+          client.shadow.lastMotionSeq = normalizedSeq;
+        }
         // Motion is intentionally lightweight in shadow mode.
         client.shadow.lastMotion = mpAutotestClone(message, null);
+        client.shadow.lastMotionAt = mpAutotest.elapsed;
+        mpAutotestRecordClientMotionDiagnostics(client, message);
         break;
+      }
       case "playerUpdate": {
         if (!client.shadow.snapshot || !Array.isArray(client.shadow.snapshot.players)) break;
+        if (!message.id) break;
+        const incomingSeq = Number(message.seq);
+        if (Number.isFinite(incomingSeq)) {
+          const normalizedSeq = Math.max(0, Math.floor(incomingSeq));
+          const lastSeq = client.shadow.playerSeqById.get(message.id) ?? -1;
+          if (normalizedSeq <= lastSeq) break;
+          client.shadow.playerSeqById.set(message.id, normalizedSeq);
+        } else {
+          const lastSeq = client.shadow.playerSeqById.get(message.id) ?? -1;
+          client.shadow.playerSeqById.set(message.id, lastSeq + 1);
+        }
         const players = client.shadow.snapshot.players;
         const idx = players.findIndex((entry) => entry && entry.id === message.id);
         if (idx >= 0) {
@@ -3754,6 +4377,9 @@
         if (client.shadow.snapshot && Array.isArray(client.shadow.snapshot.players)) {
           client.shadow.snapshot.players = client.shadow.snapshot.players.filter((entry) => entry?.id !== message.id);
         }
+        if (message.id && client.shadow.playerSeqById instanceof Map) {
+          client.shadow.playerSeqById.delete(message.id);
+        }
         break;
       default:
         break;
@@ -3761,6 +4387,7 @@
     if (client.shadow.snapshot) {
       const canonical = mpAutotestBuildCanonicalFromSnapshot(client.shadow.snapshot);
       const hashes = mpAutotestComputeSegmentHashes(canonical);
+      client.shadow.lastCanonical = canonical;
       client.shadow.lastSegmentHashes = hashes;
       client.shadow.lastSnapshotHash = hashes?.overall || "";
     }
@@ -3886,6 +4513,12 @@
         snapshot: null,
         lastSnapshotHash: "",
         lastSegmentHashes: null,
+        lastCanonical: null,
+        lastSnapshotAt: 0,
+        lastMotionAt: 0,
+        lastSnapshotSeq: -1,
+        lastMotionSeq: -1,
+        playerSeqById: new Map(),
       },
       actionCount: 0,
     };
@@ -3893,6 +4526,11 @@
 
   function mpAutotestSendFromClient(client, payload, options = null) {
     if (!client || !client.connected) return false;
+    if (payload && payload.type === "playerUpdate") {
+      // Shadow clients should apply their own immediate movement updates locally
+      // before host reconciliation, matching how real clients behave.
+      mpAutotestApplyClientMessage(client, payload);
+    }
     mpAutotestEnqueueMessage(client.id, "host", payload, options || { reliable: false });
     return true;
   }
@@ -3960,6 +4598,38 @@
     return spawnMonster(world, tile.tx, tile.ty, { type: "crawler" });
   }
 
+  function mpAutotestEnsureFixtureAnimal(client = null) {
+    const world = state.surfaceWorld || state.world;
+    if (!world) return null;
+    if (Array.isArray(world.animals) && world.animals.length > 0) {
+      return world.animals[0];
+    }
+    const player = client ? mpAutotestFindClientPlayer(client) : state.player;
+    if (!player) return null;
+    const baseTx = Math.floor(player.x / CONFIG.tileSize);
+    const baseTy = Math.floor(player.y / CONFIG.tileSize);
+    let tile = findNearestAnimalTileForType(world, "boar", baseTx, baseTy, 24);
+    if (!tile && state.spawnTile) {
+      tile = findNearestAnimalTileForType(world, "boar", state.spawnTile.x, state.spawnTile.y, 32);
+    }
+    if (!tile) return null;
+    spawnAnimal(world, tile.tx, tile.ty, "boar");
+    return world.animals[world.animals.length - 1] || null;
+  }
+
+  function mpAutotestEnsureFixtureHouse() {
+    if (!Array.isArray(state.structures)) return null;
+    let house = state.structures.find((entry) => entry && !entry.removed && isHouseType(entry.type) && !entry.interior) || null;
+    if (house) return house;
+    const world = state.surfaceWorld || state.world;
+    if (!world) return null;
+    const spawn = state.spawnTile || findSpawnTile(world);
+    const tile = mpAutotestFindOpenTileNear(spawn.x + 4, spawn.y + 4, 18);
+    if (!tile) return null;
+    house = addStructure("small_house", tile.tx, tile.ty);
+    return house || null;
+  }
+
   function mpAutotestEnsureFixtureDrop(client) {
     const world = state.surfaceWorld || state.world;
     if (!world) return null;
@@ -4003,10 +4673,44 @@
     return payload;
   }
 
+  function mpAutotestBuildWalkPayloads(client, startX, startY, endX, endY, steps = 6, extra = null) {
+    if (!client) return [];
+    if (!Number.isFinite(startX) || !Number.isFinite(startY) || !Number.isFinite(endX) || !Number.isFinite(endY)) {
+      return [];
+    }
+    const payloads = [];
+    const count = Math.max(1, Math.floor(Number(steps) || 1));
+    const dx = endX - startX;
+    const dy = endY - startY;
+    const len = Math.hypot(dx, dy);
+    const facingX = len > 0.001 ? dx / len : 1;
+    const facingY = len > 0.001 ? dy / len : 0;
+    for (let i = 1; i <= count; i += 1) {
+      const t = i / count;
+      const sway = Math.sin(Math.PI * t) * CONFIG.tileSize * 0.04;
+      const x = lerp(startX, endX, t) + (-facingY * sway);
+      const y = lerp(startY, endY, t) + (facingX * sway);
+      const payloadExtra = extra && typeof extra === "object" ? { ...extra } : {};
+      payloadExtra.facing = { x: facingX, y: facingY };
+      payloads.push(mpAutotestBuildPlayerUpdatePayload(client, x, y, payloadExtra));
+    }
+    return payloads;
+  }
+
   function mpAutotestGenerateActionKinds() {
-    const base = ["travel", "harvest", "craftEdge", "chestTransfer", "stationCycle", "combat", "dropCycle"];
+    const base = [
+      "walkSweep",
+      "travel",
+      "harvest",
+      "animalSync",
+      "craftEdge",
+      "chestTransfer",
+      "stationCycle",
+      "combat",
+      "dropCycle",
+    ];
     if (mpAutotest.mode?.stress) {
-      base.push("spam", "caveTrip", "dayNight", "disconnectRejoin");
+      base.push("spam", "caveTrip", "houseWalk", "dayNight", "disconnectRejoin");
     }
     return base;
   }
@@ -4024,6 +4728,31 @@
     const clientPlayer = mpAutotestFindClientPlayer(client);
     if (!clientPlayer && kind !== "disconnectRejoin") return null;
     switch (kind) {
+      case "walkSweep": {
+        const startTx = Math.floor(clientPlayer.x / CONFIG.tileSize);
+        const startTy = Math.floor(clientPlayer.y / CONFIG.tileSize);
+        const angle = mpAutotest.rng() * Math.PI * 2;
+        const radius = 4 + Math.floor(mpAutotest.rng() * 7);
+        const targetTx = clamp(startTx + Math.round(Math.cos(angle) * radius), 0, world.size - 1);
+        const targetTy = clamp(startTy + Math.round(Math.sin(angle) * radius), 0, world.size - 1);
+        const target = mpAutotestFindOpenTileNear(targetTx, targetTy, 9);
+        if (!target) return null;
+        const endX = (target.tx + 0.5) * CONFIG.tileSize;
+        const endY = (target.ty + 0.5) * CONFIG.tileSize;
+        descriptor.note = `walk sweep to ${target.tx},${target.ty}`;
+        descriptor.ledgerRule = "conserve";
+        descriptor.payloads.push(
+          ...mpAutotestBuildWalkPayloads(
+            client,
+            clientPlayer.x,
+            clientPlayer.y,
+            endX,
+            endY,
+            7
+          )
+        );
+        break;
+      }
       case "travel": {
         const island = mpAutotestFindRandomSurfaceIsland();
         if (!island) return null;
@@ -4034,7 +4763,16 @@
         const y = (target.ty + 0.5) * CONFIG.tileSize;
         descriptor.note = `travel to island tile ${target.tx},${target.ty}`;
         descriptor.ledgerRule = "conserve";
-        descriptor.payloads.push(mpAutotestBuildPlayerUpdatePayload(client, x, y));
+        descriptor.payloads.push(
+          ...mpAutotestBuildWalkPayloads(
+            client,
+            Number.isFinite(clientPlayer.x) ? clientPlayer.x : x,
+            Number.isFinite(clientPlayer.y) ? clientPlayer.y : y,
+            x,
+            y,
+            8
+          )
+        );
         break;
       }
       case "harvest": {
@@ -4053,6 +4791,41 @@
           type: "harvest",
           resId: picked.idx,
           world: "surface",
+          unlocks: normalizeUnlocks({
+            pickaxe: true,
+            orePickaxe: true,
+            relicPickaxe: true,
+            sword: true,
+          }),
+        });
+        break;
+      }
+      case "animalSync": {
+        const animal = mpAutotestEnsureFixtureAnimal(client);
+        if (!animal) return null;
+        const approachX = animal.x - CONFIG.tileSize * 0.35;
+        const approachY = animal.y - CONFIG.tileSize * 0.22;
+        descriptor.note = `animal sync probe ${animal.type}#${animal.id}`;
+        descriptor.ledgerRule = "allowAny";
+        descriptor.payloads.push(
+          ...mpAutotestBuildWalkPayloads(
+            client,
+            clientPlayer.x,
+            clientPlayer.y,
+            approachX,
+            approachY,
+            5
+          )
+        );
+        descriptor.payloads.push({
+          type: "attack",
+          world: "surface",
+          x: approachX,
+          y: approachY,
+          aimX: animal.x,
+          aimY: animal.y,
+          targetKind: "animal",
+          targetId: animal.id,
           unlocks: normalizeUnlocks({
             pickaxe: true,
             orePickaxe: true,
@@ -4203,6 +4976,28 @@
           inCave: true,
           caveId: cave.id,
         }));
+        const caveWalkTile = findOpenSurfaceTileNear(
+          cave.world,
+          cave.world.entrance.tx + Math.floor((mpAutotest.rng() - 0.5) * 6),
+          cave.world.entrance.ty + Math.floor((mpAutotest.rng() - 0.5) * 6),
+          10
+        ) || cave.world.entrance;
+        const caveWalkX = (caveWalkTile.tx + 0.5) * CONFIG.tileSize;
+        const caveWalkY = (caveWalkTile.ty + 0.5) * CONFIG.tileSize;
+        descriptor.payloads.push(
+          ...mpAutotestBuildWalkPayloads(
+            client,
+            caveX,
+            caveY,
+            caveWalkX,
+            caveWalkY,
+            4,
+            {
+              inCave: true,
+              caveId: cave.id,
+            }
+          )
+        );
         if (Array.isArray(cave.world.resources) && cave.world.resources.length > 0) {
           descriptor.payloads.push({
             type: "harvest",
@@ -4220,6 +5015,67 @@
         const surfaceX = (cave.tx + 0.5) * CONFIG.tileSize;
         const surfaceY = (cave.ty + 0.5) * CONFIG.tileSize;
         descriptor.payloads.push(mpAutotestBuildPlayerUpdatePayload(client, surfaceX, surfaceY, {
+          inCave: false,
+          caveId: null,
+        }));
+        break;
+      }
+      case "houseWalk": {
+        const house = mpAutotestEnsureFixtureHouse();
+        if (!house) return null;
+        const interior = getHouseInterior(house);
+        if (!interior) return null;
+        const houseKey = getHouseKey(house);
+        const worldX = (house.tx + 0.5) * CONFIG.tileSize;
+        const worldY = (house.ty + 0.5) * CONFIG.tileSize;
+        const pad = 0.65;
+        const minX = pad;
+        const minY = pad;
+        const maxX = Math.max(minX, interior.width - pad);
+        const maxY = Math.max(minY, interior.height - pad);
+        const startHouseX = clamp(0.9 + mpAutotest.rng() * Math.max(0.2, interior.width - 1.8), minX, maxX);
+        const startHouseY = clamp(0.9 + mpAutotest.rng() * Math.max(0.2, interior.height - 1.8), minY, maxY);
+        const endHouseX = clamp(0.9 + mpAutotest.rng() * Math.max(0.2, interior.width - 1.8), minX, maxX);
+        const endHouseY = clamp(0.9 + mpAutotest.rng() * Math.max(0.2, interior.height - 1.8), minY, maxY);
+        descriptor.note = `house walk ${houseKey}`;
+        descriptor.ledgerRule = "conserve";
+        descriptor.payloads.push(
+          ...mpAutotestBuildWalkPayloads(
+            client,
+            clientPlayer.x,
+            clientPlayer.y,
+            worldX,
+            worldY,
+            5
+          )
+        );
+        descriptor.payloads.push(mpAutotestBuildPlayerUpdatePayload(client, worldX, worldY, {
+          inHut: true,
+          houseKey,
+          houseX: startHouseX,
+          houseY: startHouseY,
+          inCave: false,
+          caveId: null,
+        }));
+        const interiorSteps = 5;
+        for (let i = 1; i <= interiorSteps; i += 1) {
+          const t = i / interiorSteps;
+          const houseX = clamp(lerp(startHouseX, endHouseX, t), minX, maxX);
+          const houseY = clamp(lerp(startHouseY, endHouseY, t), minY, maxY);
+          descriptor.payloads.push(mpAutotestBuildPlayerUpdatePayload(client, worldX, worldY, {
+            inHut: true,
+            houseKey,
+            houseX,
+            houseY,
+            inCave: false,
+            caveId: null,
+          }));
+        }
+        descriptor.payloads.push(mpAutotestBuildPlayerUpdatePayload(client, worldX, worldY, {
+          inHut: false,
+          houseKey: null,
+          houseX: null,
+          houseY: null,
           inCave: false,
           caveId: null,
         }));
@@ -4527,6 +5383,8 @@
   function mpAutotestBuildFailureReport(reason, details = null) {
     const hostHashes = mpAutotestBuildHostHashes();
     const hashCompare = mpAutotestCompareHashes(hostHashes);
+    const diagnosticsSummary = mpAutotestBuildDiagnosticsSummary();
+    const diagnosticsLines = mpAutotestBuildDiagnosticsLines(diagnosticsSummary);
     const modeLabel = mpAutotest.mode?.id || "unknown";
     const clientCount = mpAutotest.clients.length;
     const mismatchLines = [];
@@ -4542,6 +5400,7 @@
       .slice(-30)
       .map((entry) => `${entry.time.toFixed(3)} ${entry.from}->${entry.to} ${entry.type} ${entry.hint || ""}`)
       .join("\n");
+    const detailText = details ? mpAutotestStableStringify(details) : "";
     const report = [
       "MP AUTOTEST FAILURE REPORT",
       `mode: ${modeLabel}`,
@@ -4550,6 +5409,7 @@
       `step: ${mpAutotest.step}`,
       `reason: ${reason}`,
       `lastAction: ${mpAutotest.lastAction}`,
+      detailText ? `details: ${detailText}` : "",
       "",
       `hostHash: ${hostHashes.overall}`,
       ...hashCompare.clientReports.map((entry) => `clientHash[${entry.id}]: ${entry.overall || "<missing>"}`),
@@ -4557,14 +5417,17 @@
       "mismatch summary:",
       ...mismatchLines,
       "",
+      ...diagnosticsLines,
+      "",
       "last 30 delivered messages:",
       recentMessages || "(none)",
-    ].join("\n");
+    ].filter(Boolean).join("\n");
     return {
       text: report,
       hostHashes,
       hashCompare,
       details,
+      diagnostics: diagnosticsSummary,
     };
   }
 
@@ -4578,6 +5441,7 @@
       actions: mpAutotestClone(mpAutotest.actionHistory, []),
       fault: mpAutotestClone(mpAutotestFaultConfig(), {}),
       messageLog: mpAutotestClone(mpAutotest.messageLog.slice(-80), []),
+      diagnostics: mpAutotestClone(failureReportData?.diagnostics, null),
       report: failureReportData?.text || "",
     };
     try {
@@ -4603,6 +5467,10 @@
     if (!mpAutotest.active) return;
     mpAutotest.failReason = "";
     mpAutotest.failReport = "";
+    const diagnosticsSummary = mpAutotestBuildDiagnosticsSummary();
+    for (const line of mpAutotestBuildDiagnosticsLines(diagnosticsSummary)) {
+      mpAutotestLogLine(line);
+    }
     mpAutotestLogLine(`PASS: ${mpAutotest.mode?.label || "Autotest"} completed (${mpAutotest.step} steps).`);
     mpAutotestStop({ restoreSeed: true, status: "pass", keepLog: true });
   }
@@ -4626,6 +5494,13 @@
       return;
     }
     const hostHashes = mpAutotestBuildHostHashes();
+    const deepSyncIssue = mpAutotestValidateDeepSync(hostHashes);
+    if (deepSyncIssue) {
+      mpAutotestFail(deepSyncIssue.reason, {
+        subsystem: deepSyncIssue.subsystem || "movement",
+      });
+      return;
+    }
     mpAutotest.hostHash = hostHashes.overall;
     mpAutotest.clientHashes.clear();
     const hashCompare = mpAutotestCompareHashes(hostHashes);
@@ -4664,7 +5539,12 @@
     if (!descriptor) return;
     const ok = mpAutotestRunActionDescriptor(descriptor, !!mpAutotest.replayBundle);
     if (!ok) return;
-    mpAutotestLogLine(`step ${mpAutotest.step}: ${descriptor.kind} (${descriptor.clientId || "host"})`);
+    const note = descriptor.note ? ` - ${descriptor.note}` : "";
+    mpAutotestLogLine(`step ${mpAutotest.step}: ${descriptor.kind} (${descriptor.clientId || "host"})${note}`);
+    mpAutotestForceReliableSync();
+    mpAutotestFlushMessageQueue(true);
+    // Run one more authoritative sync pass after client->host actions settle so
+    // hash checks compare fully reconciled state under jitter/reordering.
     mpAutotestForceReliableSync();
     mpAutotestFlushMessageQueue(true);
     mpAutotestEnsureChecks(descriptor);
@@ -4691,6 +5571,7 @@
     net.pendingHouseMoves.clear();
     net.pendingBreaks.clear();
     net.debugBoatPlaceReceipts.clear();
+    resetNetSequenceState();
     net.snapshotTimer = NET_CONFIG.snapshotInterval;
     net.motionTimer = NET_CONFIG.motionInterval;
     net.playerTimer = NET_CONFIG.playerSendInterval;
@@ -4729,6 +5610,7 @@
     net.pendingHouseMoves.clear();
     net.pendingBreaks.clear();
     net.debugBoatPlaceReceipts.clear();
+    resetNetSequenceState();
     updateMpStatus("MP: Offline");
     if (roomDisplay) {
       roomDisplay.textContent = "Room: -";
@@ -4764,6 +5646,7 @@
     mpAutotest.lastAction = "none";
     mpAutotest.replayBundle = null;
     mpAutotest.savedSeed = null;
+    mpAutotestResetDiagnostics();
     if (!keepLog) {
       mpAutotest.logLines = ["Multiplayer autotest idle."];
       if (mpAutotestLogEl) mpAutotestLogEl.textContent = mpAutotest.logLines[0];
@@ -4778,7 +5661,7 @@
     mpAutotestFlushMessageQueue(false);
     mpAutotest.periodicCheckTimer -= step;
     if (mpAutotest.periodicCheckTimer <= 0) {
-      mpAutotest.periodicCheckTimer = 0.45;
+      mpAutotest.periodicCheckTimer = mpAutotest.mode?.stress ? 0.2 : 0.34;
       mpAutotestEnsureChecks({ ledgerRule: "allowAny", kind: "periodic" });
     }
     if (!mpAutotest.active) return;
@@ -4868,6 +5751,7 @@
         }
       : null;
     mpAutotest.logLines = [];
+    mpAutotestResetDiagnostics();
     mpAutotestLogLine(`MP Autotest ${mode.label} started.`);
     mpAutotestLogLine(`Seed: ${seed}`);
     mpAutotestLogLine(`Clients: ${requestedClients}`);
@@ -4879,6 +5763,8 @@
     mpAutotestEnsureFixtureChest();
     mpAutotestEnsureFixtureStation();
     mpAutotestEnsureFixtureMonster();
+    mpAutotestEnsureFixtureAnimal();
+    mpAutotestEnsureFixtureHouse();
     mpAutotestForceReliableSync();
     mpAutotestFlushMessageQueue(true);
     mpAutotest.inventoryLedger.totals = mpAutotestCollectHostItemTotals();
@@ -7762,6 +8648,61 @@
     return netIsClient() && net.ready;
   }
 
+  function resetDebugSyncAuditState() {
+    net.syncAuditTimer = MP_DEBUG_SYNC_AUDIT_CONFIG.interval;
+    net.syncAuditSeq = 0;
+    net.syncAuditLedgerTotals = null;
+    net.syncAuditLedgerFingerprint = "";
+    net.syncLedgerEventCounter = 0;
+    net.syncLedgerLastEventCounter = 0;
+    net.syncLedgerLastEventLabel = "";
+    if (net.pendingSyncAudits instanceof Map) {
+      net.pendingSyncAudits.clear();
+    } else {
+      net.pendingSyncAudits = new Map();
+    }
+    if (net.remoteInventoryTotalsByPeer instanceof Map) {
+      net.remoteInventoryTotalsByPeer.clear();
+    } else {
+      net.remoteInventoryTotalsByPeer = new Map();
+    }
+    if (net.remoteInventoryFingerprintByPeer instanceof Map) {
+      net.remoteInventoryFingerprintByPeer.clear();
+    } else {
+      net.remoteInventoryFingerprintByPeer = new Map();
+    }
+  }
+
+  function resetNetSequenceState() {
+    net.snapshotSeq = 0;
+    net.motionSeq = 0;
+    net.localPlayerSeq = 0;
+    net.localPlayerAckSeq = -1;
+    net.lastSentPlayerFingerprint = "";
+    net.lastSnapshotSeq = -1;
+    net.lastMotionSeq = -1;
+    if (net.remotePlayerSeq instanceof Map) {
+      net.remotePlayerSeq.clear();
+    } else {
+      net.remotePlayerSeq = new Map();
+    }
+    if (net.hostPlayerSeqByPeer instanceof Map) {
+      net.hostPlayerSeqByPeer.clear();
+    } else {
+      net.hostPlayerSeqByPeer = new Map();
+    }
+    resetDebugSyncAuditState();
+  }
+
+  function nextNetSequence(counterKey) {
+    const current = Number(net[counterKey]);
+    const next = Number.isFinite(current) && current >= 0
+      ? Math.floor(current) + 1
+      : 1;
+    net[counterKey] = next;
+    return next;
+  }
+
   function updateMpStatus(text) {
     if (mpStatus) {
       mpStatus.textContent = text;
@@ -7818,6 +8759,7 @@
     net.pendingHouseMoves.clear();
     net.pendingBreaks.clear();
     net.debugBoatPlaceReceipts.clear();
+    resetNetSequenceState();
     net.snapshotTimer = NET_CONFIG.snapshotInterval;
     net.motionTimer = NET_CONFIG.motionInterval;
     net.playerTimer = NET_CONFIG.playerSendInterval;
@@ -7916,6 +8858,7 @@
     net.pendingHouseMoves.clear();
     net.pendingBreaks.clear();
     net.debugBoatPlaceReceipts.clear();
+    resetNetSequenceState();
     net.isHost = false;
     net.ready = false;
     net.playerId = null;
@@ -7967,6 +8910,7 @@
     net.pendingHouseMoves.clear();
     net.pendingBreaks.clear();
     net.debugBoatPlaceReceipts.clear();
+    resetNetSequenceState();
     net.isHost = false;
     net.ready = false;
     net.playerId = null;
@@ -8031,6 +8975,7 @@
     net.pendingHouseMoves.clear();
     net.pendingBreaks.clear();
     net.debugBoatPlaceReceipts.clear();
+    resetNetSequenceState();
     net.enabled = false;
     net.ready = false;
     net.isHost = false;
@@ -8101,6 +9046,7 @@
     net.hostConn = null;
     net.connections.clear();
     net.players.clear();
+    resetNetSequenceState();
     net.helloRetryTimer = NET_CONFIG.helloRetryInterval;
     const peer = new Peer(undefined, PEER_OPTIONS);
     net.peer = peer;
@@ -8141,6 +9087,22 @@
       if (isHostSide || net.isHost) {
         net.connections.delete(conn.peer);
         net.players.delete(conn.peer);
+        if (net.hostPlayerSeqByPeer instanceof Map) {
+          net.hostPlayerSeqByPeer.delete(conn.peer);
+        }
+        if (net.remoteInventoryTotalsByPeer instanceof Map) {
+          net.remoteInventoryTotalsByPeer.delete(conn.peer);
+        }
+        if (net.remoteInventoryFingerprintByPeer instanceof Map) {
+          net.remoteInventoryFingerprintByPeer.delete(conn.peer);
+        }
+        if (net.pendingSyncAudits instanceof Map) {
+          for (const pending of net.pendingSyncAudits.values()) {
+            if (pending?.expected instanceof Set) {
+              pending.expected.delete(conn.peer);
+            }
+          }
+        }
         const shipChanged = removePlayerFromAllShips(conn.peer);
         if (shipChanged) {
           markDirty();
@@ -8154,6 +9116,13 @@
         net.helloRetryTimer = NET_CONFIG.helloRetryInterval;
         net.resyncTimer = 0;
         net.lastHostPacketAt = performance.now();
+        net.lastSnapshotSeq = -1;
+        net.lastMotionSeq = -1;
+        net.localPlayerAckSeq = -1;
+        net.lastSentPlayerFingerprint = "";
+        if (net.remotePlayerSeq instanceof Map) {
+          net.remotePlayerSeq.clear();
+        }
         if (net.hostConn === conn) {
           net.hostConn = null;
         }
@@ -8203,6 +9172,7 @@
       id: player.id,
       name: player.name,
       color: player.color,
+      seq: Number.isFinite(player.netSeq) ? Math.max(0, Math.floor(player.netSeq)) : 0,
       x: player.x,
       y: player.y,
       facing: player.facing,
@@ -8217,6 +9187,10 @@
       houseY: player.houseY,
       inCave: player.inCave,
       caveId: player.caveId,
+      inventoryFingerprint: typeof player.inventoryFingerprint === "string"
+        ? player.inventoryFingerprint
+        : "",
+      inventoryTotals: sanitizeInventoryTotalsPayload(player.inventoryTotals),
     }, exceptPeerId);
   }
 
@@ -8228,6 +9202,7 @@
       id: conn.peer,
       name: sanitizePlayerName(profile?.name, generateDefaultPlayerName()),
       color,
+      netSeq: 0,
       x: spawn.x,
       y: spawn.y,
       facing: { x: 1, y: 0 },
@@ -8242,6 +9217,8 @@
       houseY: null,
       inCave: false,
       caveId: null,
+      inventoryFingerprint: "",
+      inventoryTotals: Object.create(null),
     };
   }
 
@@ -8258,10 +9235,14 @@
     player = buildRemoteJoinPlayer(conn, profile);
     net.players.set(conn.peer, player);
     if (opts.sendWelcome && conn.open) {
+      const playerState = {
+        ...player,
+        seq: Number.isFinite(player.netSeq) ? Math.max(0, Math.floor(player.netSeq)) : 0,
+      };
       conn.send({
         type: "welcome",
         playerId: conn.peer,
-        playerState: player,
+        playerState,
         snapshot: buildSnapshot(),
       });
     }
@@ -8335,7 +9316,11 @@
         if (net.isHost) handleAttackRequest(conn, message);
         break;
       case "chestUpdate":
-        if (net.isHost) handleChestUpdate(conn, message);
+        if (net.isHost) {
+          handleChestUpdate(conn, message);
+        } else {
+          applyAuthoritativeSurfaceChestUpdate(message);
+        }
         break;
       case "robotCommand":
         if (net.isHost) handleRobotCommand(conn, message);
@@ -8359,7 +9344,17 @@
         if (net.isHost) handleBenchRobotControl(conn, message);
         break;
       case "houseChestUpdate":
-        if (net.isHost) handleHouseChestUpdate(conn, message);
+        if (net.isHost) {
+          handleHouseChestUpdate(conn, message);
+        } else {
+          applyAuthoritativeHouseChestUpdate(message);
+        }
+        break;
+      case "debugSyncAuditRequest":
+        if (!net.isHost) handleDebugSyncAuditRequest(message);
+        break;
+      case "debugSyncAuditReport":
+        if (net.isHost) handleDebugSyncAuditReport(conn, message);
         break;
       case "houseDestroyChest":
         if (net.isHost) handleHouseDestroyChest(conn, message);
@@ -8395,7 +9390,18 @@
         if (!net.isHost) handleRespawnMessage(message);
         break;
       case "playerLeft":
-        if (!net.isHost) net.players.delete(message.id);
+        if (!net.isHost) {
+          net.players.delete(message.id);
+          if (net.remotePlayerSeq instanceof Map) {
+            net.remotePlayerSeq.delete(message.id);
+          }
+          if (net.remoteInventoryTotalsByPeer instanceof Map) {
+            net.remoteInventoryTotalsByPeer.delete(message.id);
+          }
+          if (net.remoteInventoryFingerprintByPeer instanceof Map) {
+            net.remoteInventoryFingerprintByPeer.delete(message.id);
+          }
+        }
         break;
       default:
         break;
@@ -8418,6 +9424,7 @@
         id: net.playerId || "local",
         name: net.localName || "Survivor",
         color: net.localColor || COLORS.player,
+        seq: Number.isFinite(state.player.netSeq) ? Math.max(0, Math.floor(state.player.netSeq)) : 0,
         x: localPos.x,
         y: localPos.y,
         facing: normalizePlayerFacingValue(state.player.facing, { x: 1, y: 0 }),
@@ -8432,6 +9439,8 @@
         inCave: state.inCave,
         caveId: state.activeCave?.id ?? null,
         unlocks: normalizeUnlocks(state.player.unlocks),
+        inventoryFingerprint: mpAutotestInventoryFingerprintFromSlots(state.inventory),
+        inventoryTotals: getLocalInventoryTotalsPayload(),
       });
     }
     for (const [id, player] of net.players.entries()) {
@@ -8448,6 +9457,7 @@
         id,
         name: player.name,
         color: player.color,
+        seq: Number.isFinite(player?.netSeq) ? Math.max(0, Math.floor(player.netSeq)) : 0,
         x: remotePos.x,
         y: remotePos.y,
         facing: normalizePlayerFacingValue(player?.facing, { x: 1, y: 0 }),
@@ -8462,6 +9472,10 @@
         inCave: player.inCave,
         caveId: player.caveId,
         unlocks: normalizeUnlocks(player.unlocks),
+        inventoryFingerprint: typeof player.inventoryFingerprint === "string"
+          ? player.inventoryFingerprint
+          : "",
+        inventoryTotals: sanitizeInventoryTotalsPayload(player.inventoryTotals),
       });
     }
     return players;
@@ -8582,6 +9596,7 @@
         type: structure.type,
         tx: structure.tx,
         ty: structure.ty,
+        storageRevision: getStorageRevision(structure),
         storage: structure.storage
           ? structure.storage.map((slot) => ({ id: slot.id, qty: slot.qty }))
           : null,
@@ -8654,6 +9669,7 @@
             type: item.type,
             tx: item.tx,
             ty: item.ty,
+            storageRevision: normalizeStorageRevisionValue(item.storageRevision),
             storage: item.storage
               ? item.storage.map((slot) => ({ id: slot.id, qty: slot.qty }))
               : null,
@@ -8742,12 +9758,12 @@
           ) || 0
         ),
         dir: { x: 0, y: 0 },
-        renderX: preserveHostCoordinates ? validPos.x : (prev?.renderX ?? validPos.x),
-        renderY: preserveHostCoordinates ? validPos.y : (prev?.renderY ?? validPos.y),
+        renderX: validPos.x,
+        renderY: validPos.y,
         _drawFacingX: Number.isFinite(prev?._drawFacingX) ? (prev._drawFacingX < 0 ? -1 : 1) : undefined,
         _prevRenderX: Number.isFinite(prev?._prevRenderX)
           ? prev._prevRenderX
-          : (preserveHostCoordinates ? validPos.x : (prev?.renderX ?? validPos.x)),
+          : validPos.x,
       };
     }).filter(Boolean);
     if (world) {
@@ -8860,8 +9876,10 @@
 
   function buildSnapshot() {
     const surface = state.surfaceWorld || state.world;
+    const seq = net.isHost ? nextNetSequence("snapshotSeq") : null;
     return {
       type: "snapshot",
+      seq,
       seed: surface.seed,
       islandLayout: serializeIslandLayout(surface),
       timeOfDay: state.timeOfDay,
@@ -9002,8 +10020,10 @@
   function buildMotionUpdate() {
     const surface = state.surfaceWorld || state.world;
     if (!surface) return null;
+    const seq = net.isHost ? nextNetSequence("motionSeq") : null;
     return {
       type: "motion",
+      seq,
       seed: surface.seed,
       world: serializeWorldMotion(surface),
       caves: (surface.caves ?? [])
@@ -9129,6 +10149,15 @@
   function applyNetworkMotion(message) {
     if (!message || !message.seed) return;
     if (!state.surfaceWorld || state.surfaceWorld.seed !== message.seed) return;
+    if (!net.isHost) {
+      const incomingSeq = Number(message.seq);
+      if (Number.isFinite(incomingSeq)) {
+        const normalizedSeq = Math.max(0, Math.floor(incomingSeq));
+        const lastSeq = Number.isFinite(net.lastMotionSeq) ? net.lastMotionSeq : -1;
+        if (normalizedSeq <= lastSeq) return;
+        net.lastMotionSeq = normalizedSeq;
+      }
+    }
     applyMotionWorld(state.surfaceWorld, message.world);
     if (Array.isArray(message.caves) && Array.isArray(state.surfaceWorld.caves)) {
       for (const caveMotion of message.caves) {
@@ -9192,6 +10221,7 @@
       const storageSize = getStorageSizeForStructureType(normalized.type, null);
       clearResourcesForFootprint(world, normalized.type, normalized.tx, normalized.ty);
       const structure = addStructure(normalized.type, normalized.tx, normalized.ty, {
+        storageRevision: normalizeStorageRevisionValue(entry.storageRevision),
         storage: Array.isArray(entry.storage)
           ? sanitizeInventorySlots(
               entry.storage,
@@ -9268,34 +10298,75 @@
     const next = new Map();
     for (const entry of players) {
       if (!entry || !entry.id) continue;
+      const entrySeq = Number.isFinite(entry.seq)
+        ? Math.max(0, Math.floor(entry.seq))
+        : null;
       if (entry.id === net.playerId) {
         if (!state.player) continue;
-        const localWorld = getPlayerWorldForSync(state.inCave, state.activeCave?.id ?? null);
-        const normalizedLocalPos = clampPositionToWorldBounds(
-          localWorld,
-          Number.isFinite(entry.x) ? entry.x : state.player.x,
-          Number.isFinite(entry.y) ? entry.y : state.player.y,
-          state.player.x,
-          state.player.y
-        );
         if (typeof entry.name === "string") {
           setLocalPlayerName(entry.name, { persist: false, broadcast: false });
         }
-        state.player.x = normalizedLocalPos.x;
-        state.player.y = normalizedLocalPos.y;
+        reconcileLocalPlayerPositionFromAuthority(entry.x, entry.y, { force: false });
         state.player.facing = normalizePlayerFacingValue(entry.facing, state.player.facing);
         state.player.maxHp = normalizePlayerMaxHpValue(entry.maxHp, state.player.maxHp);
         state.player.hp = normalizePlayerHpValue(entry.hp, state.player.maxHp, state.player.hp);
         if (Number.isFinite(entry.toolTier)) state.player.toolTier = entry.toolTier;
-        const snapshotColor = normalizeHexColor(entry.color);
-        if (snapshotColor) net.localColor = snapshotColor;
         state.player.unlocks = normalizeUnlocks(entry.unlocks ?? state.player.unlocks);
         state.player.checkpoint = normalizeCheckpoint(entry.checkpoint) ?? state.player.checkpoint;
+        if (entrySeq != null) {
+          net.localPlayerAckSeq = Math.max(net.localPlayerAckSeq, entrySeq);
+          if (!Number.isFinite(state.player.netSeq) || entrySeq > state.player.netSeq) {
+            state.player.netSeq = entrySeq;
+          }
+          if (entrySeq > (Number.isFinite(net.localPlayerSeq) ? net.localPlayerSeq : 0)) {
+            net.localPlayerSeq = entrySeq;
+          }
+        }
+        const snapshotColor = normalizeHexColor(entry.color);
+        if (snapshotColor) net.localColor = snapshotColor;
         updateHealthUI();
         updateToolDisplay();
         continue;
       }
       const prev = previous.get(entry.id);
+      const prevSeq = Number.isFinite(prev?.netSeq)
+        ? Math.max(0, Math.floor(prev.netSeq))
+        : (net.remotePlayerSeq instanceof Map ? (net.remotePlayerSeq.get(entry.id) ?? -1) : -1);
+      const staleRemote = entrySeq != null && entrySeq <= prevSeq;
+      if (staleRemote && prev) {
+        const staleInventoryFingerprint = typeof entry.inventoryFingerprint === "string"
+          ? entry.inventoryFingerprint
+          : (typeof prev.inventoryFingerprint === "string" ? prev.inventoryFingerprint : "");
+        const staleInventoryTotals = sanitizeInventoryTotalsPayload(
+          entry.inventoryTotals ?? prev.inventoryTotals
+        );
+        const staleMaxHp = normalizePlayerMaxHpValue(entry.maxHp, prev.maxHp ?? 100);
+        next.set(entry.id, {
+          ...prev,
+          name: sanitizePlayerName(entry.name, prev.name || "Survivor"),
+          color: normalizeHexColor(entry.color) || normalizeHexColor(prev.color) || "#6fa8ff",
+          hp: normalizePlayerHpValue(entry.hp, staleMaxHp, prev.hp ?? staleMaxHp),
+          maxHp: staleMaxHp,
+          toolTier: Number.isFinite(entry.toolTier) ? entry.toolTier : (prev.toolTier ?? 1),
+          checkpoint: normalizeCheckpoint(entry.checkpoint) ?? prev.checkpoint ?? null,
+          inHut: !!entry.inHut,
+          houseKey: entry.houseKey ?? prev.houseKey ?? null,
+          houseX: Number.isFinite(entry.houseX) ? entry.houseX : (prev.houseX ?? null),
+          houseY: Number.isFinite(entry.houseY) ? entry.houseY : (prev.houseY ?? null),
+          inCave: !!entry.inCave,
+          caveId: entry.caveId ?? null,
+          unlocks: normalizeUnlocks(entry.unlocks ?? prev.unlocks),
+          inventoryFingerprint: staleInventoryFingerprint,
+          inventoryTotals: staleInventoryTotals,
+        });
+        continue;
+      }
+      const resolvedSeq = entrySeq != null
+        ? entrySeq
+        : (Number.isFinite(prevSeq) ? prevSeq + 1 : 0);
+      if (net.remotePlayerSeq instanceof Map) {
+        net.remotePlayerSeq.set(entry.id, resolvedSeq);
+      }
       const normalizedColor = normalizeHexColor(entry.color) || normalizeHexColor(prev?.color) || "#6fa8ff";
       const nextMaxHp = normalizePlayerMaxHpValue(entry.maxHp, prev?.maxHp ?? 100);
       const remoteWorld = getPlayerWorldForSync(!!entry.inCave, entry.caveId ?? null);
@@ -9306,10 +10377,17 @@
         prev?.x,
         prev?.y
       );
+      const inventoryFingerprint = typeof entry.inventoryFingerprint === "string"
+        ? entry.inventoryFingerprint
+        : (typeof prev?.inventoryFingerprint === "string" ? prev.inventoryFingerprint : "");
+      const inventoryTotals = sanitizeInventoryTotalsPayload(
+        entry.inventoryTotals ?? prev?.inventoryTotals
+      );
       next.set(entry.id, {
         id: entry.id,
         name: sanitizePlayerName(entry.name, prev?.name || "Survivor"),
         color: normalizedColor,
+        netSeq: resolvedSeq,
         x: normalizedRemotePos.x,
         y: normalizedRemotePos.y,
         facing: normalizePlayerFacingValue(entry.facing, prev?.facing),
@@ -9324,9 +10402,16 @@
         inCave: !!entry.inCave,
         caveId: entry.caveId ?? null,
         unlocks: normalizeUnlocks(entry.unlocks ?? prev?.unlocks),
+        inventoryFingerprint,
+        inventoryTotals,
         renderX: prev?.renderX ?? (Number.isFinite(entry.x) ? entry.x : 0),
         renderY: prev?.renderY ?? (Number.isFinite(entry.y) ? entry.y : 0),
       });
+    }
+    if (net.remotePlayerSeq instanceof Map) {
+      for (const id of [...net.remotePlayerSeq.keys()]) {
+        if (!next.has(id)) net.remotePlayerSeq.delete(id);
+      }
     }
     net.players = next;
   }
@@ -9368,6 +10453,15 @@
 
   function applyNetworkSnapshot(snapshot) {
     if (!snapshot || !snapshot.seed) return;
+    if (!net.isHost) {
+      const incomingSeq = Number(snapshot.seq);
+      if (Number.isFinite(incomingSeq)) {
+        const normalizedSeq = Math.max(0, Math.floor(incomingSeq));
+        const lastSeq = Number.isFinite(net.lastSnapshotSeq) ? net.lastSnapshotSeq : -1;
+        if (normalizedSeq <= lastSeq) return;
+        net.lastSnapshotSeq = normalizedSeq;
+      }
+    }
     if (state.sleepSequence) {
       state.sleepSequence = null;
     }
@@ -9539,6 +10633,16 @@
   }
 
   function handleWelcome(message) {
+    if (state.player) {
+      state.player.netSeq = -1;
+    }
+    net.localPlayerSeq = 0;
+    net.localPlayerAckSeq = -1;
+    if (net.remotePlayerSeq instanceof Map) {
+      net.remotePlayerSeq.clear();
+    }
+    net.lastSnapshotSeq = -1;
+    net.lastMotionSeq = -1;
     if (message.snapshot) {
       applyNetworkSnapshot(message.snapshot);
     }
@@ -9553,19 +10657,14 @@
     state.world = state.surfaceWorld || state.world;
     if (state.player) state.player.inHut = false;
     if (message.playerState && state.player) {
-      const localWorld = getPlayerWorldForSync(state.inCave, state.activeCave?.id ?? null);
       if (typeof message.playerState.name === "string") {
         setLocalPlayerName(message.playerState.name, { persist: false, broadcast: false });
       }
-      const normalizedPos = clampPositionToWorldBounds(
-        localWorld,
-        Number.isFinite(message.playerState.x) ? message.playerState.x : state.player.x,
-        Number.isFinite(message.playerState.y) ? message.playerState.y : state.player.y,
-        state.player.x,
-        state.player.y
+      reconcileLocalPlayerPositionFromAuthority(
+        message.playerState.x,
+        message.playerState.y,
+        { force: true }
       );
-      state.player.x = normalizedPos.x;
-      state.player.y = normalizedPos.y;
       state.player.facing = normalizePlayerFacingValue(message.playerState.facing, state.player.facing);
       state.player.maxHp = normalizePlayerMaxHpValue(message.playerState.maxHp, state.player.maxHp);
       state.player.hp = normalizePlayerHpValue(message.playerState.hp, state.player.maxHp, state.player.hp);
@@ -9575,6 +10674,15 @@
       const assignedColor = normalizeHexColor(message.playerState.color);
       if (assignedColor) {
         net.localColor = assignedColor;
+      }
+      const welcomeSeqRaw = Number.isFinite(message.playerState.seq)
+        ? message.playerState.seq
+        : message.playerState.netSeq;
+      if (Number.isFinite(welcomeSeqRaw)) {
+        const normalizedSeq = Math.max(0, Math.floor(welcomeSeqRaw));
+        state.player.netSeq = normalizedSeq;
+        net.localPlayerSeq = normalizedSeq;
+        net.localPlayerAckSeq = normalizedSeq;
       }
       updateHealthUI();
       updateToolDisplay();
@@ -9592,6 +10700,23 @@
       broadcastJoin: true,
     });
     if (!player) return;
+    const incomingSeqRaw = Number(message?.seq);
+    const lastSeq = net.hostPlayerSeqByPeer instanceof Map
+      ? (net.hostPlayerSeqByPeer.get(conn.peer) ?? -1)
+      : -1;
+    let incomingSeq = null;
+    if (Number.isFinite(incomingSeqRaw)) {
+      incomingSeq = Math.max(0, Math.floor(incomingSeqRaw));
+      if (incomingSeq <= lastSeq) {
+        return;
+      }
+    } else {
+      incomingSeq = Math.max(0, Math.floor(Number(lastSeq) || 0)) + 1;
+    }
+    if (net.hostPlayerSeqByPeer instanceof Map) {
+      net.hostPlayerSeqByPeer.set(conn.peer, incomingSeq);
+    }
+    player.netSeq = incomingSeq;
     if (typeof message.name === "string") {
       player.name = sanitizePlayerName(message.name, player.name || "Survivor");
     }
@@ -9608,6 +10733,28 @@
     if (Number.isFinite(message.toolTier)) player.toolTier = message.toolTier;
     if (message.unlocks) player.unlocks = normalizeUnlocks(message.unlocks);
     player.checkpoint = normalizeCheckpoint(message.checkpoint) ?? player.checkpoint ?? null;
+    const prevInventoryFingerprint = typeof player.inventoryFingerprint === "string"
+      ? player.inventoryFingerprint
+      : "";
+    const prevInventoryTotalsFingerprint = getInventoryTotalsFingerprint(player.inventoryTotals);
+    const inventoryFingerprint = typeof message.inventoryFingerprint === "string"
+      ? message.inventoryFingerprint
+      : "";
+    const inventoryTotals = sanitizeInventoryTotalsPayload(message.inventoryTotals);
+    player.inventoryFingerprint = inventoryFingerprint;
+    player.inventoryTotals = inventoryTotals;
+    if (
+      prevInventoryFingerprint !== inventoryFingerprint
+      || prevInventoryTotalsFingerprint !== getInventoryTotalsFingerprint(inventoryTotals)
+    ) {
+      markSyncLedgerEvent("remoteInventorySync");
+    }
+    if (net.remoteInventoryTotalsByPeer instanceof Map) {
+      net.remoteInventoryTotalsByPeer.set(conn.peer, inventoryTotals);
+    }
+    if (net.remoteInventoryFingerprintByPeer instanceof Map) {
+      net.remoteInventoryFingerprintByPeer.set(conn.peer, inventoryFingerprint);
+    }
     player.inHut = !!message.inHut;
     player.houseKey = message.houseKey ?? null;
     player.houseX = Number.isFinite(message.houseX) ? message.houseX : null;
@@ -9628,6 +10775,7 @@
       id: conn.peer,
       name: player.name,
       color: player.color,
+      seq: Number.isFinite(player.netSeq) ? player.netSeq : incomingSeq,
       x: player.x,
       y: player.y,
       facing: player.facing,
@@ -9642,17 +10790,34 @@
       houseY: player.houseY,
       inCave: player.inCave,
       caveId: player.caveId,
+      inventoryFingerprint: typeof player.inventoryFingerprint === "string"
+        ? player.inventoryFingerprint
+        : "",
+      inventoryTotals: sanitizeInventoryTotalsPayload(player.inventoryTotals),
     }, conn.peer);
   }
 
   function applyRemotePlayerUpdate(message) {
+    const incomingSeqRaw = Number(message?.seq);
+    const hasIncomingSeq = Number.isFinite(incomingSeqRaw);
+    const incomingSeq = hasIncomingSeq ? Math.max(0, Math.floor(incomingSeqRaw)) : null;
     if (!message.id || message.id === net.playerId) {
       if (!state.player) return;
+      if (hasIncomingSeq) {
+        net.localPlayerAckSeq = Math.max(net.localPlayerAckSeq, incomingSeq);
+        if (!Number.isFinite(state.player.netSeq) || incomingSeq > state.player.netSeq) {
+          state.player.netSeq = incomingSeq;
+        }
+      }
       if (typeof message?.name === "string") {
         setLocalPlayerName(message.name, { persist: false, broadcast: false });
       }
       const syncedColor = normalizeHexColor(message?.color);
       if (syncedColor) net.localColor = syncedColor;
+      reconcileLocalPlayerPositionFromAuthority(message.x, message.y, { force: false });
+      if (message.facing) {
+        state.player.facing = normalizePlayerFacingValue(message.facing, state.player.facing);
+      }
       if (Number.isFinite(message.hp)) {
         state.player.hp = normalizePlayerHpValue(message.hp, state.player.maxHp, state.player.hp);
         updateHealthUI();
@@ -9672,6 +10837,16 @@
       return;
     }
     const current = net.players.get(message.id) || {};
+    const currentSeq = Number.isFinite(current.netSeq)
+      ? current.netSeq
+      : (net.remotePlayerSeq instanceof Map ? (net.remotePlayerSeq.get(message.id) ?? -1) : -1);
+    if (hasIncomingSeq && incomingSeq <= currentSeq) return;
+    const resolvedSeq = hasIncomingSeq
+      ? incomingSeq
+      : (Number.isFinite(currentSeq) ? currentSeq + 1 : 0);
+    if (net.remotePlayerSeq instanceof Map) {
+      net.remotePlayerSeq.set(message.id, resolvedSeq);
+    }
     const syncedColor = normalizeHexColor(message.color) || normalizeHexColor(current.color) || "#6fa8ff";
     const nextMaxHp = normalizePlayerMaxHpValue(message.maxHp, current.maxHp ?? 100);
     const remoteWorld = getPlayerWorldForSync(!!message.inCave, message.caveId ?? null);
@@ -9682,10 +10857,17 @@
       current.x,
       current.y
     );
+    const inventoryFingerprint = typeof message.inventoryFingerprint === "string"
+      ? message.inventoryFingerprint
+      : (typeof current.inventoryFingerprint === "string" ? current.inventoryFingerprint : "");
+    const inventoryTotals = sanitizeInventoryTotalsPayload(
+      message.inventoryTotals ?? current.inventoryTotals
+    );
     net.players.set(message.id, {
       id: message.id,
       name: sanitizePlayerName(message.name, current.name || "Survivor"),
       color: syncedColor,
+      netSeq: resolvedSeq,
       x: normalizedPos.x,
       y: normalizedPos.y,
       facing: normalizePlayerFacingValue(message.facing, current.facing),
@@ -9700,6 +10882,8 @@
       houseY: Number.isFinite(message.houseY) ? message.houseY : (current.houseY ?? null),
       inCave: !!message.inCave,
       caveId: message.caveId ?? null,
+      inventoryFingerprint,
+      inventoryTotals,
       renderX: current.renderX ?? (Number.isFinite(message.x) ? message.x : (current.x ?? 0)),
       renderY: current.renderY ?? (Number.isFinite(message.y) ? message.y : (current.y ?? 0)),
     });
@@ -9975,6 +11159,7 @@
     const damage = clamp(getAppliedHarvestDamage(sourcePlayer, resource), 1, 4);
     const playAudio = shouldPlayWorldSfx(world, resource.x, resource.y);
     applyHarvestToResource(world, resource, damage, false, playAudio);
+    markSyncLedgerEvent("harvest");
   }
 
   function handleAttackRequest(conn, message) {
@@ -10088,8 +11273,33 @@
       ensureRobotMeta(structure);
     }
     const storageSize = getStorageSizeForStructureType(structure.type, CHEST_SIZE);
+    const expectedRevision = getStorageRevision(structure);
+    const requestRevision = normalizeStorageRevisionValue(message.revision);
+    if (requestRevision !== expectedRevision) {
+      if (conn.open) {
+        conn.send({
+          type: "chestUpdate",
+          authoritative: true,
+          tx: structure.tx,
+          ty: structure.ty,
+          revision: expectedRevision,
+          storage: sanitizeInventorySlots(structure.storage, storageSize),
+        });
+      }
+      return;
+    }
     structure.storage = sanitizeInventorySlots(message.storage, storageSize);
+    const revision = bumpStorageRevision(structure);
     markDirty();
+    markSyncLedgerEvent("surfaceChestUpdate");
+    broadcastNet({
+      type: "chestUpdate",
+      authoritative: true,
+      tx: structure.tx,
+      ty: structure.ty,
+      revision,
+      storage: sanitizeInventorySlots(structure.storage, storageSize),
+    });
   }
 
   function canRemotePlayerControlRobot(player, structure) {
@@ -10386,8 +11596,37 @@
     if (!canRemotePlayerAccessHouseInterior(player, house, Number(message.tx), Number(message.ty), 2.25)) return;
     const chest = getInteriorStructureAt(house, message.tx, message.ty);
     if (!chest || chest.type !== "chest") return;
+    const expectedRevision = getStorageRevision(chest);
+    const requestRevision = normalizeStorageRevisionValue(message.revision);
+    if (requestRevision !== expectedRevision) {
+      if (conn.open) {
+        conn.send({
+          type: "houseChestUpdate",
+          authoritative: true,
+          houseTx: house.tx,
+          houseTy: house.ty,
+          tx: chest.tx,
+          ty: chest.ty,
+          revision: expectedRevision,
+          storage: sanitizeInventorySlots(chest.storage, CHEST_SIZE),
+        });
+      }
+      return;
+    }
     chest.storage = sanitizeInventorySlots(message.storage, CHEST_SIZE);
+    const revision = bumpStorageRevision(chest);
     markDirty();
+    markSyncLedgerEvent("houseChestUpdate");
+    broadcastNet({
+      type: "houseChestUpdate",
+      authoritative: true,
+      houseTx: house.tx,
+      houseTy: house.ty,
+      tx: chest.tx,
+      ty: chest.ty,
+      revision,
+      storage: sanitizeInventorySlots(chest.storage, CHEST_SIZE),
+    });
   }
 
   function handleHouseDestroyChest(conn, message) {
@@ -10554,6 +11793,7 @@
           if (target.qty <= 0) world.drops.splice(byIdIndex, 1);
         }
         markDirty();
+        markSyncLedgerEvent("dropPickup");
         return;
       }
     }
@@ -10578,6 +11818,7 @@
         if (target.qty <= 0) world.drops.splice(bestIndex, 1);
       }
       markDirty();
+      markSyncLedgerEvent("dropPickup");
     }
   }
 
@@ -10612,6 +11853,7 @@
       if (distFromPlayer > CONFIG.tileSize * 6) return;
     }
     spawnDrop(itemId, qty, x, y, world);
+    markSyncLedgerEvent("dropSpawn");
   }
 
   function shouldPlayWorldSfx(world, x, y, radius = CONFIG.tileSize * 15) {
@@ -10730,6 +11972,61 @@
     return cave ? cave.world : null;
   }
 
+  function sanitizeInventoryTotalsPayload(value) {
+    if (!value || typeof value !== "object") return Object.create(null);
+    const totals = Object.create(null);
+    for (const [itemIdRaw, qtyRaw] of Object.entries(value)) {
+      const itemId = String(itemIdRaw || "");
+      if (!itemId || !ITEMS[itemId]) continue;
+      const qty = Math.max(0, Math.floor(Number(qtyRaw) || 0));
+      if (qty <= 0) continue;
+      totals[itemId] = qty;
+    }
+    return totals;
+  }
+
+  function getLocalInventoryTotalsPayload() {
+    return sanitizeInventoryTotalsPayload(qaBuildInventoryTotals(state.inventory));
+  }
+
+  function getInventoryTotalsFingerprint(totals) {
+    return mpAutotestStableStringify(sanitizeInventoryTotalsPayload(totals));
+  }
+
+  function buildPlayerUpdateFingerprint(payload) {
+    if (!payload || typeof payload !== "object") return "";
+    const unlocks = payload.unlocks && typeof payload.unlocks === "object"
+      ? Object.keys(payload.unlocks)
+        .filter((key) => payload.unlocks[key])
+        .sort()
+        .join(",")
+      : "";
+    const checkpointX = Number.isFinite(payload.checkpoint?.x) ? payload.checkpoint.x.toFixed(2) : "";
+    const checkpointY = Number.isFinite(payload.checkpoint?.y) ? payload.checkpoint.y.toFixed(2) : "";
+    return [
+      payload.name || "",
+      payload.color || "",
+      Number(payload.x || 0).toFixed(2),
+      Number(payload.y || 0).toFixed(2),
+      Number(payload.facing?.x || 0).toFixed(3),
+      Number(payload.facing?.y || 0).toFixed(3),
+      Number(payload.hp || 0).toFixed(2),
+      Number(payload.maxHp || 0).toFixed(2),
+      Math.floor(Number(payload.toolTier) || 0),
+      checkpointX,
+      checkpointY,
+      payload.inHut ? 1 : 0,
+      payload.houseKey || "",
+      Number.isFinite(payload.houseX) ? Number(payload.houseX).toFixed(2) : "",
+      Number.isFinite(payload.houseY) ? Number(payload.houseY).toFixed(2) : "",
+      payload.inCave ? 1 : 0,
+      Number.isInteger(payload.caveId) ? payload.caveId : "",
+      unlocks,
+      payload.inventoryFingerprint || "",
+      getInventoryTotalsFingerprint(payload.inventoryTotals),
+    ].join("|");
+  }
+
   function sendPlayerUpdate() {
     if (!net.enabled || !state.player) return;
     const playerWorld = getPlayerWorldForSync(state.inCave, state.activeCave?.id ?? null);
@@ -10741,9 +12038,7 @@
       state.player.y
     );
     const maxHp = normalizePlayerMaxHpValue(state.player.maxHp, 100);
-    const payload = {
-      type: "playerUpdate",
-      id: net.playerId,
+    const payloadBase = {
       name: net.localName,
       color: net.localColor,
       x: clampedPos.x,
@@ -10760,7 +12055,27 @@
       houseY: state.player.inHut ? state.housePlayer?.y ?? null : null,
       inCave: state.inCave,
       caveId: state.activeCave?.id ?? null,
+      inventoryFingerprint: mpAutotestInventoryFingerprintFromSlots(state.inventory),
+      inventoryTotals: getLocalInventoryTotalsPayload(),
     };
+    const fingerprint = buildPlayerUpdateFingerprint(payloadBase);
+    if (fingerprint === net.lastSentPlayerFingerprint) return;
+    net.lastSentPlayerFingerprint = fingerprint;
+    const previousSeq = Number.isFinite(state.player.netSeq)
+      ? Math.max(0, Math.floor(state.player.netSeq))
+      : 0;
+    const nextSeq = previousSeq + 1;
+    state.player.netSeq = nextSeq;
+    net.localPlayerSeq = nextSeq;
+    const payload = {
+      type: "playerUpdate",
+      id: net.playerId,
+      seq: nextSeq,
+      ...payloadBase,
+    };
+    if (net.isHost) {
+      markSyncLedgerEvent("hostPlayerUpdate");
+    }
     if (net.isHost) {
       broadcastNet(payload);
     } else {
@@ -11048,6 +12363,194 @@
     }
   }
 
+  function markSyncLedgerEvent(label = "") {
+    if (!net.enabled || !net.isHost) return;
+    net.syncLedgerEventCounter += 1;
+    net.syncLedgerLastEventLabel = String(label || "");
+  }
+
+  function mergeItemTotals(target, source) {
+    if (!target || !source || typeof source !== "object") return;
+    for (const [itemIdRaw, qtyRaw] of Object.entries(source)) {
+      const itemId = String(itemIdRaw || "");
+      if (!itemId || !ITEMS[itemId]) continue;
+      const qty = Math.max(0, Math.floor(Number(qtyRaw) || 0));
+      if (qty <= 0) continue;
+      target[itemId] = (target[itemId] || 0) + qty;
+    }
+  }
+
+  function collectDebugLedgerTotals() {
+    const totals = mpAutotestCollectHostItemTotals();
+    if (net.remoteInventoryTotalsByPeer instanceof Map) {
+      for (const playerTotals of net.remoteInventoryTotalsByPeer.values()) {
+        mergeItemTotals(totals, sanitizeInventoryTotalsPayload(playerTotals));
+      }
+    }
+    return totals;
+  }
+
+  function buildDebugSyncSegments() {
+    if (!state.surfaceWorld && !state.world) return null;
+    const snapshot = buildSnapshot();
+    const canonical = mpAutotestBuildCanonicalFromSnapshot(snapshot);
+    return mpAutotestComputeSegmentHashes(canonical);
+  }
+
+  function summarizeLedgerDelta(diff, limit = 6) {
+    if (!diff || !Array.isArray(diff.deltas) || diff.deltas.length === 0) return "none";
+    return diff.deltas
+      .slice(0, limit)
+      .map((entry) => `${entry.key}:${entry.delta > 0 ? "+" : ""}${entry.delta}`)
+      .join(", ");
+  }
+
+  function runDebugLedgerAudit() {
+    if (!net.isHost) return;
+    const nextTotals = collectDebugLedgerTotals();
+    const nextFingerprint = getInventoryTotalsFingerprint(nextTotals);
+    if (!net.syncAuditLedgerFingerprint) {
+      net.syncAuditLedgerTotals = nextTotals;
+      net.syncAuditLedgerFingerprint = nextFingerprint;
+      net.syncLedgerLastEventCounter = net.syncLedgerEventCounter;
+      return;
+    }
+    if (nextFingerprint === net.syncAuditLedgerFingerprint) return;
+    const diff = mpAutotestDiffTotals(net.syncAuditLedgerTotals, nextTotals);
+    const hadKnownEvent = net.syncLedgerEventCounter !== net.syncLedgerLastEventCounter;
+    if (!hadKnownEvent) {
+      console.error(
+        `[MP Sync Ledger FAIL] Unexplained item delta detected (total=${diff.totalDelta}; changes=${summarizeLedgerDelta(diff)})`
+      );
+    }
+    net.syncAuditLedgerTotals = nextTotals;
+    net.syncAuditLedgerFingerprint = nextFingerprint;
+    net.syncLedgerLastEventCounter = net.syncLedgerEventCounter;
+  }
+
+  function prunePendingDebugSyncAudits() {
+    if (!(net.pendingSyncAudits instanceof Map) || net.pendingSyncAudits.size === 0) return;
+    const now = performance.now();
+    for (const [auditId, pending] of net.pendingSyncAudits.entries()) {
+      if (!pending || typeof pending !== "object") {
+        net.pendingSyncAudits.delete(auditId);
+        continue;
+      }
+      const createdAt = Number(pending.createdAt) || 0;
+      if (now - createdAt <= MP_DEBUG_SYNC_AUDIT_CONFIG.interval * 3000) continue;
+      if (pending.expected instanceof Set && pending.expected.size > 0) {
+        console.warn(
+          `[MP Sync Audit WARN] ${auditId} timed out waiting for: ${[...pending.expected].join(", ")}`
+        );
+      }
+      net.pendingSyncAudits.delete(auditId);
+    }
+  }
+
+  function runHostDebugSyncAuditTick(dt) {
+    if (!net.isHost || !(net.connections instanceof Map) || net.connections.size === 0) return;
+    prunePendingDebugSyncAudits();
+    net.syncAuditTimer -= Math.max(0, Number(dt) || 0);
+    if (net.syncAuditTimer > 0) return;
+    net.syncAuditTimer = MP_DEBUG_SYNC_AUDIT_CONFIG.interval;
+    runDebugLedgerAudit();
+    const segments = buildDebugSyncSegments();
+    if (!segments) return;
+    const expected = new Set(
+      [...net.connections.entries()]
+        .filter(([, conn]) => conn?.open)
+        .map(([peerId]) => peerId)
+    );
+    if (expected.size === 0) return;
+    const auditId = `audit-${Date.now().toString(36)}-${(net.syncAuditSeq += 1)}`;
+    net.pendingSyncAudits.set(auditId, {
+      createdAt: performance.now(),
+      expected,
+      hostSegments: segments,
+    });
+    while (net.pendingSyncAudits.size > MP_DEBUG_SYNC_AUDIT_CONFIG.pendingLimit) {
+      const oldest = net.pendingSyncAudits.keys().next().value;
+      if (oldest == null) break;
+      net.pendingSyncAudits.delete(oldest);
+    }
+    broadcastNet({
+      type: "debugSyncAuditRequest",
+      auditId,
+      hostSegments: segments,
+    });
+  }
+
+  function runDebugSyncAudit(dt) {
+    if (!state.debugUnlocked || mpAutotest.active || !net.enabled) return;
+    if (!net.isHost) return;
+    runHostDebugSyncAuditTick(dt);
+  }
+
+  function handleDebugSyncAuditRequest(message) {
+    if (!netIsClientReady() || !message) return;
+    const auditId = typeof message.auditId === "string" ? message.auditId : null;
+    if (!auditId) return;
+    const localSegments = buildDebugSyncSegments();
+    if (!localSegments) return;
+    const hostSegments = message.hostSegments && typeof message.hostSegments === "object"
+      ? message.hostSegments
+      : null;
+    const mismatches = [];
+    if (hostSegments) {
+      for (const key of Object.keys(localSegments)) {
+        if (key === "overall") continue;
+        if ((hostSegments[key] || "") !== (localSegments[key] || "")) {
+          mismatches.push(key);
+        }
+      }
+    }
+    sendToHost({
+      type: "debugSyncAuditReport",
+      auditId,
+      clientId: net.playerId || "client",
+      clientSegments: localSegments,
+      mismatches,
+    });
+  }
+
+  function handleDebugSyncAuditReport(conn, message) {
+    if (!net.isHost || !conn || !message) return;
+    const auditId = typeof message.auditId === "string" ? message.auditId : null;
+    if (!auditId || !(net.pendingSyncAudits instanceof Map)) return;
+    const pending = net.pendingSyncAudits.get(auditId);
+    if (!pending) return;
+    const hostSegments = pending.hostSegments && typeof pending.hostSegments === "object"
+      ? pending.hostSegments
+      : null;
+    const clientSegments = message.clientSegments && typeof message.clientSegments === "object"
+      ? message.clientSegments
+      : null;
+    const mismatches = [];
+    if (hostSegments && clientSegments) {
+      for (const key of Object.keys(hostSegments)) {
+        if (key === "overall") continue;
+        if ((hostSegments[key] || "") !== (clientSegments[key] || "")) {
+          mismatches.push(key);
+        }
+      }
+    } else {
+      mismatches.push("snapshot");
+    }
+    if (mismatches.length > 0) {
+      console.error(
+        `[MP Sync Audit FAIL] ${conn.peer} mismatch (${mismatches.join(", ")}) host=${hostSegments?.overall || "-"} client=${clientSegments?.overall || "-"}`
+      );
+    }
+    if (pending.expected instanceof Set) {
+      pending.expected.delete(conn.peer);
+      if (pending.expected.size === 0) {
+        net.pendingSyncAudits.delete(auditId);
+      }
+    } else {
+      net.pendingSyncAudits.delete(auditId);
+    }
+  }
+
   function smoothRemoteEntityRender(entity, dt, smoothFactor, snapDistance) {
     if (!entity || !Number.isFinite(entity.x) || !Number.isFinite(entity.y)) return;
     if (!Number.isFinite(entity.renderX) || !Number.isFinite(entity.renderY)) {
@@ -11083,30 +12586,56 @@
       }
     }
 
-    if (!net.isHost && state.world?.monsters) {
-      for (const monster of state.world.monsters) {
-        if (monster.dayBurning && (monster.burnTimer ?? 0) > 0) {
-          monster.burnTimer = Math.max(0, monster.burnTimer - dt);
+    if (!net.isHost) {
+      const clientWorlds = [];
+      const surface = state.surfaceWorld || state.world;
+      if (surface) {
+        clientWorlds.push(surface);
+        if (Array.isArray(surface.caves)) {
+          for (const cave of surface.caves) {
+            if (cave?.world) clientWorlds.push(cave.world);
+          }
         }
-        if (!Number.isFinite(monster.x) || !Number.isFinite(monster.y)) continue;
-        monster.renderX = monster.x;
-        monster.renderY = monster.y;
       }
-    }
-
-    if (!net.isHost && state.world?.animals) {
-      for (const animal of state.world.animals) {
-        if (!Number.isFinite(animal.x) || !Number.isFinite(animal.y)) continue;
-        animal.renderX = animal.x;
-        animal.renderY = animal.y;
-      }
-    }
-
-    if (!net.isHost && state.world?.villagers) {
-      for (const villager of state.world.villagers) {
-        if (!Number.isFinite(villager.x) || !Number.isFinite(villager.y)) continue;
-        villager.renderX = villager.x;
-        villager.renderY = villager.y;
+      for (const world of clientWorlds) {
+        if (Array.isArray(world.monsters)) {
+          for (const monster of world.monsters) {
+            if (monster.dayBurning && (monster.burnTimer ?? 0) > 0) {
+              monster.burnTimer = Math.max(0, monster.burnTimer - dt);
+            }
+            if (!Number.isFinite(monster.x) || !Number.isFinite(monster.y)) continue;
+            monster.renderX = monster.x;
+            monster.renderY = monster.y;
+          }
+        }
+        if (Array.isArray(world.animals)) {
+          for (const animal of world.animals) {
+            if (!Number.isFinite(animal.x) || !Number.isFinite(animal.y)) continue;
+            animal.renderX = animal.x;
+            animal.renderY = animal.y;
+          }
+        }
+        if (Array.isArray(world.villagers)) {
+          for (const villager of world.villagers) {
+            if (!Number.isFinite(villager.x) || !Number.isFinite(villager.y)) continue;
+            villager.renderX = villager.x;
+            villager.renderY = villager.y;
+          }
+        }
+        if (Array.isArray(world.projectiles)) {
+          for (const projectile of world.projectiles) {
+            if (!Number.isFinite(projectile.x) || !Number.isFinite(projectile.y)) continue;
+            projectile.renderX = projectile.x;
+            projectile.renderY = projectile.y;
+          }
+        }
+        if (Array.isArray(world.poisonClouds)) {
+          for (const cloud of world.poisonClouds) {
+            if (!Number.isFinite(cloud.x) || !Number.isFinite(cloud.y)) continue;
+            cloud.renderX = cloud.x;
+            cloud.renderY = cloud.y;
+          }
+        }
       }
     }
 
@@ -11152,19 +12681,29 @@
       }
     }
 
-    if (!net.isHost && state.world?.projectiles) {
-      for (const projectile of state.world.projectiles) {
-        if (!Number.isFinite(projectile.x) || !Number.isFinite(projectile.y)) continue;
-        projectile.renderX = projectile.x;
-        projectile.renderY = projectile.y;
+  }
+
+  function alignWorldEntityRenderPositions(world) {
+    if (!world || typeof world !== "object") return;
+    const syncList = [world.monsters, world.animals, world.villagers, world.projectiles, world.poisonClouds];
+    for (const list of syncList) {
+      if (!Array.isArray(list)) continue;
+      for (const entity of list) {
+        if (!entity || !Number.isFinite(entity.x) || !Number.isFinite(entity.y)) continue;
+        entity.renderX = entity.x;
+        entity.renderY = entity.y;
       }
     }
+  }
 
-    if (!net.isHost && state.world?.poisonClouds) {
-      for (const cloud of state.world.poisonClouds) {
-        if (!Number.isFinite(cloud.x) || !Number.isFinite(cloud.y)) continue;
-        cloud.renderX = cloud.x;
-        cloud.renderY = cloud.y;
+  function alignAllWorldEntityRenderPositions() {
+    const surface = state.surfaceWorld || state.world;
+    if (!surface) return;
+    alignWorldEntityRenderPositions(surface);
+    if (Array.isArray(surface.caves)) {
+      for (const cave of surface.caves) {
+        if (!cave?.world) continue;
+        alignWorldEntityRenderPositions(cave.world);
       }
     }
   }
@@ -11314,6 +12853,39 @@
       x: clamp(rawX, minPos, maxPos),
       y: clamp(rawY, minPos, maxPos),
     };
+  }
+
+  function reconcileLocalPlayerPositionFromAuthority(x, y, options = null) {
+    if (!state.player) return;
+    const opts = options || {};
+    const force = !!opts.force;
+    if (!force && (state.player.inHut || state.inCave)) return;
+    const localWorld = getPlayerWorldForSync(state.inCave, state.activeCave?.id ?? null);
+    const normalized = clampPositionToWorldBounds(
+      localWorld,
+      Number.isFinite(x) ? x : state.player.x,
+      Number.isFinite(y) ? y : state.player.y,
+      state.player.x,
+      state.player.y
+    );
+    const dist = Math.hypot(normalized.x - state.player.x, normalized.y - state.player.y);
+    const move = getMoveVector();
+    const isActivelyMoving = Math.hypot(move.x, move.y) > 0.04;
+    const hardSnapDist = CONFIG.tileSize * (isActivelyMoving ? 2.35 : 1.55);
+    const softIgnoreDist = isActivelyMoving ? 3.2 : 1.2;
+    if (force || dist >= hardSnapDist) {
+      state.player.x = normalized.x;
+      state.player.y = normalized.y;
+      return;
+    }
+    if (dist <= softIgnoreDist) return;
+    const blend = clamp(
+      Number.isFinite(opts.blend) ? opts.blend : (isActivelyMoving ? 0.14 : 0.26),
+      0.06,
+      1
+    );
+    state.player.x = lerp(state.player.x, normalized.x, blend);
+    state.player.y = lerp(state.player.y, normalized.y, blend);
   }
 
   function ensurePlayerProgress(player) {
@@ -15086,12 +16658,12 @@
             fleeTimer: 0,
             wanderTimer: 0,
             dir: { x: 0, y: 0 },
-            renderX: preserveHostCoordinates ? finalPos.x : (prev?.renderX ?? finalPos.x),
-            renderY: preserveHostCoordinates ? finalPos.y : (prev?.renderY ?? finalPos.y),
+            renderX: finalPos.x,
+            renderY: finalPos.y,
             _drawFacingX: Number.isFinite(prev?._drawFacingX) ? (prev._drawFacingX < 0 ? -1 : 1) : undefined,
             _prevRenderX: Number.isFinite(prev?._prevRenderX)
               ? prev._prevRenderX
-              : (preserveHostCoordinates ? finalPos.x : (prev?.renderX ?? finalPos.x)),
+              : finalPos.x,
           };
         })
         .filter(Boolean)
@@ -15144,8 +16716,8 @@
             wanderRadius,
             wanderTimer: 0,
             dir: { x: 0, y: 0 },
-            renderX: preserveHostCoordinates ? x : (prev?.renderX ?? x),
-            renderY: preserveHostCoordinates ? y : (prev?.renderY ?? y),
+            renderX: x,
+            renderY: y,
           };
         })
         .filter(Boolean)
@@ -15615,8 +17187,10 @@
       item.type = normalizeLegacyStructureType(item.type);
       if (item.type === "chest") {
         item.storage = sanitizeInventorySlots(item.storage, CHEST_SIZE);
+        item.storageRevision = normalizeStorageRevisionValue(item.storageRevision);
       } else {
         item.storage = null;
+        item.storageRevision = 0;
       }
     }
   }
@@ -16013,6 +17587,7 @@
       removed: false,
       pending: !!options.pending,
       storage: options.storage || null,
+      storageRevision: normalizeStorageRevisionValue(options.storageRevision),
       meta: options.meta || null,
     };
     if (isHouseType(type)) {
@@ -17732,6 +19307,7 @@
           const storageSize = getStorageSizeForStructureType(normalized.type, null);
           clearResourcesForFootprint(world, normalized.type, normalized.tx, normalized.ty);
           const structure = addStructure(normalized.type, normalized.tx, normalized.ty, {
+            storageRevision: normalizeStorageRevisionValue(entry.storageRevision),
             storage: Array.isArray(entry.storage)
               ? sanitizeInventorySlots(
                   entry.storage,
@@ -18379,6 +19955,7 @@
       tx,
       ty,
       storage: type === "chest" ? createEmptyInventory(CHEST_SIZE) : null,
+      storageRevision: 0,
     };
     interior.items.push(item);
     return item;
@@ -18961,6 +20538,7 @@
       ttl: clamp(Number(ttl) || DROP_DESPAWN.lifetime, 0, DROP_DESPAWN.lifetime),
     });
     markDirty();
+    markSyncLedgerEvent("dropSpawn");
   }
 
   function getDropSpawnPosition(world, playerX, playerY, facing, tilesAway = 2) {
@@ -20475,6 +22053,28 @@
       : CHEST_SIZE;
   }
 
+  function normalizeStorageRevisionValue(value) {
+    const numeric = Math.floor(Number(value));
+    return Number.isFinite(numeric) && numeric >= 0 ? numeric : 0;
+  }
+
+  function getStorageRevision(holder) {
+    if (!holder || typeof holder !== "object") return 0;
+    holder.storageRevision = normalizeStorageRevisionValue(holder.storageRevision);
+    return holder.storageRevision;
+  }
+
+  function setStorageRevision(holder, revision) {
+    if (!holder || typeof holder !== "object") return 0;
+    holder.storageRevision = normalizeStorageRevisionValue(revision);
+    return holder.storageRevision;
+  }
+
+  function bumpStorageRevision(holder) {
+    const current = getStorageRevision(holder);
+    return setStorageRevision(holder, current + 1);
+  }
+
   function isSurfaceStorageStructure(structure) {
     return !!structure
       && !structure.removed
@@ -20730,27 +22330,86 @@
 
   function sendChestUpdate(structure) {
     if (!structure || !net.enabled) return;
+    const toStoragePayload = (slots, size) => (
+      slots
+        ? slots.map((slot) => ({ id: slot.id, qty: slot.qty }))
+        : createEmptyInventory(size)
+    );
     if (structure.interior) {
+      const houseTx = structure.houseRef?.tx;
+      const houseTy = structure.houseRef?.ty;
+      if (!Number.isInteger(houseTx) || !Number.isInteger(houseTy)) return;
+      const revision = net.isHost
+        ? bumpStorageRevision(structure)
+        : getStorageRevision(structure);
+      if (net.isHost) markSyncLedgerEvent("houseChestLocal");
       netSend({
         type: "houseChestUpdate",
-        houseTx: structure.houseRef?.tx,
-        houseTy: structure.houseRef?.ty,
+        authoritative: net.isHost,
+        houseTx,
+        houseTy,
         tx: structure.tx,
         ty: structure.ty,
-        storage: structure.storage
-          ? structure.storage.map((slot) => ({ id: slot.id, qty: slot.qty }))
-          : createEmptyInventory(CHEST_SIZE),
+        revision,
+        storage: toStoragePayload(structure.storage, CHEST_SIZE),
       });
       return;
     }
+    const revision = net.isHost
+      ? bumpStorageRevision(structure)
+      : getStorageRevision(structure);
+    if (net.isHost) markSyncLedgerEvent("surfaceChestLocal");
     netSend({
       type: "chestUpdate",
+      authoritative: net.isHost,
       tx: structure.tx,
       ty: structure.ty,
-      storage: structure.storage
-        ? structure.storage.map((slot) => ({ id: slot.id, qty: slot.qty }))
-        : createEmptyInventory(getStorageSizeForStructureType(structure.type, CHEST_SIZE)),
+      revision,
+      storage: toStoragePayload(
+        structure.storage,
+        getStorageSizeForStructureType(structure.type, CHEST_SIZE)
+      ),
     });
+  }
+
+  function applyAuthoritativeSurfaceChestUpdate(message) {
+    if (!message || !Number.isInteger(message.tx) || !Number.isInteger(message.ty)) return;
+    const structure = getStructureAt(message.tx, message.ty);
+    if (!isSurfaceStorageStructure(structure)) return;
+    const storageSize = getStorageSizeForStructureType(structure.type, CHEST_SIZE);
+    structure.storage = sanitizeInventorySlots(message.storage, storageSize);
+    setStorageRevision(structure, message.revision);
+    if (state.activeChest === structure) {
+      updateAllSlotUI();
+    }
+  }
+
+  function applyAuthoritativeHouseChestUpdate(message) {
+    if (!message) return;
+    const houseTx = Math.floor(Number(message.houseTx));
+    const houseTy = Math.floor(Number(message.houseTy));
+    const tx = Math.floor(Number(message.tx));
+    const ty = Math.floor(Number(message.ty));
+    if (!Number.isInteger(houseTx) || !Number.isInteger(houseTy) || !Number.isInteger(tx) || !Number.isInteger(ty)) {
+      return;
+    }
+    const house = getStructureAt(houseTx, houseTy);
+    if (!house || !isHouseType(house.type)) return;
+    const chest = getInteriorStructureAt(house, tx, ty);
+    if (!chest || chest.type !== "chest") return;
+    chest.storage = sanitizeInventorySlots(message.storage, CHEST_SIZE);
+    setStorageRevision(chest, message.revision);
+    if (
+      state.activeChest
+      && state.activeChest.interior
+      && state.activeChest.houseRef
+      && state.activeChest.houseRef.tx === houseTx
+      && state.activeChest.houseRef.ty === houseTy
+      && state.activeChest.tx === tx
+      && state.activeChest.ty === ty
+    ) {
+      updateAllSlotUI();
+    }
   }
 
   function getActiveRobotStructures() {
@@ -24341,11 +26000,19 @@
     player.houseY = null;
     player.inCave = false;
     player.caveId = null;
+    const nextSeq = Number.isFinite(player.netSeq)
+      ? Math.max(0, Math.floor(player.netSeq)) + 1
+      : 1;
+    player.netSeq = nextSeq;
+    if (net.hostPlayerSeqByPeer instanceof Map) {
+      net.hostPlayerSeqByPeer.set(player.id, nextSeq);
+    }
     broadcastNet({
       type: "playerUpdate",
       id: player.id,
       name: player.name,
       color: player.color,
+      seq: nextSeq,
       x: player.x,
       y: player.y,
       facing: player.facing,
@@ -25015,11 +26682,15 @@
       world === (state.surfaceWorld || state.world)
       && shouldBlockSurfaceHostilesAtTile(world, Math.floor(nextX / CONFIG.tileSize), Math.floor(nextY / CONFIG.tileSize))
     ) {
+      monster.renderX = monster.x;
+      monster.renderY = monster.y;
       return;
     }
 
     if (isWalkableAtWorld(world, nextX, monster.y)) monster.x = nextX;
     if (isWalkableAtWorld(world, monster.x, nextY)) monster.y = nextY;
+    monster.renderX = monster.x;
+    monster.renderY = monster.y;
   }
 
   function updateMonstersInWorld(world, dt, players, isSurface) {
@@ -27527,8 +29198,10 @@
     updateDrops(dt);
     updateInteraction();
     updateRemoteRender(dt);
+    alignAllWorldEntityRenderPositions();
     updateAudio(dt);
     netTick(dt);
+    runDebugSyncAudit(dt);
     runMultiplayerAutotest(dt);
     updatePrompt(dt);
     updateSave(dt);
