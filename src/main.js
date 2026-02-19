@@ -99,6 +99,13 @@
   const infiniteResourcesBtn = document.getElementById("infiniteResourcesBtn");
   const debugWorldMapBtn = document.getElementById("debugWorldMapBtn");
   const continentalShiftBtn = document.getElementById("continentalShiftBtn");
+  const mpAutotestQuickBtn = document.getElementById("mpAutotestQuickBtn");
+  const mpAutotestStressBtn = document.getElementById("mpAutotestStressBtn");
+  const mpAutotestClientsInput = document.getElementById("mpAutotestClients");
+  const mpAutotestSeedInput = document.getElementById("mpAutotestSeed");
+  const mpAutotestReplayBtn = document.getElementById("mpAutotestReplayBtn");
+  const mpAutotestLogEl = document.getElementById("mpAutotestLog");
+  const mpAutotestCopyReportBtn = document.getElementById("mpAutotestCopyReportBtn");
 
   const buildCategoryTabs = Array.from(buildMenu.querySelectorAll(".build-category-btn"));
   const buildCategoryIcons = Array.from(buildMenu.querySelectorAll(".build-category-icon"));
@@ -128,8 +135,8 @@
     attackCooldown: 1.1,
     aggroRange: 180,
   };
-  const PLAYER_ATTACK_REACH = MONSTER.attackRange + 16;
-  const PLAYER_ATTACK_FALLBACK_REACH = PLAYER_ATTACK_REACH - 4;
+  const PLAYER_ATTACK_REACH = MONSTER.attackRange + 24;
+  const PLAYER_ATTACK_FALLBACK_REACH = PLAYER_ATTACK_REACH - 6;
 
   const TOUCH_STICK_MAX_DIST = 40;
   const MOBILE_RENDER_DPR_CAP = 2;
@@ -193,13 +200,13 @@
     missSpread: 0.28,
   };
   const POISON_BOTTLE = Object.freeze({
-    speed: 205,
+    speed: 138,
     radius: 8,
-    maxLife: 1.7,
-    maxDistance: CONFIG.tileSize * 9.2,
-    missChance: 0.18,
-    spread: 0.08,
-    missSpread: 0.2,
+    maxLife: 1.55,
+    maxDistance: CONFIG.tileSize * 4.6,
+    missChance: 0.06,
+    spread: 0.028,
+    missSpread: 0.075,
     cloudRadius: CONFIG.tileSize * 1.22,
     cloudDuration: 2.9,
     cloudAffectInterval: 0.95,
@@ -269,7 +276,7 @@
       attackRange: 25,
       attackCooldown: 1.18,
       aggroRange: 236,
-      rangedRange: CONFIG.tileSize * 9.4,
+      rangedRange: CONFIG.tileSize * 4.9,
       dayImmune: true,
       poisonDuration: 7.5,
       poisonDps: 1.45,
@@ -437,6 +444,9 @@
     snapshotInterval: 0.3,
     motionInterval: 0.05,
     playerSendInterval: 0.04,
+    helloRetryInterval: 0.9,
+    resyncSilenceThreshold: 1.2,
+    resyncRequestCooldown: 0.8,
     renderSmooth: 12,
     houseSmooth: 18,
     monsterSmooth: 10,
@@ -487,6 +497,41 @@
     "Pass 3: Multiplayer host+join snapshot and interaction sync",
     "Pass 4: Multiplayer late-join stress (rapid interactions/race checks)",
   ]);
+
+  const MP_AUTOTEST_LAST_FAILURE_KEY = "mp_autotest_last_failure";
+  const MP_AUTOTEST_LOG_MAX_LINES = 280;
+  const MP_AUTOTEST_MESSAGE_LOG_SIZE = 200;
+  const MP_AUTOTEST_HASH_EPSILON = 1.25;
+  const MP_AUTOTEST_MODES = Object.freeze({
+    quick: Object.freeze({
+      id: "quick",
+      label: "Quick",
+      duration: 42,
+      actionIntervalMin: 0.22,
+      actionIntervalMax: 0.48,
+      stress: false,
+      fault: Object.freeze({
+        jitterMs: 0,
+        lossChance: 0,
+        reorderChance: 0,
+        duplicateChance: 0,
+      }),
+    }),
+    stress: Object.freeze({
+      id: "stress",
+      label: "Stress",
+      duration: 170,
+      actionIntervalMin: 0.08,
+      actionIntervalMax: 0.18,
+      stress: true,
+      fault: Object.freeze({
+        jitterMs: 210,
+        lossChance: 0.08,
+        reorderChance: 0.12,
+        duplicateChance: 0.09,
+      }),
+    }),
+  });
 
   const RESPAWN = {
     treeStump: 30,
@@ -721,7 +766,7 @@
   ];
 
   const ORE_LEVELS = Object.freeze({
-    coal: 3,
+    coal: 2,
     iron_ore: 2,
     gold_ore: 3,
     emerald: 4,
@@ -1461,6 +1506,12 @@
   const ABANDONED_ROBOT_OUTER_RING_RATIO = 0.16;
   const ABANDONED_ROBOT_FARTHEST_PERCENT = 0.28;
   const MAX_ISLAND_BRIDGE_GAP_TILES = 11;
+  const VILLAGE_SEEDING_CONFIG = Object.freeze({
+    caveAvoidDistanceTiles: 18,
+    caveHardBlockDistanceTiles: 9,
+    rareNearCaveSeedChance: 0.11,
+    rareNearCaveAttemptChance: 0.22,
+  });
   const SHIPWRECK_STORAGE_SIZE = CHEST_SIZE;
   const SHIPWRECK_CONFIG = Object.freeze({
     minPerWorld: 3,
@@ -1765,6 +1816,41 @@
     gameLoopStartCount: 0,
   };
 
+  const mpAutotest = {
+    active: false,
+    mode: null,
+    customFault: null,
+    seed: "",
+    rng: null,
+    elapsed: 0,
+    step: 0,
+    actionTimer: 0,
+    periodicCheckTimer: 0,
+    messageQueue: [],
+    messageLog: [],
+    actionHistory: [],
+    clients: [],
+    hostConnections: new Map(),
+    nextSeq: 1,
+    eventStats: {
+      authoritativeMutations: 0,
+      clientAuthViolations: 0,
+    },
+    inventoryLedger: {
+      totals: Object.create(null),
+      fingerprint: "",
+    },
+    hostHash: "",
+    clientHashes: new Map(),
+    lastAction: "none",
+    failReason: "",
+    failReport: "",
+    replayBundle: null,
+    logLines: [],
+    runningStatus: "idle",
+    savedSeed: null,
+  };
+
   const state = {
     world: null,
     surfaceWorld: null,
@@ -1857,6 +1943,9 @@
     snapshotTimer: NET_CONFIG.snapshotInterval,
     motionTimer: NET_CONFIG.motionInterval,
     playerTimer: NET_CONFIG.playerSendInterval,
+    helloRetryTimer: NET_CONFIG.helloRetryInterval,
+    resyncTimer: 0,
+    lastHostPacketAt: 0,
     robotPausePingTimer: 0.2,
     localName: "",
     localColor: "",
@@ -2007,7 +2096,7 @@
 
   function setLocalPlayerName(name, options = {}) {
     const {
-      persist = true,
+      persist = false,
       broadcast = false,
     } = options;
     const fallback = sanitizePlayerName(
@@ -2021,11 +2110,6 @@
     updatePlayerNameUI();
     if (persist) {
       saveUserSettings();
-      try {
-        window.localStorage.setItem(LEGACY_PLAYER_NAME_KEY, nextName);
-      } catch (err) {
-        // ignore profile persistence failures
-      }
     }
     if (broadcast && changed && net.enabled && state.player && (net.isHost || net.ready)) {
       sendPlayerUpdate();
@@ -2236,7 +2320,7 @@
       state.debugFovMultiplier = SETTINGS_DEFAULTS.debugFovMultiplier;
     }
     const fallbackName = loadedName || getLegacyStoredPlayerName() || generateDefaultPlayerName();
-    setLocalPlayerName(fallbackName, { persist: true, broadcast: false });
+    setLocalPlayerName(fallbackName, { persist: false, broadcast: false });
   }
 
   function updateVolumeUI() {
@@ -2389,6 +2473,9 @@
       debugPanel.classList.add("hidden");
     }
     if (!state.debugUnlocked) {
+      if (mpAutotest.active) {
+        mpAutotestStop({ restoreSeed: true, status: "idle" });
+      }
       state.debugMoses = false;
       state.debugInfiniteResources = false;
       state.debugWorldMapVisible = false;
@@ -2421,6 +2508,7 @@
       qaRuntime.featureInventoryLogged = false;
       qaRuntime.passChecklistLogged = false;
     }
+    updateMpAutotestControls();
     if (persist) saveUserSettings();
   }
 
@@ -2494,6 +2582,17 @@
     if (allowVelocity) {
       if ("vx" in entry && !Number.isFinite(Number(entry.vx))) qaPushIssue(issues, `[${label}] Non-finite vx`);
       if ("vy" in entry && !Number.isFinite(Number(entry.vy))) qaPushIssue(issues, `[${label}] Non-finite vy`);
+    }
+  }
+
+  function qaCheckFiniteTimer(value, label, issues, min = -0.001, max = 1e7) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) {
+      qaPushIssue(issues, `[timer] ${label} is non-finite`);
+      return;
+    }
+    if (numeric < min || numeric > max) {
+      qaPushIssue(issues, `[timer] ${label} out of bounds (${numeric})`);
     }
   }
 
@@ -2738,6 +2837,18 @@
       if (!Number.isFinite(player.x) || !Number.isFinite(player.y)) {
         qaPushIssue(issues, `[snapshot] player ${player.id} has non-finite position`);
       }
+      if (!Number.isFinite(player.maxHp) || !Number.isFinite(player.hp)) {
+        qaPushIssue(issues, `[snapshot] player ${player.id} has non-finite health`);
+      } else {
+        const maxHp = normalizePlayerMaxHpValue(player.maxHp, 100);
+        const hp = normalizePlayerHpValue(player.hp, maxHp, maxHp);
+        if (Math.abs(maxHp - player.maxHp) > 0.0001 || Math.abs(hp - player.hp) > 0.0001) {
+          qaPushIssue(issues, `[snapshot] player ${player.id} has out-of-range health`);
+        }
+      }
+      if (!Number.isFinite(player.facing?.x) || !Number.isFinite(player.facing?.y)) {
+        qaPushIssue(issues, `[snapshot] player ${player.id} has invalid facing`);
+      }
       if (!normalizeHexColor(player.color)) {
         qaPushIssue(issues, `[snapshot] player ${player.id} has invalid color`);
       }
@@ -2925,6 +3036,80 @@
     }
   }
 
+  function qaValidateCraftInventoryFullRule(issues) {
+    if (isInfiniteResourcesEnabled()) return;
+    const invSize = Math.max(1, INVENTORY_SIZE);
+    const makeFullInventory = (overrides) => {
+      const slots = Array.from({ length: invSize }, () => ({ id: "hide", qty: 3 }));
+      for (const [indexRaw, slot] of Object.entries(overrides || {})) {
+        const index = Number(indexRaw);
+        if (!Number.isInteger(index) || index < 0 || index >= invSize || !slot) continue;
+        slots[index] = { id: slot.id ?? null, qty: slot.qty ?? 0 };
+      }
+      return sanitizeInventorySlots(slots, invSize);
+    };
+
+    const exampleAInventory = makeFullInventory({
+      0: { id: "stick", qty: 2 },
+      1: { id: "wood", qty: 12 },
+      2: { id: "stone", qty: 7 },
+      3: { id: "grass", qty: 5 },
+    });
+    const exampleAAllowed = canCraftWithInventoryReplacement(
+      exampleAInventory,
+      { stick: 2 },
+      { sawmill: 1 }
+    );
+    if (!exampleAAllowed) {
+      qaPushIssue(issues, "[craft] Full inventory replacement rule failed Example A (should succeed)");
+    }
+
+    const exampleBInventory = makeFullInventory({
+      0: { id: "wood", qty: 98 },
+      1: { id: "stone", qty: 7 },
+      2: { id: "grass", qty: 3 },
+      3: { id: "stick", qty: 4 },
+    });
+    const exampleBAllowed = canCraftWithInventoryReplacement(
+      exampleBInventory,
+      { wood: 10 },
+      { sawmill: 1 }
+    );
+    if (exampleBAllowed) {
+      qaPushIssue(issues, "[craft] Full inventory replacement rule failed Example B (should fail)");
+    }
+
+    const stackOnlyInventory = makeFullInventory({
+      0: { id: "wood", qty: 98 },
+      1: { id: "stone", qty: 99 },
+      2: { id: "grass", qty: 3 },
+      3: { id: "stick", qty: 4 },
+    });
+    const stackOnlyAllowed = canCraftWithInventoryReplacement(
+      stackOnlyInventory,
+      { wood: 10 },
+      { stone: 1 }
+    );
+    if (!stackOnlyAllowed) {
+      qaPushIssue(issues, "[craft] Full inventory stack-into-existing rule failed");
+    }
+
+    const partialOnlyInventory = makeFullInventory({
+      0: { id: "wood", qty: 98 },
+      1: { id: "stick", qty: 6 },
+      2: { id: "stone", qty: 7 },
+      3: { id: "grass", qty: 3 },
+    });
+    const partialOnlyAllowed = canCraftWithInventoryReplacement(
+      partialOnlyInventory,
+      { wood: 10, stick: 2 },
+      { sawmill: 1 }
+    );
+    if (partialOnlyAllowed) {
+      qaPushIssue(issues, "[craft] Craft incorrectly allowed when no slot frees and output cannot stack");
+    }
+  }
+
   function runDebugQaSelfTests(dt = 0) {
     if (!state.debugUnlocked) return;
     qaLogFeatureInventoryOnce();
@@ -2949,10 +3134,10 @@
     if (state.activeShipRepair && state.activeChest) {
       qaPushIssue(issues, "[ui] Ship repair panel overlaps chest state");
     }
-    if (state.ambientFish?.length > AMBIENT_FISH_CONFIG.maxAlive) {
+    if (state.ambientFish?.length > AMBIENT_FISH_CONFIG.maxFish) {
       qaPushIssue(
         issues,
-        `[ambient] Fish cap exceeded (${state.ambientFish.length} > ${AMBIENT_FISH_CONFIG.maxAlive})`
+        `[ambient] Fish cap exceeded (${state.ambientFish.length} > ${AMBIENT_FISH_CONFIG.maxFish})`
       );
     }
     if (state.player) {
@@ -2961,6 +3146,15 @@
       }
       if (!Number.isFinite(state.player.hp) || !Number.isFinite(state.player.maxHp)) {
         qaPushIssue(issues, "[player] Non-finite local player health");
+      } else {
+        const normalizedMax = normalizePlayerMaxHpValue(state.player.maxHp, 100);
+        const normalizedHp = normalizePlayerHpValue(state.player.hp, normalizedMax, normalizedMax);
+        if (Math.abs(normalizedMax - state.player.maxHp) > 0.0001) {
+          qaPushIssue(issues, "[player] Local maxHp out of bounds");
+        }
+        if (Math.abs(normalizedHp - state.player.hp) > 0.0001) {
+          qaPushIssue(issues, "[player] Local hp out of bounds");
+        }
       }
     }
     for (const remote of net.players.values()) {
@@ -2970,11 +3164,45 @@
       if (!normalizeHexColor(remote.color || "")) {
         qaPushIssue(issues, `[net] Remote player ${remote.id || "unknown"} has invalid color`);
       }
+      if (!Number.isFinite(remote.maxHp) || !Number.isFinite(remote.hp)) {
+        qaPushIssue(issues, `[net] Remote player ${remote.id || "unknown"} has non-finite health`);
+      } else {
+        const normalizedMax = normalizePlayerMaxHpValue(remote.maxHp, 100);
+        const normalizedHp = normalizePlayerHpValue(remote.hp, normalizedMax, normalizedMax);
+        if (Math.abs(normalizedMax - remote.maxHp) > 0.0001) {
+          qaPushIssue(issues, `[net] Remote player ${remote.id || "unknown"} maxHp out of bounds`);
+        }
+        if (Math.abs(normalizedHp - remote.hp) > 0.0001) {
+          qaPushIssue(issues, `[net] Remote player ${remote.id || "unknown"} hp out of bounds`);
+        }
+      }
+      const facing = remote.facing || { x: 1, y: 0 };
+      if (!Number.isFinite(facing.x) || !Number.isFinite(facing.y)) {
+        qaPushIssue(issues, `[net] Remote player ${remote.id || "unknown"} has invalid facing`);
+      }
     }
     if (!net.enabled && net.players.size > 0) {
       qaPushIssue(issues, "[net] Remote player cache present while multiplayer disabled");
     }
+    if (net.enabled && net.isHost && net.connections.size > 0 && !state.player) {
+      qaPushIssue(issues, "[net] Host has active clients while local player state is missing");
+    }
+    if (net.enabled && !net.isHost && net.ready && !(net.hostConn && net.hostConn.open)) {
+      qaPushIssue(issues, "[net] Client marked ready without an open host connection");
+    }
+    qaCheckFiniteTimer(state.saveTimer, "state.saveTimer", issues, -0.01, 600);
+    qaCheckFiniteTimer(state.promptTimer, "state.promptTimer", issues, -0.01, 120);
+    qaCheckFiniteTimer(state.surfaceSpawnTimer, "state.surfaceSpawnTimer", issues, -0.5, 600);
+    qaCheckFiniteTimer(state.surfaceGuardianSpawnTimer, "state.surfaceGuardianSpawnTimer", issues, -0.5, 600);
+    qaCheckFiniteTimer(state.animalVocalTimer, "state.animalVocalTimer", issues, -0.5, 300);
+    qaCheckFiniteTimer(state.ambientFishSpawnTimer, "state.ambientFishSpawnTimer", issues, -0.5, 300);
+    qaCheckFiniteTimer(net.snapshotTimer, "net.snapshotTimer", issues, -0.5, 300);
+    qaCheckFiniteTimer(net.motionTimer, "net.motionTimer", issues, -0.5, 300);
+    qaCheckFiniteTimer(net.playerTimer, "net.playerTimer", issues, -0.5, 300);
+    qaCheckFiniteTimer(net.helloRetryTimer, "net.helloRetryTimer", issues, -0.5, 300);
+    qaCheckFiniteTimer(net.resyncTimer, "net.resyncTimer", issues, -0.5, 300);
     qaCheckPendingRequestLifetimes(issues);
+    qaValidateCraftInventoryFullRule(issues);
     qaCheckUniqueNumericIds(state.structures || [], "structures", issues);
     for (const structure of state.structures || []) {
       if (!structure || structure.removed) continue;
@@ -2986,6 +3214,7 @@
 
     const contexts = qaCollectWorldContexts();
     for (const worldCtx of contexts) {
+      qaCheckFiniteTimer(worldCtx.world?.animalSpawnTimer, `${worldCtx.label}.animalSpawnTimer`, issues, -0.5, 300);
       qaCheckWorldState(worldCtx, issues);
     }
     qaValidateSnapshotSchema(issues);
@@ -3002,6 +3231,1690 @@
 
     const clipped = issues.slice(0, QA_SELF_TEST_CONFIG.maxIssuesPerRun);
     console.warn(`[QA] self-test run ${qaRuntime.runCount}: ${issues.length} issue(s)`, clipped);
+  }
+
+  function mpAutotestClone(value, fallback = null) {
+    if (value == null) return fallback;
+    try {
+      return JSON.parse(JSON.stringify(value));
+    } catch (err) {
+      return fallback;
+    }
+  }
+
+  function mpAutotestStableStringify(value) {
+    if (value === null) return "null";
+    const type = typeof value;
+    if (type === "number") {
+      if (!Number.isFinite(value)) return `"${String(value)}"`;
+      return String(value);
+    }
+    if (type === "boolean") return value ? "true" : "false";
+    if (type === "string") return JSON.stringify(value);
+    if (Array.isArray(value)) {
+      return `[${value.map((entry) => mpAutotestStableStringify(entry)).join(",")}]`;
+    }
+    if (type === "object") {
+      const keys = Object.keys(value).sort();
+      const body = keys
+        .map((key) => `${JSON.stringify(key)}:${mpAutotestStableStringify(value[key])}`)
+        .join(",");
+      return `{${body}}`;
+    }
+    return JSON.stringify(String(value));
+  }
+
+  function mpAutotestHashString(input) {
+    const text = String(input ?? "");
+    let hash = 2166136261;
+    for (let i = 0; i < text.length; i += 1) {
+      hash ^= text.charCodeAt(i);
+      hash = Math.imul(hash, 16777619);
+    }
+    return (hash >>> 0).toString(16).padStart(8, "0");
+  }
+
+  function mpAutotestLogLine(message) {
+    if (typeof message !== "string" || !message) return;
+    const stamp = `${(mpAutotest.elapsed || 0).toFixed(2)}s`;
+    mpAutotest.logLines.push(`[${stamp}] ${message}`);
+    while (mpAutotest.logLines.length > MP_AUTOTEST_LOG_MAX_LINES) {
+      mpAutotest.logLines.shift();
+    }
+    if (mpAutotestLogEl) {
+      mpAutotestLogEl.textContent = mpAutotest.logLines.join("\n");
+      mpAutotestLogEl.scrollTop = mpAutotestLogEl.scrollHeight;
+    }
+  }
+
+  function mpAutotestSetStatus(status) {
+    mpAutotest.runningStatus = status;
+    updateMpAutotestControls();
+  }
+
+  function updateMpAutotestControls() {
+    const unlocked = !!state.debugUnlocked;
+    const busy = !!mpAutotest.active;
+    if (mpAutotestQuickBtn) mpAutotestQuickBtn.disabled = !unlocked || busy;
+    if (mpAutotestStressBtn) mpAutotestStressBtn.disabled = !unlocked || busy;
+    if (mpAutotestClientsInput) mpAutotestClientsInput.disabled = !unlocked || busy;
+    if (mpAutotestSeedInput) mpAutotestSeedInput.disabled = !unlocked || busy;
+    if (mpAutotestReplayBtn) mpAutotestReplayBtn.disabled = !unlocked || busy;
+    if (mpAutotestCopyReportBtn) {
+      mpAutotestCopyReportBtn.disabled = !unlocked || !mpAutotest.failReport;
+    }
+  }
+
+  function mpAutotestInventoryFingerprintFromSlots(slots) {
+    if (!Array.isArray(slots)) return "";
+    const tokens = [];
+    for (let i = 0; i < slots.length; i += 1) {
+      const slot = slots[i];
+      if (!slot || !slot.id) continue;
+      const qty = Math.max(0, Math.floor(Number(slot.qty) || 0));
+      if (qty <= 0) continue;
+      tokens.push(`${slot.id}:${qty}@${i}`);
+    }
+    return tokens.sort().join("|");
+  }
+
+  function mpAutotestNormalizeStorageSlots(slots) {
+    if (!Array.isArray(slots)) return [];
+    const normalized = [];
+    for (let i = 0; i < slots.length; i += 1) {
+      const slot = slots[i];
+      if (!slot || !slot.id) continue;
+      const qty = Math.max(0, Math.floor(Number(slot.qty) || 0));
+      if (qty <= 0) continue;
+      normalized.push({ id: slot.id, qty });
+    }
+    normalized.sort((a, b) => {
+      if (a.id !== b.id) return a.id < b.id ? -1 : 1;
+      return a.qty - b.qty;
+    });
+    return normalized;
+  }
+
+  function mpAutotestItemTotalsFromWorld(world, totals) {
+    if (!world || !totals) return;
+    if (Array.isArray(world.drops)) {
+      for (const drop of world.drops) {
+        if (!drop || !drop.itemId) continue;
+        const qty = Math.max(0, Math.floor(Number(drop.qty) || 0));
+        if (qty <= 0) continue;
+        totals[drop.itemId] = (totals[drop.itemId] || 0) + qty;
+      }
+    }
+  }
+
+  function mpAutotestCollectHostItemTotals() {
+    const totals = Object.create(null);
+    const addSlots = (slots) => {
+      if (!Array.isArray(slots)) return;
+      for (const slot of slots) {
+        if (!slot || !slot.id) continue;
+        const qty = Math.max(0, Math.floor(Number(slot.qty) || 0));
+        if (qty <= 0) continue;
+        totals[slot.id] = (totals[slot.id] || 0) + qty;
+      }
+    };
+
+    addSlots(state.inventory);
+    if (Array.isArray(state.structures)) {
+      for (const structure of state.structures) {
+        if (!structure || structure.removed) continue;
+        addSlots(structure.storage);
+        if (isHouseType(structure.type)) {
+          const houseItems = structure?.meta?.house?.items;
+          if (Array.isArray(houseItems)) {
+            for (const entry of houseItems) {
+              addSlots(entry?.storage);
+            }
+          }
+        }
+      }
+    }
+    const surface = state.surfaceWorld || state.world;
+    mpAutotestItemTotalsFromWorld(surface, totals);
+    if (Array.isArray(surface?.caves)) {
+      for (const cave of surface.caves) {
+        mpAutotestItemTotalsFromWorld(cave?.world, totals);
+      }
+    }
+    return totals;
+  }
+
+  function mpAutotestTotalCountFromTotals(totals) {
+    if (!totals || typeof totals !== "object") return 0;
+    let total = 0;
+    for (const qty of Object.values(totals)) {
+      total += Math.max(0, Math.floor(Number(qty) || 0));
+    }
+    return total;
+  }
+
+  function mpAutotestDiffTotals(prev, next) {
+    const keys = new Set();
+    if (prev && typeof prev === "object") {
+      for (const key of Object.keys(prev)) keys.add(key);
+    }
+    if (next && typeof next === "object") {
+      for (const key of Object.keys(next)) keys.add(key);
+    }
+    const deltas = [];
+    for (const key of keys) {
+      const before = Math.max(0, Math.floor(Number(prev?.[key]) || 0));
+      const after = Math.max(0, Math.floor(Number(next?.[key]) || 0));
+      const delta = after - before;
+      if (delta !== 0) {
+        deltas.push({ key, before, after, delta });
+      }
+    }
+    deltas.sort((a, b) => {
+      if (Math.abs(b.delta) !== Math.abs(a.delta)) return Math.abs(b.delta) - Math.abs(a.delta);
+      return a.key < b.key ? -1 : (a.key > b.key ? 1 : 0);
+    });
+    return {
+      totalDelta: mpAutotestTotalCountFromTotals(next) - mpAutotestTotalCountFromTotals(prev),
+      deltas,
+    };
+  }
+
+  function mpAutotestBuildCanonicalFromSnapshot(snapshot) {
+    if (!snapshot || typeof snapshot !== "object") return null;
+    const structures = Array.isArray(snapshot.structures) ? snapshot.structures : [];
+    const world = snapshot.world && typeof snapshot.world === "object" ? snapshot.world : {};
+    const caveEntries = Array.isArray(snapshot.caves) ? snapshot.caves : [];
+
+    const normalizeResources = (resourceStates) => {
+      if (!Array.isArray(resourceStates)) return [];
+      const resources = [];
+      for (let i = 0; i < resourceStates.length; i += 1) {
+        const res = resourceStates[i];
+        if (!res || typeof res !== "object") continue;
+        resources.push({
+          id: i,
+          type: String(res.type || ""),
+          x: Number.isFinite(res.x) ? res.x : 0,
+          y: Number.isFinite(res.y) ? res.y : 0,
+          hp: Number.isFinite(res.hp) ? res.hp : 0,
+          removed: !!res.removed,
+        });
+      }
+      return resources;
+    };
+
+    const normalizeDrops = (drops, caveId = null) => {
+      if (!Array.isArray(drops)) return [];
+      return drops
+        .filter((drop) => drop && drop.itemId)
+        .map((drop) => ({
+          caveId,
+          id: Number.isInteger(drop.id) ? drop.id : null,
+          itemId: String(drop.itemId),
+          qty: Math.max(0, Math.floor(Number(drop.qty) || 0)),
+          x: Number.isFinite(drop.x) ? drop.x : 0,
+          y: Number.isFinite(drop.y) ? drop.y : 0,
+        }))
+        .sort((a, b) => {
+          if ((a.caveId ?? -1) !== (b.caveId ?? -1)) return (a.caveId ?? -1) - (b.caveId ?? -1);
+          if ((a.id ?? -1) !== (b.id ?? -1)) return (a.id ?? -1) - (b.id ?? -1);
+          if (a.itemId !== b.itemId) return a.itemId < b.itemId ? -1 : 1;
+          return a.qty - b.qty;
+        });
+    };
+
+    const normalizeMonsters = (monsters, caveId = null) => {
+      if (!Array.isArray(monsters)) return [];
+      return monsters
+        .filter((entry) => entry && Number.isInteger(entry.id))
+        .map((entry) => ({
+          caveId,
+          id: entry.id,
+          type: String(entry.type || ""),
+          x: Number.isFinite(entry.x) ? entry.x : 0,
+          y: Number.isFinite(entry.y) ? entry.y : 0,
+          hp: Number.isFinite(entry.hp) ? entry.hp : 0,
+          maxHp: Number.isFinite(entry.maxHp) ? entry.maxHp : 0,
+        }))
+        .sort((a, b) => {
+          if ((a.caveId ?? -1) !== (b.caveId ?? -1)) return (a.caveId ?? -1) - (b.caveId ?? -1);
+          return a.id - b.id;
+        });
+    };
+
+    const normalizeAnimals = (animals, caveId = null) => {
+      if (!Array.isArray(animals)) return [];
+      return animals
+        .filter((entry) => entry && Number.isInteger(entry.id))
+        .map((entry) => ({
+          caveId,
+          id: entry.id,
+          type: String(entry.type || ""),
+          x: Number.isFinite(entry.x) ? entry.x : 0,
+          y: Number.isFinite(entry.y) ? entry.y : 0,
+          hp: Number.isFinite(entry.hp) ? entry.hp : 0,
+        }))
+        .sort((a, b) => {
+          if ((a.caveId ?? -1) !== (b.caveId ?? -1)) return (a.caveId ?? -1) - (b.caveId ?? -1);
+          return a.id - b.id;
+        });
+    };
+
+    const normalizePlayers = (players) => {
+      if (!Array.isArray(players)) return [];
+      return players
+        .filter((entry) => entry && entry.id)
+        .map((entry) => ({
+          id: String(entry.id),
+          x: Number.isFinite(entry.x) ? entry.x : 0,
+          y: Number.isFinite(entry.y) ? entry.y : 0,
+          hp: Number.isFinite(entry.hp) ? entry.hp : 0,
+          maxHp: Number.isFinite(entry.maxHp) ? entry.maxHp : 0,
+          toolTier: Number.isFinite(entry.toolTier) ? entry.toolTier : 0,
+          inCave: !!entry.inCave,
+          caveId: Number.isInteger(entry.caveId) ? entry.caveId : null,
+          houseKey: entry.houseKey || null,
+          name: String(entry.name || ""),
+          color: String(entry.color || ""),
+        }))
+        .sort((a, b) => (a.id < b.id ? -1 : (a.id > b.id ? 1 : 0)));
+    };
+
+    const normalizeStructures = structures
+      .filter((entry) => entry && Number.isInteger(entry.tx) && Number.isInteger(entry.ty))
+      .map((entry) => ({
+        type: String(entry.type || ""),
+        tx: entry.tx,
+        ty: entry.ty,
+        storage: mpAutotestNormalizeStorageSlots(entry.storage),
+      }))
+      .sort((a, b) => {
+        if (a.tx !== b.tx) return a.tx - b.tx;
+        if (a.ty !== b.ty) return a.ty - b.ty;
+        return a.type < b.type ? -1 : (a.type > b.type ? 1 : 0);
+      });
+
+    const builds = normalizeStructures
+      .filter((entry) => entry.type === "bridge" || entry.type === "dock" || !STRUCTURE_DEFS[entry.type]?.storage)
+      .map((entry) => ({ type: entry.type, tx: entry.tx, ty: entry.ty }));
+
+    const chests = normalizeStructures
+      .filter((entry) => STRUCTURE_DEFS[entry.type]?.storage)
+      .map((entry) => ({
+        type: entry.type,
+        tx: entry.tx,
+        ty: entry.ty,
+        storageFingerprint: mpAutotestInventoryFingerprintFromSlots(entry.storage),
+      }));
+
+    const stations = normalizeStructures
+      .filter((entry) => STRUCTURE_DEFS[entry.type]?.station)
+      .map((entry) => ({
+        type: entry.type,
+        tx: entry.tx,
+        ty: entry.ty,
+        storageFingerprint: mpAutotestInventoryFingerprintFromSlots(entry.storage),
+      }));
+
+    const resources = normalizeResources(world.resourceStates);
+    const drops = normalizeDrops(world.drops, null);
+    const monsters = normalizeMonsters(world.monsters, null);
+    const animals = normalizeAnimals(world.animals, null);
+    const players = normalizePlayers(snapshot.players);
+
+    for (const caveEntry of caveEntries) {
+      if (!caveEntry || !Number.isInteger(caveEntry.id)) continue;
+      const caveId = caveEntry.id;
+      const caveWorld = caveEntry.world && typeof caveEntry.world === "object"
+        ? caveEntry.world
+        : caveEntry;
+      const caveResources = normalizeResources(caveWorld.resourceStates);
+      for (const res of caveResources) {
+        resources.push({ ...res, caveId });
+      }
+      drops.push(...normalizeDrops(caveWorld.drops, caveId));
+      monsters.push(...normalizeMonsters(caveWorld.monsters, caveId));
+      animals.push(...normalizeAnimals(caveWorld.animals, caveId));
+    }
+
+    resources.sort((a, b) => {
+      if ((a.caveId ?? -1) !== (b.caveId ?? -1)) return (a.caveId ?? -1) - (b.caveId ?? -1);
+      return a.id - b.id;
+    });
+
+    return {
+      seed: String(snapshot.seed || ""),
+      worldTime: {
+        timeOfDay: Number.isFinite(snapshot.timeOfDay) ? snapshot.timeOfDay : 0,
+        isNight: !!snapshot.isNight,
+        gameWon: !!snapshot.gameWon,
+      },
+      resources,
+      builds,
+      chests,
+      stations,
+      mobs: {
+        monsters,
+        animals,
+      },
+      drops,
+      players,
+    };
+  }
+
+  function mpAutotestComputeSegmentHashes(canonical) {
+    if (!canonical) return null;
+    const segments = {
+      seed: mpAutotestHashString(mpAutotestStableStringify(canonical.seed)),
+      worldTime: mpAutotestHashString(mpAutotestStableStringify(canonical.worldTime)),
+      resources: mpAutotestHashString(mpAutotestStableStringify(canonical.resources)),
+      builds: mpAutotestHashString(mpAutotestStableStringify(canonical.builds)),
+      chests: mpAutotestHashString(mpAutotestStableStringify(canonical.chests)),
+      stations: mpAutotestHashString(mpAutotestStableStringify(canonical.stations)),
+      mobs: mpAutotestHashString(mpAutotestStableStringify(canonical.mobs)),
+      drops: mpAutotestHashString(mpAutotestStableStringify(canonical.drops)),
+      players: mpAutotestHashString(mpAutotestStableStringify(canonical.players)),
+    };
+    return {
+      ...segments,
+      overall: mpAutotestHashString(mpAutotestStableStringify(segments)),
+    };
+  }
+
+  function mpAutotestExtractEntityHint(message) {
+    if (!message || typeof message !== "object") return "-";
+    const hints = [];
+    const fields = ["id", "resId", "targetId", "dropId", "requestId", "tx", "ty", "caveId"];
+    for (const field of fields) {
+      const value = message[field];
+      if (value == null) continue;
+      hints.push(`${field}:${value}`);
+    }
+    return hints.join(" ");
+  }
+
+  function mpAutotestPushMessageLog(entry) {
+    mpAutotest.messageLog.push(entry);
+    while (mpAutotest.messageLog.length > MP_AUTOTEST_MESSAGE_LOG_SIZE) {
+      mpAutotest.messageLog.shift();
+    }
+  }
+
+  function mpAutotestFaultConfig() {
+    if (mpAutotest.customFault && typeof mpAutotest.customFault === "object") {
+      return mpAutotest.customFault;
+    }
+    if (!mpAutotest.mode) return MP_AUTOTEST_MODES.quick.fault;
+    return mpAutotest.mode.fault || MP_AUTOTEST_MODES.quick.fault;
+  }
+
+  function mpAutotestEnqueueMessage(from, to, payload, options = null) {
+    if (!mpAutotest.active) return;
+    const opts = options || {};
+    const reliable = !!opts.reliable;
+    const mode = mpAutotest.mode || MP_AUTOTEST_MODES.quick;
+    const fault = mpAutotestFaultConfig();
+    let dropped = false;
+    let delayMs = reliable ? 0 : 12;
+    if (!reliable && mode.stress) {
+      const jitterMs = Math.max(0, Number(fault.jitterMs) || 0);
+      if (jitterMs > 0) {
+        delayMs += mpAutotest.rng() * jitterMs;
+      }
+      if (mpAutotest.rng() < (Number(fault.lossChance) || 0)) {
+        dropped = true;
+      }
+    }
+    const basePayload = mpAutotestClone(payload, payload);
+    const baseEntry = {
+      seq: mpAutotest.nextSeq++,
+      from,
+      to,
+      payload: basePayload,
+      reliable,
+      deliverAt: mpAutotest.elapsed + delayMs / 1000,
+    };
+    if (dropped) {
+      mpAutotestPushMessageLog({
+        time: mpAutotest.elapsed,
+        event: "drop",
+        from,
+        to,
+        type: String(payload?.type || "unknown"),
+        hint: mpAutotestExtractEntityHint(payload),
+      });
+      return;
+    }
+    mpAutotest.messageQueue.push(baseEntry);
+
+    if (!reliable && mode.stress) {
+      const reorderChance = Number(fault.reorderChance) || 0;
+      if (mpAutotest.rng() < reorderChance) {
+        baseEntry.deliverAt = Math.max(mpAutotest.elapsed, baseEntry.deliverAt - 0.11 * mpAutotest.rng());
+      }
+      const duplicateChance = Number(fault.duplicateChance) || 0;
+      if (mpAutotest.rng() < duplicateChance) {
+        mpAutotest.messageQueue.push({
+          seq: mpAutotest.nextSeq++,
+          from,
+          to,
+          payload: mpAutotestClone(payload, payload),
+          reliable,
+          deliverAt: baseEntry.deliverAt + 0.006 + mpAutotest.rng() * 0.03,
+        });
+      }
+    }
+  }
+
+  function mpAutotestFindClient(clientId) {
+    if (!clientId) return null;
+    return mpAutotest.clients.find((entry) => entry && entry.id === clientId) || null;
+  }
+
+  function mpAutotestApplyClientMessage(client, message) {
+    if (!client || !message || typeof message !== "object") return;
+    if (!client.shadow || typeof client.shadow !== "object") {
+      client.shadow = {
+        snapshot: null,
+        lastSnapshotHash: "",
+        lastSegmentHashes: null,
+      };
+    }
+    switch (message.type) {
+      case "welcome":
+        client.connected = true;
+        client.playerId = message.playerId || client.id;
+        if (message.snapshot) {
+          client.shadow.snapshot = mpAutotestClone(message.snapshot, null);
+        }
+        break;
+      case "snapshot":
+        client.shadow.snapshot = mpAutotestClone(message, null);
+        break;
+      case "motion":
+        // Motion is intentionally lightweight in shadow mode.
+        client.shadow.lastMotion = mpAutotestClone(message, null);
+        break;
+      case "playerUpdate": {
+        if (!client.shadow.snapshot || !Array.isArray(client.shadow.snapshot.players)) break;
+        const players = client.shadow.snapshot.players;
+        const idx = players.findIndex((entry) => entry && entry.id === message.id);
+        if (idx >= 0) {
+          players[idx] = {
+            ...players[idx],
+            ...mpAutotestClone(message, message),
+          };
+        } else if (message.id) {
+          players.push(mpAutotestClone(message, message));
+        }
+        break;
+      }
+      case "playerLeft":
+        if (client.shadow.snapshot && Array.isArray(client.shadow.snapshot.players)) {
+          client.shadow.snapshot.players = client.shadow.snapshot.players.filter((entry) => entry?.id !== message.id);
+        }
+        break;
+      default:
+        break;
+    }
+    if (client.shadow.snapshot) {
+      const canonical = mpAutotestBuildCanonicalFromSnapshot(client.shadow.snapshot);
+      const hashes = mpAutotestComputeSegmentHashes(canonical);
+      client.shadow.lastSegmentHashes = hashes;
+      client.shadow.lastSnapshotHash = hashes?.overall || "";
+    }
+  }
+
+  function mpAutotestDeliverToHost(messageEntry) {
+    const clientId = messageEntry.from;
+    const connection = mpAutotest.hostConnections.get(clientId);
+    if (!connection || !connection.open) return;
+    const payloadType = String(messageEntry.payload?.type || "");
+    const forbiddenClientAuthoritative = new Set([
+      "snapshot",
+      "motion",
+      "welcome",
+      "damage",
+      "respawn",
+      "shipRepairCommit",
+      "placeResult",
+      "breakStructureResult",
+    ]);
+    if (forbiddenClientAuthoritative.has(payloadType)) {
+      mpAutotest.eventStats.clientAuthViolations += 1;
+    }
+    const prevEnabled = net.enabled;
+    const prevHost = net.isHost;
+    const prevReady = net.ready;
+    net.enabled = true;
+    net.isHost = true;
+    net.ready = true;
+    try {
+      handleNetMessage(connection, messageEntry.payload);
+      mpAutotest.eventStats.authoritativeMutations += 1;
+    } finally {
+      net.enabled = prevEnabled;
+      net.isHost = prevHost;
+      net.ready = prevReady;
+    }
+  }
+
+  function mpAutotestDeliverMessage(messageEntry) {
+    if (!messageEntry || !messageEntry.payload) return;
+    if (messageEntry.to === "host") {
+      mpAutotestDeliverToHost(messageEntry);
+    } else {
+      const client = mpAutotestFindClient(messageEntry.to);
+      if (client) {
+        mpAutotestApplyClientMessage(client, messageEntry.payload);
+      }
+    }
+    mpAutotestPushMessageLog({
+      time: mpAutotest.elapsed,
+      event: "deliver",
+      from: messageEntry.from,
+      to: messageEntry.to,
+      type: String(messageEntry.payload?.type || "unknown"),
+      hint: mpAutotestExtractEntityHint(messageEntry.payload),
+    });
+  }
+
+  function mpAutotestFlushMessageQueue(forceAll = false, limit = 512) {
+    if (!mpAutotest.active) return 0;
+    let delivered = 0;
+    mpAutotest.messageQueue.sort((a, b) => {
+      if (a.deliverAt !== b.deliverAt) return a.deliverAt - b.deliverAt;
+      return a.seq - b.seq;
+    });
+    while (mpAutotest.messageQueue.length > 0 && delivered < limit) {
+      const head = mpAutotest.messageQueue[0];
+      if (!forceAll && head.deliverAt > mpAutotest.elapsed) break;
+      mpAutotest.messageQueue.shift();
+      mpAutotestDeliverMessage(head);
+      delivered += 1;
+    }
+    return delivered;
+  }
+
+  function mpAutotestConnectClient(client) {
+    if (!client || client.connected) return;
+    const connection = {
+      peer: client.id,
+      open: true,
+      send(payload) {
+        mpAutotestEnqueueMessage("host", client.id, payload, { reliable: false });
+      },
+    };
+    client.connection = connection;
+    client.connected = true;
+    mpAutotest.hostConnections.set(client.id, connection);
+    net.connections.set(client.id, connection);
+    mpAutotestEnqueueMessage(client.id, "host", {
+      type: "hello",
+      name: client.name,
+      color: client.color,
+    }, { reliable: true });
+    mpAutotestLogLine(`Client connected: ${client.id}`);
+  }
+
+  function mpAutotestDisconnectClient(client, reason = "disconnect") {
+    if (!client || !client.connected) return;
+    client.connected = false;
+    if (client.connection) {
+      client.connection.open = false;
+    }
+    net.connections.delete(client.id);
+    net.players.delete(client.id);
+    mpAutotest.hostConnections.delete(client.id);
+    broadcastNet({ type: "playerLeft", id: client.id });
+    mpAutotestLogLine(`Client disconnected: ${client.id} (${reason})`);
+  }
+
+  function mpAutotestCreateClient(index) {
+    const usedColors = getAssignedPlayerColorSet();
+    const color = pickRandomDistinctPlayerColor(usedColors);
+    return {
+      id: `autotest-c${index + 1}`,
+      ordinal: index + 1,
+      name: `AT-${index + 1}`,
+      color,
+      connected: false,
+      playerId: `autotest-c${index + 1}`,
+      connection: null,
+      shadow: {
+        snapshot: null,
+        lastSnapshotHash: "",
+        lastSegmentHashes: null,
+      },
+      actionCount: 0,
+    };
+  }
+
+  function mpAutotestSendFromClient(client, payload, options = null) {
+    if (!client || !client.connected) return false;
+    mpAutotestEnqueueMessage(client.id, "host", payload, options || { reliable: false });
+    return true;
+  }
+
+  function mpAutotestFindClientPlayer(client) {
+    if (!client) return null;
+    return net.players.get(client.id) || null;
+  }
+
+  function mpAutotestFindRandomSurfaceIsland() {
+    const world = state.surfaceWorld || state.world;
+    if (!world || !Array.isArray(world.islands) || world.islands.length === 0) return null;
+    const index = Math.floor(mpAutotest.rng() * world.islands.length);
+    return world.islands[index] || null;
+  }
+
+  function mpAutotestFindOpenTileNear(tx, ty, radius = 12) {
+    const world = state.surfaceWorld || state.world;
+    if (!world) return null;
+    return findOpenSurfaceTileNear(world, tx, ty, radius);
+  }
+
+  function mpAutotestEnsureFixtureChest() {
+    if (!Array.isArray(state.structures)) return null;
+    let chest = state.structures.find((entry) => entry && !entry.removed && entry.type === "chest" && !entry.interior) || null;
+    if (chest) return chest;
+    const world = state.surfaceWorld || state.world;
+    if (!world) return null;
+    const spawn = state.spawnTile || findSpawnTile(world);
+    const tile = mpAutotestFindOpenTileNear(spawn.x, spawn.y, 14);
+    if (!tile) return null;
+    chest = addStructure("chest", tile.tx, tile.ty, { storage: createEmptyInventory(CHEST_SIZE) });
+    if (chest && Array.isArray(chest.storage)) {
+      addItem(chest.storage, "wood", 12);
+      addItem(chest.storage, "stone", 8);
+    }
+    return chest || null;
+  }
+
+  function mpAutotestEnsureFixtureStation() {
+    if (!Array.isArray(state.structures)) return null;
+    let station = state.structures.find((entry) => entry && !entry.removed && entry.type === "sawmill" && !entry.interior) || null;
+    if (station) return station;
+    const world = state.surfaceWorld || state.world;
+    if (!world) return null;
+    const spawn = state.spawnTile || findSpawnTile(world);
+    const tile = mpAutotestFindOpenTileNear(spawn.x + 2, spawn.y + 2, 14);
+    if (!tile) return null;
+    station = addStructure("sawmill", tile.tx, tile.ty);
+    return station || null;
+  }
+
+  function mpAutotestEnsureFixtureMonster(client = null) {
+    const world = state.surfaceWorld || state.world;
+    if (!world) return null;
+    if (Array.isArray(world.monsters) && world.monsters.length > 0) {
+      return world.monsters[0];
+    }
+    const player = client ? mpAutotestFindClientPlayer(client) : state.player;
+    if (!player) return null;
+    const tx = Math.floor(player.x / CONFIG.tileSize);
+    const ty = Math.floor(player.y / CONFIG.tileSize);
+    const tile = mpAutotestFindOpenTileNear(tx, ty, 10);
+    if (!tile) return null;
+    return spawnMonster(world, tile.tx, tile.ty, { type: "crawler" });
+  }
+
+  function mpAutotestEnsureFixtureDrop(client) {
+    const world = state.surfaceWorld || state.world;
+    if (!world) return null;
+    if (!Array.isArray(world.drops)) world.drops = [];
+    if (world.drops.length > 0) return world.drops[0];
+    const player = mpAutotestFindClientPlayer(client);
+    if (!player) return null;
+    spawnDrop("wood", 1, player.x + 10, player.y + 6, world);
+    return world.drops[0] || null;
+  }
+
+  function mpAutotestBuildPlayerUpdatePayload(client, x, y, extra = null) {
+    const payload = {
+      type: "playerUpdate",
+      id: client.id,
+      name: client.name,
+      color: client.color,
+      x,
+      y,
+      facing: { x: 1, y: 0 },
+      hp: 100,
+      maxHp: 100,
+      toolTier: 4,
+      unlocks: normalizeUnlocks({
+        pickaxe: true,
+        orePickaxe: true,
+        relicPickaxe: true,
+        sword: true,
+      }),
+      checkpoint: null,
+      inHut: false,
+      houseKey: null,
+      houseX: null,
+      houseY: null,
+      inCave: false,
+      caveId: null,
+    };
+    if (extra && typeof extra === "object") {
+      Object.assign(payload, extra);
+    }
+    return payload;
+  }
+
+  function mpAutotestGenerateActionKinds() {
+    const base = ["travel", "harvest", "craftEdge", "chestTransfer", "stationCycle", "combat", "dropCycle"];
+    if (mpAutotest.mode?.stress) {
+      base.push("spam", "caveTrip", "dayNight", "disconnectRejoin");
+    }
+    return base;
+  }
+
+  function mpAutotestPrepareActionDescriptor(client, kind) {
+    const world = state.surfaceWorld || state.world;
+    if (!client || !kind || !world) return null;
+    const descriptor = {
+      kind,
+      clientId: client.id,
+      ledgerRule: "allowAny",
+      note: "",
+      payloads: [],
+    };
+    const clientPlayer = mpAutotestFindClientPlayer(client);
+    if (!clientPlayer && kind !== "disconnectRejoin") return null;
+    switch (kind) {
+      case "travel": {
+        const island = mpAutotestFindRandomSurfaceIsland();
+        if (!island) return null;
+        const tx = clamp(Math.floor(island.x), 0, world.size - 1);
+        const ty = clamp(Math.floor(island.y), 0, world.size - 1);
+        const target = mpAutotestFindOpenTileNear(tx, ty, 10) || { tx, ty };
+        const x = (target.tx + 0.5) * CONFIG.tileSize;
+        const y = (target.ty + 0.5) * CONFIG.tileSize;
+        descriptor.note = `travel to island tile ${target.tx},${target.ty}`;
+        descriptor.ledgerRule = "conserve";
+        descriptor.payloads.push(mpAutotestBuildPlayerUpdatePayload(client, x, y));
+        break;
+      }
+      case "harvest": {
+        const resources = (world.resources || [])
+          .map((entry, idx) => ({ entry, idx }))
+          .filter(({ entry }) => entry && !entry.removed && (entry.type === "tree" || entry.type === "rock" || entry.type === "ore"));
+        if (resources.length === 0) return null;
+        const picked = resources[Math.floor(mpAutotest.rng() * resources.length)];
+        const rx = Number(picked.entry.x);
+        const ry = Number(picked.entry.y);
+        if (!Number.isFinite(rx) || !Number.isFinite(ry)) return null;
+        descriptor.note = `harvest ${picked.entry.type}#${picked.idx}`;
+        descriptor.ledgerRule = "allowAny";
+        descriptor.payloads.push(mpAutotestBuildPlayerUpdatePayload(client, rx, ry));
+        descriptor.payloads.push({
+          type: "harvest",
+          resId: picked.idx,
+          world: "surface",
+          unlocks: normalizeUnlocks({
+            pickaxe: true,
+            orePickaxe: true,
+            relicPickaxe: true,
+            sword: true,
+          }),
+        });
+        break;
+      }
+      case "craftEdge": {
+        descriptor.note = "craft inventory-full edge checks";
+        descriptor.ledgerRule = "conserve";
+        break;
+      }
+      case "chestTransfer": {
+        const chest = mpAutotestEnsureFixtureChest();
+        if (!chest) return null;
+        const centerX = (chest.tx + 0.5) * CONFIG.tileSize;
+        const centerY = (chest.ty + 0.5) * CONFIG.tileSize;
+        const storage = sanitizeInventorySlots(chest.storage, CHEST_SIZE);
+        if (storage.length > 1) {
+          const first = storage[0];
+          storage[0] = storage[1];
+          storage[1] = first;
+        }
+        descriptor.note = `chest update @ ${chest.tx},${chest.ty}`;
+        descriptor.ledgerRule = "conserve";
+        descriptor.payloads.push(mpAutotestBuildPlayerUpdatePayload(client, centerX, centerY));
+        descriptor.payloads.push({
+          type: "chestUpdate",
+          tx: chest.tx,
+          ty: chest.ty,
+          storage: mpAutotestClone(storage, storage),
+        });
+        break;
+      }
+      case "stationCycle": {
+        descriptor.note = "station refine cycle";
+        descriptor.ledgerRule = "allowAny";
+        break;
+      }
+      case "combat": {
+        const monster = mpAutotestEnsureFixtureMonster(client);
+        if (!monster) return null;
+        descriptor.note = `combat vs ${monster.type}#${monster.id}`;
+        descriptor.ledgerRule = "allowAny";
+        const px = monster.x - CONFIG.tileSize * 0.4;
+        const py = monster.y - CONFIG.tileSize * 0.35;
+        descriptor.payloads.push(mpAutotestBuildPlayerUpdatePayload(client, px, py));
+        descriptor.payloads.push({
+          type: "attack",
+          world: "surface",
+          x: px,
+          y: py,
+          aimX: monster.x,
+          aimY: monster.y,
+          targetKind: "monster",
+          targetId: monster.id,
+          unlocks: normalizeUnlocks({
+            pickaxe: true,
+            orePickaxe: true,
+            relicPickaxe: true,
+            sword: true,
+          }),
+        });
+        break;
+      }
+      case "dropCycle": {
+        const drop = mpAutotestEnsureFixtureDrop(client);
+        if (!drop) return null;
+        descriptor.note = `pickup drop#${drop.id}`;
+        descriptor.ledgerRule = "allowAny";
+        descriptor.payloads.push({
+          type: "dropPickup",
+          world: "surface",
+          x: Number.isFinite(drop.x) ? drop.x : clientPlayer.x,
+          y: Number.isFinite(drop.y) ? drop.y : clientPlayer.y,
+          dropId: drop.id,
+          itemId: drop.itemId,
+          qty: drop.qty,
+        });
+        break;
+      }
+      case "spam": {
+        const chest = mpAutotestEnsureFixtureChest();
+        if (!chest) return null;
+        const centerX = (chest.tx + 0.5) * CONFIG.tileSize;
+        const centerY = (chest.ty + 0.5) * CONFIG.tileSize;
+        const storage = sanitizeInventorySlots(chest.storage, CHEST_SIZE);
+        const resources = (world.resources || [])
+          .map((entry, idx) => ({ entry, idx }))
+          .filter(({ entry }) => entry && !entry.removed && (entry.type === "tree" || entry.type === "rock" || entry.type === "ore"));
+        const harvestTarget = resources.length > 0
+          ? resources[Math.floor(mpAutotest.rng() * resources.length)]
+          : null;
+        descriptor.note = `concurrency spam @ chest ${chest.tx},${chest.ty}`;
+        descriptor.ledgerRule = "conserve";
+        descriptor.payloads.push(mpAutotestBuildPlayerUpdatePayload(client, centerX, centerY));
+        descriptor.payloads.push({
+          type: "chestUpdate",
+          tx: chest.tx,
+          ty: chest.ty,
+          storage: mpAutotestClone(storage, storage),
+        });
+        descriptor.payloads.push({
+          type: "chestUpdate",
+          tx: chest.tx,
+          ty: chest.ty,
+          storage: mpAutotestClone(storage, storage),
+        });
+        if (harvestTarget) {
+          const rx = Number(harvestTarget.entry.x);
+          const ry = Number(harvestTarget.entry.y);
+          descriptor.payloads.push(mpAutotestBuildPlayerUpdatePayload(client, rx, ry));
+          descriptor.payloads.push({
+            type: "harvest",
+            resId: harvestTarget.idx,
+            world: "surface",
+            unlocks: normalizeUnlocks({
+              pickaxe: true,
+              orePickaxe: true,
+              relicPickaxe: true,
+              sword: true,
+            }),
+          });
+          descriptor.concurrentHarvest = {
+            x: rx,
+            y: ry,
+            resId: harvestTarget.idx,
+          };
+        }
+        const partner = mpAutotest.clients.find((entry) => entry && entry.connected && entry.id !== client.id);
+        if (partner) {
+          descriptor.partnerClientId = partner.id;
+        }
+        descriptor.repeatCraftChecks = 3;
+        break;
+      }
+      case "caveTrip": {
+        if (!Array.isArray(world.caves) || world.caves.length === 0) return null;
+        const cave = world.caves[Math.floor(mpAutotest.rng() * world.caves.length)];
+        if (!cave || !cave.world || !cave.world.entrance) return null;
+        const caveX = (cave.world.entrance.tx + 0.5) * CONFIG.tileSize;
+        const caveY = (cave.world.entrance.ty + 0.5) * CONFIG.tileSize;
+        descriptor.note = `cave trip cave#${cave.id}`;
+        descriptor.ledgerRule = "allowAny";
+        descriptor.payloads.push(mpAutotestBuildPlayerUpdatePayload(client, caveX, caveY, {
+          inCave: true,
+          caveId: cave.id,
+        }));
+        if (Array.isArray(cave.world.resources) && cave.world.resources.length > 0) {
+          descriptor.payloads.push({
+            type: "harvest",
+            resId: 0,
+            world: "cave",
+            caveId: cave.id,
+            unlocks: normalizeUnlocks({
+              pickaxe: true,
+              orePickaxe: true,
+              relicPickaxe: true,
+              sword: true,
+            }),
+          });
+        }
+        const surfaceX = (cave.tx + 0.5) * CONFIG.tileSize;
+        const surfaceY = (cave.ty + 0.5) * CONFIG.tileSize;
+        descriptor.payloads.push(mpAutotestBuildPlayerUpdatePayload(client, surfaceX, surfaceY, {
+          inCave: false,
+          caveId: null,
+        }));
+        break;
+      }
+      case "dayNight":
+        descriptor.note = "day/night boundary step";
+        descriptor.ledgerRule = "conserve";
+        break;
+      case "disconnectRejoin":
+        descriptor.note = "disconnect + rejoin";
+        descriptor.ledgerRule = "conserve";
+        break;
+      default:
+        return null;
+    }
+    return descriptor;
+  }
+
+  function mpAutotestRunCraftEdgeCheck() {
+    const inventoryA = createEmptyInventory(INVENTORY_SIZE);
+    inventoryA[0] = { id: "stick", qty: 2 };
+    for (let i = 1; i < inventoryA.length; i += 1) {
+      inventoryA[i] = { id: "stone", qty: MAX_STACK };
+    }
+    const allowsA = canCraftWithInventoryReplacement(inventoryA, { stick: 2 }, { sawmill: 1 });
+    const inventoryB = createEmptyInventory(INVENTORY_SIZE);
+    inventoryB[0] = { id: "wood", qty: 98 };
+    for (let i = 1; i < inventoryB.length; i += 1) {
+      inventoryB[i] = { id: "stone", qty: MAX_STACK };
+    }
+    const allowsB = canCraftWithInventoryReplacement(inventoryB, { wood: 10 }, { sawmill: 1 });
+    if (!allowsA || allowsB) {
+      const reason = `Craft inventory-full rule mismatch (Example A=${allowsA ? "pass" : "fail"}, Example B=${allowsB ? "fail" : "pass"})`;
+      mpAutotestFail(reason, { subsystem: "crafting" });
+      return false;
+    }
+    return true;
+  }
+
+  function mpAutotestRunStationCycle() {
+    const station = mpAutotestEnsureFixtureStation();
+    if (!station) return false;
+    if (!state.inventory) return false;
+    addItem(state.inventory, "wood", 6);
+    const recipe = (STATION_RECIPES.sawmill || [])[0];
+    if (!recipe) return false;
+    const selectedInput = getAvailableStationRecipeInput(recipe, state.inventory);
+    if (!selectedInput) return false;
+    if (!canCraftWithInventoryReplacement(state.inventory, selectedInput, recipe.output)) return false;
+    applyCost(state.inventory, selectedInput);
+    for (const [itemId, qty] of Object.entries(recipe.output || {})) {
+      addItem(state.inventory, itemId, qty);
+    }
+    markDirty();
+    return true;
+  }
+
+  function mpAutotestRunActionDescriptor(descriptor, replay = false) {
+    if (!descriptor || !mpAutotest.active) return false;
+    const client = mpAutotestFindClient(descriptor.clientId);
+    if (!client && descriptor.kind !== "dayNight") return false;
+    mpAutotest.lastAction = `${descriptor.kind} (${descriptor.clientId || "host"})`;
+
+    if (descriptor.kind === "craftEdge") {
+      if (!mpAutotestRunCraftEdgeCheck()) return false;
+    } else if (descriptor.kind === "stationCycle") {
+      mpAutotestRunStationCycle();
+    } else if (descriptor.kind === "dayNight") {
+      state.timeOfDay = CONFIG.dayLength - 0.06;
+      state.isNight = false;
+      updateDayNight(0.18);
+      state.timeOfDay = 0.02;
+      state.isNight = false;
+      markDirty();
+    } else if (descriptor.kind === "disconnectRejoin") {
+      if (!client) return false;
+      mpAutotestDisconnectClient(client, "stress");
+      mpAutotestConnectClient(client);
+    } else if (client) {
+      for (const payload of descriptor.payloads || []) {
+        mpAutotestSendFromClient(client, payload, { reliable: false });
+      }
+      if (descriptor.kind === "spam" && Number.isInteger(descriptor.repeatCraftChecks) && descriptor.repeatCraftChecks > 0) {
+        for (let i = 0; i < descriptor.repeatCraftChecks; i += 1) {
+          if (!mpAutotestRunCraftEdgeCheck()) return false;
+        }
+      }
+      if (descriptor.kind === "spam" && descriptor.concurrentHarvest && descriptor.partnerClientId) {
+        const partner = mpAutotestFindClient(descriptor.partnerClientId);
+        if (partner && partner.connected) {
+          const payload = mpAutotestBuildPlayerUpdatePayload(
+            partner,
+            Number(descriptor.concurrentHarvest.x) || 0,
+            Number(descriptor.concurrentHarvest.y) || 0
+          );
+          mpAutotestSendFromClient(partner, payload, { reliable: false });
+          mpAutotestSendFromClient(partner, {
+            type: "harvest",
+            resId: Number(descriptor.concurrentHarvest.resId),
+            world: "surface",
+            unlocks: normalizeUnlocks({
+              pickaxe: true,
+              orePickaxe: true,
+              relicPickaxe: true,
+              sword: true,
+            }),
+          }, { reliable: false });
+        }
+      }
+    }
+
+    if (!replay) {
+      mpAutotest.actionHistory.push(mpAutotestClone(descriptor, descriptor));
+    }
+    mpAutotest.step += 1;
+    return true;
+  }
+
+  function mpAutotestForceReliableSync() {
+    if (!mpAutotest.active) return;
+    const snapshot = buildSnapshot();
+    const motion = buildMotionUpdate();
+    for (const client of mpAutotest.clients) {
+      if (!client?.connected) continue;
+      mpAutotestEnqueueMessage("host", client.id, snapshot, { reliable: true });
+      if (motion) mpAutotestEnqueueMessage("host", client.id, motion, { reliable: true });
+    }
+  }
+
+  function mpAutotestBuildHostHashes() {
+    const snapshot = buildSnapshot();
+    const canonical = mpAutotestBuildCanonicalFromSnapshot(snapshot);
+    const segmentHashes = mpAutotestComputeSegmentHashes(canonical);
+    return {
+      snapshot,
+      canonical,
+      segmentHashes,
+      overall: segmentHashes?.overall || "",
+    };
+  }
+
+  function mpAutotestBuildClientHashReport(client) {
+    const hashes = client?.shadow?.lastSegmentHashes || null;
+    return hashes
+      ? {
+          id: client.id,
+          overall: hashes.overall || "",
+          segments: { ...hashes },
+        }
+      : {
+          id: client?.id || "unknown",
+          overall: "",
+          segments: null,
+        };
+  }
+
+  function mpAutotestCompareHashes(hostHashes) {
+    const mismatches = [];
+    const clientReports = [];
+    for (const client of mpAutotest.clients) {
+      if (!client?.connected) continue;
+      const report = mpAutotestBuildClientHashReport(client);
+      clientReports.push(report);
+      if (!report.segments) {
+        mismatches.push({
+          clientId: client.id,
+          subsystem: "snapshot",
+          reason: "Client missing snapshot state",
+        });
+        continue;
+      }
+      const diffSegments = [];
+      for (const key of Object.keys(hostHashes.segmentHashes || {})) {
+        if (key === "overall") continue;
+        if (report.segments[key] !== hostHashes.segmentHashes[key]) {
+          diffSegments.push(key);
+        }
+      }
+      if (diffSegments.length > 0) {
+        mismatches.push({
+          clientId: client.id,
+          subsystem: diffSegments.join(", "),
+          reason: `Hash mismatch (${hostHashes.segmentHashes?.overall || "-"} != ${report.segments.overall || "-"})`,
+        });
+      }
+    }
+    return { mismatches, clientReports };
+  }
+
+  function mpAutotestValidateSafety() {
+    const issues = [];
+    const checkSlots = (slots, label) => {
+      if (!Array.isArray(slots)) return;
+      for (let i = 0; i < slots.length; i += 1) {
+        const slot = slots[i];
+        if (!slot || !slot.id) continue;
+        const qty = Number(slot.qty);
+        if (!Number.isFinite(qty) || qty < 0) {
+          issues.push(`${label} slot ${i} has invalid qty`);
+          continue;
+        }
+        if (qty > MAX_STACK) {
+          issues.push(`${label} slot ${i} exceeds max stack (${qty})`);
+        }
+      }
+    };
+
+    checkSlots(state.inventory, "inventory");
+    const checkWorld = (world, worldLabel) => {
+      if (!world) return;
+      const idGroups = [
+        { name: "drops", list: world.drops },
+        { name: "monsters", list: world.monsters },
+        { name: "animals", list: world.animals },
+        { name: "villagers", list: world.villagers },
+      ];
+      for (const group of idGroups) {
+        if (!Array.isArray(group.list)) continue;
+        const ids = new Set();
+        for (const entry of group.list) {
+          if (!entry) continue;
+          const x = Number(entry.x);
+          const y = Number(entry.y);
+          if (!Number.isFinite(x) || !Number.isFinite(y)) {
+            issues.push(`${worldLabel}:${group.name} has non-finite position`);
+          }
+          if (Number.isInteger(entry.id)) {
+            if (ids.has(entry.id)) {
+              issues.push(`${worldLabel}:${group.name} duplicate id ${entry.id}`);
+            }
+            ids.add(entry.id);
+          }
+          if (Number.isFinite(entry.hp) && entry.hp < 0) {
+            issues.push(`${worldLabel}:${group.name} negative hp`);
+          }
+          if (Number.isFinite(entry.renderX) && Number.isFinite(entry.renderY) && Number.isFinite(entry.x) && Number.isFinite(entry.y)) {
+            const drift = Math.hypot(entry.renderX - entry.x, entry.renderY - entry.y);
+            if (drift > MP_AUTOTEST_HASH_EPSILON) {
+              issues.push(`${worldLabel}:${group.name} hitbox drift id=${entry.id}`);
+            }
+          }
+        }
+      }
+      if (Array.isArray(world.resources)) {
+        for (const res of world.resources) {
+          if (!res) continue;
+          if (!Number.isFinite(res.x) || !Number.isFinite(res.y)) {
+            issues.push(`${worldLabel}:resource non-finite position`);
+            break;
+          }
+          if (Number.isFinite(res.hp) && res.hp < 0) {
+            issues.push(`${worldLabel}:resource negative hp`);
+            break;
+          }
+        }
+      }
+    };
+
+    if (Array.isArray(state.structures)) {
+      for (const structure of state.structures) {
+        if (!structure || structure.removed) continue;
+        checkSlots(structure.storage, `structure:${structure.type}`);
+      }
+    }
+
+    const surface = state.surfaceWorld || state.world;
+    checkWorld(surface, "surface");
+    if (Array.isArray(surface?.caves)) {
+      for (const cave of surface.caves) {
+        checkWorld(cave?.world, `cave:${cave?.id ?? "?"}`);
+      }
+    }
+    return issues;
+  }
+
+  function mpAutotestApplyLedgerRule(actionDescriptor) {
+    const nextTotals = mpAutotestCollectHostItemTotals();
+    const nextFingerprint = mpAutotestStableStringify(nextTotals);
+    if (!mpAutotest.inventoryLedger.fingerprint) {
+      mpAutotest.inventoryLedger.totals = nextTotals;
+      mpAutotest.inventoryLedger.fingerprint = nextFingerprint;
+      return null;
+    }
+    const prevTotals = mpAutotest.inventoryLedger.totals;
+    const diff = mpAutotestDiffTotals(prevTotals, nextTotals);
+    const rule = actionDescriptor?.ledgerRule || "allowAny";
+    let violation = null;
+    if (rule === "conserve" && diff.totalDelta !== 0) {
+      violation = `Ledger violation: expected conserve, delta=${diff.totalDelta}`;
+    } else if (rule === "noIncrease" && diff.totalDelta > 0) {
+      violation = `Ledger violation: unexpected increase delta=${diff.totalDelta}`;
+    } else if (rule === "noDecrease" && diff.totalDelta < 0) {
+      violation = `Ledger violation: unexpected decrease delta=${diff.totalDelta}`;
+    }
+    mpAutotest.inventoryLedger.totals = nextTotals;
+    mpAutotest.inventoryLedger.fingerprint = nextFingerprint;
+    if (violation) {
+      const top = diff.deltas.slice(0, 6).map((entry) => `${entry.key}:${entry.delta > 0 ? "+" : ""}${entry.delta}`).join(", ");
+      return `${violation} (${top || "no item deltas"})`;
+    }
+    return null;
+  }
+
+  function mpAutotestBuildFailureReport(reason, details = null) {
+    const hostHashes = mpAutotestBuildHostHashes();
+    const hashCompare = mpAutotestCompareHashes(hostHashes);
+    const modeLabel = mpAutotest.mode?.id || "unknown";
+    const clientCount = mpAutotest.clients.length;
+    const mismatchLines = [];
+    if (Array.isArray(hashCompare.mismatches) && hashCompare.mismatches.length > 0) {
+      for (const mismatch of hashCompare.mismatches) {
+        mismatchLines.push(`- ${mismatch.clientId}: ${mismatch.subsystem} (${mismatch.reason})`);
+      }
+    } else {
+      mismatchLines.push("- none");
+    }
+    const recentMessages = mpAutotest.messageLog
+      .filter((entry) => entry?.event === "deliver")
+      .slice(-30)
+      .map((entry) => `${entry.time.toFixed(3)} ${entry.from}->${entry.to} ${entry.type} ${entry.hint || ""}`)
+      .join("\n");
+    const report = [
+      "MP AUTOTEST FAILURE REPORT",
+      `mode: ${modeLabel}`,
+      `seed: ${mpAutotest.seed}`,
+      `clients: ${clientCount}`,
+      `step: ${mpAutotest.step}`,
+      `reason: ${reason}`,
+      `lastAction: ${mpAutotest.lastAction}`,
+      "",
+      `hostHash: ${hostHashes.overall}`,
+      ...hashCompare.clientReports.map((entry) => `clientHash[${entry.id}]: ${entry.overall || "<missing>"}`),
+      "",
+      "mismatch summary:",
+      ...mismatchLines,
+      "",
+      "last 30 delivered messages:",
+      recentMessages || "(none)",
+    ].join("\n");
+    return {
+      text: report,
+      hostHashes,
+      hashCompare,
+      details,
+    };
+  }
+
+  function mpAutotestStoreFailureBundle(failureReportData) {
+    const bundle = {
+      seed: mpAutotest.seed,
+      mode: mpAutotest.mode?.id || "quick",
+      clients: mpAutotest.clients.length,
+      step: mpAutotest.step,
+      lastAction: mpAutotest.lastAction,
+      actions: mpAutotestClone(mpAutotest.actionHistory, []),
+      fault: mpAutotestClone(mpAutotestFaultConfig(), {}),
+      messageLog: mpAutotestClone(mpAutotest.messageLog.slice(-80), []),
+      report: failureReportData?.text || "",
+    };
+    try {
+      localStorage.setItem(MP_AUTOTEST_LAST_FAILURE_KEY, JSON.stringify(bundle));
+    } catch (err) {
+      // ignore localStorage persistence failures
+    }
+    mpAutotest.replayBundle = bundle;
+  }
+
+  function mpAutotestFail(reason, details = null) {
+    if (!mpAutotest.active) return;
+    const failureData = mpAutotestBuildFailureReport(reason, details);
+    mpAutotest.failReason = reason;
+    mpAutotest.failReport = failureData.text;
+    mpAutotestStoreFailureBundle(failureData);
+    mpAutotestLogLine(`FAIL: ${reason}`);
+    mpAutotestLogLine("Failure report captured. Use Copy Failure Report or Replay Last Failure.");
+    mpAutotestStop({ restoreSeed: true, status: "fail", keepLog: true });
+  }
+
+  function mpAutotestPass() {
+    if (!mpAutotest.active) return;
+    mpAutotest.failReason = "";
+    mpAutotest.failReport = "";
+    mpAutotestLogLine(`PASS: ${mpAutotest.mode?.label || "Autotest"} completed (${mpAutotest.step} steps).`);
+    mpAutotestStop({ restoreSeed: true, status: "pass", keepLog: true });
+  }
+
+  function mpAutotestEnsureChecks(actionDescriptor) {
+    if (!mpAutotest.active) return;
+    if (mpAutotest.eventStats.clientAuthViolations > 0) {
+      mpAutotestFail("Authority violation: client sent host-authoritative packet", {
+        subsystem: "authority",
+      });
+      return;
+    }
+    const safetyIssues = mpAutotestValidateSafety();
+    if (safetyIssues.length > 0) {
+      mpAutotestFail(safetyIssues[0], { subsystem: "safety", issues: safetyIssues.slice(0, 8) });
+      return;
+    }
+    const ledgerViolation = mpAutotestApplyLedgerRule(actionDescriptor);
+    if (ledgerViolation) {
+      mpAutotestFail(ledgerViolation, { subsystem: "ledger" });
+      return;
+    }
+    const hostHashes = mpAutotestBuildHostHashes();
+    mpAutotest.hostHash = hostHashes.overall;
+    mpAutotest.clientHashes.clear();
+    const hashCompare = mpAutotestCompareHashes(hostHashes);
+    for (const report of hashCompare.clientReports) {
+      mpAutotest.clientHashes.set(report.id, report.overall);
+    }
+    if (hashCompare.mismatches.length > 0) {
+      const first = hashCompare.mismatches[0];
+      mpAutotestFail(`State hash mismatch (${first.clientId}: ${first.subsystem})`, {
+        subsystem: "snapshot",
+        mismatch: first,
+      });
+    }
+  }
+
+  function mpAutotestChooseNextDescriptor() {
+    if (!mpAutotest.active) return null;
+    if (mpAutotest.replayBundle && Array.isArray(mpAutotest.replayBundle.actions) && mpAutotest.replayBundle.actions.length > 0) {
+      return mpAutotest.replayBundle.actions.shift();
+    }
+    if (mpAutotest.replayBundle && Array.isArray(mpAutotest.replayBundle.actions) && mpAutotest.replayBundle.actions.length === 0) {
+      mpAutotestPass();
+      return null;
+    }
+    const availableClients = mpAutotest.clients.filter((entry) => entry && entry.connected);
+    if (availableClients.length === 0) return null;
+    const actionKinds = mpAutotestGenerateActionKinds();
+    const kind = actionKinds[mpAutotest.step % actionKinds.length];
+    const client = availableClients[Math.floor(mpAutotest.rng() * availableClients.length)];
+    return mpAutotestPrepareActionDescriptor(client, kind);
+  }
+
+  function mpAutotestRunActionStep() {
+    if (!mpAutotest.active) return;
+    const descriptor = mpAutotestChooseNextDescriptor();
+    if (!descriptor) return;
+    const ok = mpAutotestRunActionDescriptor(descriptor, !!mpAutotest.replayBundle);
+    if (!ok) return;
+    mpAutotestLogLine(`step ${mpAutotest.step}: ${descriptor.kind} (${descriptor.clientId || "host"})`);
+    mpAutotestForceReliableSync();
+    mpAutotestFlushMessageQueue(true);
+    mpAutotestEnsureChecks(descriptor);
+  }
+
+  function mpAutotestCreateSeedFromInput(rawSeed) {
+    const normalized = normalizeSeedValue(rawSeed || "");
+    if (normalized) return normalized;
+    const randomPart = Math.floor(Math.random() * 1e9).toString(36);
+    return normalizeSeedValue(`mp-auto-${Date.now().toString(36)}-${randomPart}`);
+  }
+
+  function mpAutotestStartLoopback(clientCount) {
+    net.enabled = true;
+    net.ready = true;
+    net.isHost = true;
+    net.playerId = "autotest-host";
+    net.peer = null;
+    net.hostConn = null;
+    net.connections = new Map();
+    net.players = new Map();
+    net.pendingPlaces.clear();
+    net.pendingHousePlaces.clear();
+    net.pendingHouseMoves.clear();
+    net.pendingBreaks.clear();
+    net.debugBoatPlaceReceipts.clear();
+    net.snapshotTimer = NET_CONFIG.snapshotInterval;
+    net.motionTimer = NET_CONFIG.motionInterval;
+    net.playerTimer = NET_CONFIG.playerSendInterval;
+
+    mpAutotest.hostConnections = new Map();
+    mpAutotest.clients = [];
+    for (let i = 0; i < clientCount; i += 1) {
+      const client = mpAutotestCreateClient(i);
+      mpAutotest.clients.push(client);
+      mpAutotestConnectClient(client);
+    }
+    mpAutotestFlushMessageQueue(true);
+    mpAutotestForceReliableSync();
+    mpAutotestFlushMessageQueue(true);
+  }
+
+  function mpAutotestStopLoopback() {
+    for (const client of mpAutotest.clients) {
+      if (!client) continue;
+      client.connected = false;
+      if (client.connection) {
+        client.connection.open = false;
+      }
+    }
+    mpAutotest.clients = [];
+    mpAutotest.hostConnections = new Map();
+    mpAutotest.messageQueue = [];
+    net.enabled = false;
+    net.ready = false;
+    net.isHost = false;
+    net.playerId = null;
+    net.connections.clear();
+    net.players.clear();
+    net.pendingPlaces.clear();
+    net.pendingHousePlaces.clear();
+    net.pendingHouseMoves.clear();
+    net.pendingBreaks.clear();
+    net.debugBoatPlaceReceipts.clear();
+    updateMpStatus("MP: Offline");
+    if (roomDisplay) {
+      roomDisplay.textContent = "Room: -";
+    }
+  }
+
+  function mpAutotestStop(options = null) {
+    const opts = options || {};
+    const restoreSeed = opts.restoreSeed !== false;
+    const keepLog = !!opts.keepLog;
+    const previousSeed = mpAutotest.savedSeed || null;
+    mpAutotest.active = false;
+    mpAutotestStopLoopback();
+    if (restoreSeed && previousSeed) {
+      loadOrCreateGame(previousSeed);
+      updateAllSlotUI();
+      setPrompt(`Returned to seed: ${previousSeed}`, 1.2);
+    }
+    mpAutotest.mode = null;
+    mpAutotest.customFault = null;
+    mpAutotest.seed = "";
+    mpAutotest.rng = null;
+    mpAutotest.elapsed = 0;
+    mpAutotest.step = 0;
+    mpAutotest.actionTimer = 0;
+    mpAutotest.periodicCheckTimer = 0;
+    mpAutotest.nextSeq = 1;
+    mpAutotest.messageQueue = [];
+    mpAutotest.eventStats.authoritativeMutations = 0;
+    mpAutotest.eventStats.clientAuthViolations = 0;
+    mpAutotest.inventoryLedger.totals = Object.create(null);
+    mpAutotest.inventoryLedger.fingerprint = "";
+    mpAutotest.lastAction = "none";
+    mpAutotest.replayBundle = null;
+    mpAutotest.savedSeed = null;
+    if (!keepLog) {
+      mpAutotest.logLines = ["Multiplayer autotest idle."];
+      if (mpAutotestLogEl) mpAutotestLogEl.textContent = mpAutotest.logLines[0];
+    }
+    mpAutotestSetStatus(opts.status || "idle");
+  }
+
+  function runMultiplayerAutotest(dt = 0) {
+    if (!mpAutotest.active) return;
+    const step = Math.max(0, Number(dt) || 0);
+    mpAutotest.elapsed += step;
+    mpAutotestFlushMessageQueue(false);
+    mpAutotest.periodicCheckTimer -= step;
+    if (mpAutotest.periodicCheckTimer <= 0) {
+      mpAutotest.periodicCheckTimer = 0.45;
+      mpAutotestEnsureChecks({ ledgerRule: "allowAny", kind: "periodic" });
+    }
+    if (!mpAutotest.active) return;
+    mpAutotest.actionTimer -= step;
+    if (mpAutotest.actionTimer <= 0) {
+      const mode = mpAutotest.mode || MP_AUTOTEST_MODES.quick;
+      const actionsPerTick = mode.stress ? 2 : 1;
+      for (let i = 0; i < actionsPerTick; i += 1) {
+        if (!mpAutotest.active) break;
+        mpAutotestRunActionStep();
+      }
+      if (mpAutotest.active) {
+        const min = Number(mode.actionIntervalMin) || 0.2;
+        const max = Number(mode.actionIntervalMax) || min;
+        const span = Math.max(0, max - min);
+        mpAutotest.actionTimer = min + mpAutotest.rng() * span;
+      }
+    }
+    if (!mpAutotest.active) return;
+    const targetDuration = Number(mpAutotest.mode?.duration) || 45;
+    if (mpAutotest.elapsed >= targetDuration) {
+      mpAutotestPass();
+    }
+  }
+
+  function startMultiplayerAutotest(modeId = "quick", options = null) {
+    const opts = options || {};
+    if (!state.debugUnlocked) {
+      setPrompt("Debug is locked. Open Settings to unlock.", 1.2);
+      return;
+    }
+    if (net.enabled) {
+      setPrompt("Run MP autotest from solo mode (no live room).", 1.5);
+      return;
+    }
+    const mode = modeId === "stress" ? MP_AUTOTEST_MODES.stress : MP_AUTOTEST_MODES.quick;
+    const replayBundle = opts.replayBundle || null;
+    const requestedClients = clamp(
+      Number.parseInt(replayBundle?.clients ?? mpAutotestClientsInput?.value ?? "1", 10) || 1,
+      1,
+      3
+    );
+    const seedRaw = replayBundle?.seed ?? mpAutotestSeedInput?.value ?? "";
+    const seed = mpAutotestCreateSeedFromInput(seedRaw);
+    if (mpAutotestSeedInput) {
+      mpAutotestSeedInput.value = seed;
+    }
+
+    if (state.world && state.player && !netIsClientReady()) {
+      saveGame();
+    }
+    const previousSeed = normalizeSeedValue(state.surfaceWorld?.seed || getStoredActiveSeed() || "island-1");
+    mpAutotest.savedSeed = previousSeed;
+    if (!state.world || !state.player || seed !== previousSeed) {
+      loadOrCreateGame(seed);
+      updateAllSlotUI();
+    }
+
+    mpAutotest.active = true;
+    mpAutotest.mode = mode;
+    mpAutotest.customFault = replayBundle?.fault && typeof replayBundle.fault === "object"
+      ? mpAutotestClone(replayBundle.fault, null)
+      : null;
+    mpAutotest.seed = seed;
+    mpAutotest.elapsed = 0;
+    mpAutotest.step = 0;
+    mpAutotest.nextSeq = 1;
+    mpAutotest.actionTimer = 0.06;
+    mpAutotest.periodicCheckTimer = 0.24;
+    mpAutotest.rng = makeRng(seedToInt(seed));
+    mpAutotest.messageQueue = [];
+    mpAutotest.messageLog = [];
+    mpAutotest.actionHistory = [];
+    mpAutotest.eventStats.authoritativeMutations = 0;
+    mpAutotest.eventStats.clientAuthViolations = 0;
+    mpAutotest.inventoryLedger.totals = Object.create(null);
+    mpAutotest.inventoryLedger.fingerprint = "";
+    mpAutotest.hostHash = "";
+    mpAutotest.clientHashes = new Map();
+    mpAutotest.lastAction = "boot";
+    mpAutotest.failReason = "";
+    mpAutotest.failReport = "";
+    mpAutotest.replayBundle = replayBundle
+      ? {
+          ...mpAutotestClone(replayBundle, replayBundle),
+          actions: mpAutotestClone(replayBundle.actions, []),
+        }
+      : null;
+    mpAutotest.logLines = [];
+    mpAutotestLogLine(`MP Autotest ${mode.label} started.`);
+    mpAutotestLogLine(`Seed: ${seed}`);
+    mpAutotestLogLine(`Clients: ${requestedClients}`);
+    if (mpAutotest.replayBundle) {
+      mpAutotestLogLine("Replay mode: loaded action sequence from last failure.");
+    }
+
+    mpAutotestStartLoopback(requestedClients);
+    mpAutotestEnsureFixtureChest();
+    mpAutotestEnsureFixtureStation();
+    mpAutotestEnsureFixtureMonster();
+    mpAutotestForceReliableSync();
+    mpAutotestFlushMessageQueue(true);
+    mpAutotest.inventoryLedger.totals = mpAutotestCollectHostItemTotals();
+    mpAutotest.inventoryLedger.fingerprint = mpAutotestStableStringify(mpAutotest.inventoryLedger.totals);
+    mpAutotestSetStatus(mode.id);
+    setPrompt(`MP Autotest running (${mode.label})`, 1.4);
+  }
+
+  function replayLastMultiplayerAutotestFailure() {
+    let bundle = null;
+    try {
+      const raw = localStorage.getItem(MP_AUTOTEST_LAST_FAILURE_KEY);
+      if (raw) bundle = JSON.parse(raw);
+    } catch (err) {
+      bundle = null;
+    }
+    if (!bundle || !bundle.seed || !bundle.mode) {
+      setPrompt("No saved MP autotest failure replay found.", 1.4);
+      return;
+    }
+    startMultiplayerAutotest(bundle.mode, { replayBundle: bundle });
+  }
+
+  function copyMultiplayerAutotestFailureReport() {
+    const text = (mpAutotest.failReport || "").trim();
+    if (!text) {
+      setPrompt("No failure report to copy.", 1.1);
+      return;
+    }
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(text)
+        .then(() => setPrompt("Failure report copied.", 1.2))
+        .catch(() => setPrompt("Copy failed. Check clipboard permissions.", 1.3));
+      return;
+    }
+    setPrompt("Clipboard API unavailable.", 1.3);
   }
 
   function updateMosesButton() {
@@ -5841,11 +7754,12 @@
   }
 
   function netIsClient() {
-    return net.enabled && !net.isHost;
+    if (!net.enabled || net.isHost) return false;
+    return !!(net.hostConn && net.hostConn.open);
   }
 
   function netIsClientReady() {
-    return net.enabled && !net.isHost && net.ready;
+    return netIsClient() && net.ready;
   }
 
   function updateMpStatus(text) {
@@ -5904,6 +7818,10 @@
     net.pendingHouseMoves.clear();
     net.pendingBreaks.clear();
     net.debugBoatPlaceReceipts.clear();
+    net.snapshotTimer = NET_CONFIG.snapshotInterval;
+    net.motionTimer = NET_CONFIG.motionInterval;
+    net.playerTimer = NET_CONFIG.playerSendInterval;
+    net.helloRetryTimer = NET_CONFIG.helloRetryInterval;
     net.roomId = roomId;
     net.hostId = `${roomId}-host`;
     if (roomDisplay) {
@@ -5916,32 +7834,17 @@
   function getLocalProfile() {
     const name = setLocalPlayerName(
       state.playerName || net.localName || getLegacyStoredPlayerName() || generateDefaultPlayerName(),
-      { persist: true, broadcast: false }
+      { persist: false, broadcast: false }
     );
     const color = pickRandomDistinctPlayerColor();
     return { name, color };
   }
 
   function buildSharePayload() {
-    if (HOSTED_BASE_URL) {
-      try {
-        const hosted = new URL(HOSTED_BASE_URL);
-        hosted.hash = `room=${net.roomId}`;
-        return { text: hosted.toString(), prompt: "Hosted link copied" };
-      } catch (err) {
-        // fall through
-      }
-    }
-
-    const url = new URL(window.location.href);
-    if (url.protocol === "file:") {
-      return {
-        text: net.roomId,
-        prompt: "Room code copied. Use Join Room on the other device.",
-      };
-    }
-    url.hash = `room=${net.roomId}`;
-    return { text: url.toString(), prompt: "Link copied" };
+    return {
+      text: net.roomId,
+      prompt: "Room code copied. Use Join Room to connect.",
+    };
   }
 
   function copyRoomLink() {
@@ -6016,6 +7919,10 @@
     net.isHost = false;
     net.ready = false;
     net.playerId = null;
+    net.snapshotTimer = NET_CONFIG.snapshotInterval;
+    net.motionTimer = NET_CONFIG.motionInterval;
+    net.playerTimer = NET_CONFIG.playerSendInterval;
+    net.helloRetryTimer = NET_CONFIG.helloRetryInterval;
     net.enabled = true;
     const profile = getLocalProfile();
     net.localName = profile.name;
@@ -6028,7 +7935,7 @@
     updateMpStatus("MP: Connecting");
     if (mpCopy) {
       mpCopy.disabled = false;
-      mpCopy.textContent = window.location.protocol === "file:" ? "Copy Room" : "Copy Link";
+      mpCopy.textContent = "Copy Code";
       mpCopy.removeEventListener("click", copyRoomLink);
       mpCopy.addEventListener("click", copyRoomLink);
     }
@@ -6063,6 +7970,10 @@
     net.isHost = false;
     net.ready = false;
     net.playerId = null;
+    net.snapshotTimer = NET_CONFIG.snapshotInterval;
+    net.motionTimer = NET_CONFIG.motionInterval;
+    net.playerTimer = NET_CONFIG.playerSendInterval;
+    net.helloRetryTimer = NET_CONFIG.helloRetryInterval;
     net.enabled = true;
     const profile = getLocalProfile();
     net.localName = profile.name;
@@ -6124,6 +8035,10 @@
     net.ready = false;
     net.isHost = false;
     net.playerId = null;
+    net.snapshotTimer = NET_CONFIG.snapshotInterval;
+    net.motionTimer = NET_CONFIG.motionInterval;
+    net.playerTimer = NET_CONFIG.playerSendInterval;
+    net.helloRetryTimer = NET_CONFIG.helloRetryInterval;
     hideStartScreen();
     if (!state.world) {
       loadOrCreateGame();
@@ -6133,11 +8048,11 @@
 
   function startHost() {
     hideStartScreen();
-    initMultiplayer();
     if (!state.world) {
       loadOrCreateGame();
       updateAllSlotUI();
     }
+    initMultiplayer();
   }
 
   function startJoin() {
@@ -6167,7 +8082,7 @@
       }
     });
     peer.on("connection", (conn) => {
-      if (net.isHost) setupConnection(conn, true);
+      setupConnection(conn, true);
     });
     peer.on("error", (err) => {
       if (err.type === "unavailable-id") {
@@ -6182,6 +8097,11 @@
 
   function connectAsClient() {
     net.isHost = false;
+    net.ready = false;
+    net.hostConn = null;
+    net.connections.clear();
+    net.players.clear();
+    net.helloRetryTimer = NET_CONFIG.helloRetryInterval;
     const peer = new Peer(undefined, PEER_OPTIONS);
     net.peer = peer;
     peer.on("open", (id) => {
@@ -6203,18 +8123,22 @@
   }
 
   function setupConnection(conn, isHostSide) {
-    if (net.isHost) {
+    if (isHostSide || net.isHost) {
       net.connections.set(conn.peer, conn);
     }
     conn.on("open", () => {
       if (!isHostSide) {
         sendHello();
+        net.helloRetryTimer = NET_CONFIG.helloRetryInterval;
         updateMpStatus("MP: Connected");
       }
     });
-    conn.on("data", (data) => handleNetMessage(conn, data));
+    conn.on("data", (data) => {
+      if (isHostSide && !net.isHost) return;
+      handleNetMessage(conn, data);
+    });
     conn.on("close", () => {
-      if (net.isHost) {
+      if (isHostSide || net.isHost) {
         net.connections.delete(conn.peer);
         net.players.delete(conn.peer);
         const shipChanged = removePlayerFromAllShips(conn.peer);
@@ -6227,6 +8151,12 @@
       } else {
         updateMpStatus("MP: Disconnected");
         net.ready = false;
+        net.helloRetryTimer = NET_CONFIG.helloRetryInterval;
+        net.resyncTimer = 0;
+        net.lastHostPacketAt = performance.now();
+        if (net.hostConn === conn) {
+          net.hostConn = null;
+        }
         rollbackAllPendingClientRequests("Disconnected: pending actions rolled back");
       }
     });
@@ -6266,8 +8196,97 @@
     }
   }
 
+  function sendRemotePlayerUpdateToPeers(player, exceptPeerId = null) {
+    if (!player) return;
+    broadcastNet({
+      type: "playerUpdate",
+      id: player.id,
+      name: player.name,
+      color: player.color,
+      x: player.x,
+      y: player.y,
+      facing: player.facing,
+      hp: player.hp,
+      maxHp: player.maxHp,
+      toolTier: player.toolTier,
+      unlocks: normalizeUnlocks(player.unlocks),
+      checkpoint: normalizeCheckpoint(player.checkpoint),
+      inHut: player.inHut,
+      houseKey: player.houseKey,
+      houseX: player.houseX,
+      houseY: player.houseY,
+      inCave: player.inCave,
+      caveId: player.caveId,
+    }, exceptPeerId);
+  }
+
+  function buildRemoteJoinPlayer(conn, profile = null) {
+    const usedColors = getAssignedPlayerColorSet();
+    const color = pickRandomDistinctPlayerColor(usedColors);
+    const spawn = findSpawnForJoin();
+    return {
+      id: conn.peer,
+      name: sanitizePlayerName(profile?.name, generateDefaultPlayerName()),
+      color,
+      x: spawn.x,
+      y: spawn.y,
+      facing: { x: 1, y: 0 },
+      hp: 100,
+      maxHp: 100,
+      toolTier: 1,
+      unlocks: normalizeUnlocks(null),
+      checkpoint: { x: spawn.x, y: spawn.y },
+      inHut: false,
+      houseKey: null,
+      houseX: null,
+      houseY: null,
+      inCave: false,
+      caveId: null,
+    };
+  }
+
+  function ensureRemotePlayerRegistered(conn, profile = null, options = null) {
+    if (!conn?.peer) return null;
+    const opts = options || {};
+    let player = net.players.get(conn.peer);
+    if (player) {
+      if (typeof profile?.name === "string") {
+        player.name = sanitizePlayerName(profile.name, player.name || "Survivor");
+      }
+      return player;
+    }
+    player = buildRemoteJoinPlayer(conn, profile);
+    net.players.set(conn.peer, player);
+    if (opts.sendWelcome && conn.open) {
+      conn.send({
+        type: "welcome",
+        playerId: conn.peer,
+        playerState: player,
+        snapshot: buildSnapshot(),
+      });
+    }
+    if (opts.broadcastJoin !== false) {
+      sendRemotePlayerUpdateToPeers(player, conn.peer);
+    }
+    return player;
+  }
+
   function handleNetMessage(conn, message) {
     if (!message || typeof message !== "object") return;
+    if (!net.isHost && conn && conn === net.hostConn) {
+      net.lastHostPacketAt = performance.now();
+    }
+    if (
+      net.isHost
+      && conn?.peer
+      && message.type !== "hello"
+      && message.type !== "welcome"
+      && message.type !== "snapshot"
+      && message.type !== "motion"
+      && message.type !== "playerLeft"
+    ) {
+      ensureRemotePlayerRegistered(conn, message, { sendWelcome: true, broadcastJoin: true });
+    }
     switch (message.type) {
       case "hello":
         if (net.isHost) handleHello(conn, message);
@@ -6287,6 +8306,9 @@
         } else {
           applyRemotePlayerUpdate(message);
         }
+        break;
+      case "resyncRequest":
+        if (net.isHost) handleResyncRequest(conn);
         break;
       case "place":
         if (net.isHost) handlePlaceRequest(conn, message);
@@ -6383,15 +8405,24 @@
   function getPlayersSnapshot() {
     const players = [];
     if (state.player) {
+      const localWorld = getPlayerWorldForSync(state.inCave, state.activeCave?.id ?? null);
+      const localPos = clampPositionToWorldBounds(
+        localWorld,
+        state.player.x,
+        state.player.y,
+        state.player.x,
+        state.player.y
+      );
+      const localMaxHp = normalizePlayerMaxHpValue(state.player.maxHp, 100);
       players.push({
         id: net.playerId || "local",
         name: net.localName || "Survivor",
         color: net.localColor || COLORS.player,
-        x: state.player.x,
-        y: state.player.y,
-        facing: state.player.facing,
-        hp: state.player.hp,
-        maxHp: state.player.maxHp,
+        x: localPos.x,
+        y: localPos.y,
+        facing: normalizePlayerFacingValue(state.player.facing, { x: 1, y: 0 }),
+        hp: normalizePlayerHpValue(state.player.hp, localMaxHp, localMaxHp),
+        maxHp: localMaxHp,
         toolTier: state.player.toolTier,
         checkpoint: normalizeCheckpoint(state.player.checkpoint),
         inHut: state.player.inHut,
@@ -6404,15 +8435,24 @@
       });
     }
     for (const [id, player] of net.players.entries()) {
+      const playerWorld = getPlayerWorldForSync(player?.inCave, player?.caveId);
+      const remotePos = clampPositionToWorldBounds(
+        playerWorld,
+        player?.x,
+        player?.y,
+        player?.x,
+        player?.y
+      );
+      const remoteMaxHp = normalizePlayerMaxHpValue(player?.maxHp, 100);
       players.push({
         id,
         name: player.name,
         color: player.color,
-        x: player.x,
-        y: player.y,
-        facing: player.facing,
-        hp: player.hp,
-        maxHp: player.maxHp,
+        x: remotePos.x,
+        y: remotePos.y,
+        facing: normalizePlayerFacingValue(player?.facing, { x: 1, y: 0 }),
+        hp: normalizePlayerHpValue(player?.hp, remoteMaxHp, remoteMaxHp),
+        maxHp: remoteMaxHp,
         toolTier: player.toolTier,
         checkpoint: normalizeCheckpoint(player.checkpoint),
         inHut: player.inHut,
@@ -7229,12 +9269,24 @@
     for (const entry of players) {
       if (!entry || !entry.id) continue;
       if (entry.id === net.playerId) {
+        if (!state.player) continue;
+        const localWorld = getPlayerWorldForSync(state.inCave, state.activeCave?.id ?? null);
+        const normalizedLocalPos = clampPositionToWorldBounds(
+          localWorld,
+          Number.isFinite(entry.x) ? entry.x : state.player.x,
+          Number.isFinite(entry.y) ? entry.y : state.player.y,
+          state.player.x,
+          state.player.y
+        );
         if (typeof entry.name === "string") {
           setLocalPlayerName(entry.name, { persist: false, broadcast: false });
         }
-        if (typeof entry.hp === "number") state.player.hp = entry.hp;
-        if (typeof entry.maxHp === "number") state.player.maxHp = entry.maxHp;
-        if (typeof entry.toolTier === "number") state.player.toolTier = entry.toolTier;
+        state.player.x = normalizedLocalPos.x;
+        state.player.y = normalizedLocalPos.y;
+        state.player.facing = normalizePlayerFacingValue(entry.facing, state.player.facing);
+        state.player.maxHp = normalizePlayerMaxHpValue(entry.maxHp, state.player.maxHp);
+        state.player.hp = normalizePlayerHpValue(entry.hp, state.player.maxHp, state.player.hp);
+        if (Number.isFinite(entry.toolTier)) state.player.toolTier = entry.toolTier;
         const snapshotColor = normalizeHexColor(entry.color);
         if (snapshotColor) net.localColor = snapshotColor;
         state.player.unlocks = normalizeUnlocks(entry.unlocks ?? state.player.unlocks);
@@ -7245,26 +9297,35 @@
       }
       const prev = previous.get(entry.id);
       const normalizedColor = normalizeHexColor(entry.color) || normalizeHexColor(prev?.color) || "#6fa8ff";
+      const nextMaxHp = normalizePlayerMaxHpValue(entry.maxHp, prev?.maxHp ?? 100);
+      const remoteWorld = getPlayerWorldForSync(!!entry.inCave, entry.caveId ?? null);
+      const normalizedRemotePos = clampPositionToWorldBounds(
+        remoteWorld,
+        Number.isFinite(entry.x) ? entry.x : prev?.x,
+        Number.isFinite(entry.y) ? entry.y : prev?.y,
+        prev?.x,
+        prev?.y
+      );
       next.set(entry.id, {
         id: entry.id,
         name: sanitizePlayerName(entry.name, prev?.name || "Survivor"),
         color: normalizedColor,
-        x: entry.x ?? 0,
-        y: entry.y ?? 0,
-        facing: entry.facing ?? { x: 1, y: 0 },
-        hp: entry.hp ?? 100,
-        maxHp: entry.maxHp ?? 100,
-        toolTier: entry.toolTier ?? 1,
+        x: normalizedRemotePos.x,
+        y: normalizedRemotePos.y,
+        facing: normalizePlayerFacingValue(entry.facing, prev?.facing),
+        hp: normalizePlayerHpValue(entry.hp, nextMaxHp, prev?.hp ?? nextMaxHp),
+        maxHp: nextMaxHp,
+        toolTier: Number.isFinite(entry.toolTier) ? entry.toolTier : 1,
         checkpoint: normalizeCheckpoint(entry.checkpoint) ?? prev?.checkpoint ?? null,
         inHut: !!entry.inHut,
         houseKey: entry.houseKey ?? null,
-        houseX: typeof entry.houseX === "number" ? entry.houseX : null,
-        houseY: typeof entry.houseY === "number" ? entry.houseY : null,
+        houseX: Number.isFinite(entry.houseX) ? entry.houseX : null,
+        houseY: Number.isFinite(entry.houseY) ? entry.houseY : null,
         inCave: !!entry.inCave,
         caveId: entry.caveId ?? null,
         unlocks: normalizeUnlocks(entry.unlocks ?? prev?.unlocks),
-        renderX: prev?.renderX ?? entry.x ?? 0,
-        renderY: prev?.renderY ?? entry.y ?? 0,
+        renderX: prev?.renderX ?? (Number.isFinite(entry.x) ? entry.x : 0),
+        renderY: prev?.renderY ?? (Number.isFinite(entry.y) ? entry.y : 0),
       });
     }
     net.players = next;
@@ -7359,6 +9420,30 @@
     }
 
     const world = state.surfaceWorld;
+    if (!state.player) {
+      state.spawnTile = state.spawnTile && isSpawnableTile(world, state.spawnTile.x, state.spawnTile.y)
+        ? state.spawnTile
+        : findSpawnTile(world);
+      state.player = {
+        x: (state.spawnTile.x + 0.5) * CONFIG.tileSize,
+        y: (state.spawnTile.y + 0.5) * CONFIG.tileSize,
+        toolTier: 1,
+        unlocks: normalizeUnlocks(null),
+        checkpoint: {
+          x: (state.spawnTile.x + 0.5) * CONFIG.tileSize,
+          y: (state.spawnTile.y + 0.5) * CONFIG.tileSize,
+        },
+        facing: { x: 1, y: 0 },
+        maxHp: 100,
+        hp: 100,
+        poisonTimer: 0,
+        poisonDps: 0,
+        inHut: false,
+        invincible: 0,
+        attackTimer: 0,
+      };
+      setPlayerCheckpoint(state.player, world, state.player.x, state.player.y, true);
+    }
     if (Array.isArray(snapshot.islandLayout)) {
       applySurfaceIslandLayout(world, snapshot.islandLayout, { shiftSession: false });
       if (!state.spawnTile || !isSpawnableTile(world, state.spawnTile.x, state.spawnTile.y)) {
@@ -7433,61 +9518,24 @@
   }
 
   function handleHello(conn, message) {
-    if (!state.player) return;
+    if (!state.player || !state.surfaceWorld) {
+      loadOrCreateGame();
+    }
+    if (!state.player || !state.surfaceWorld) return;
     if (!net.connections.has(conn.peer)) {
       net.connections.set(conn.peer, conn);
     }
-    const name = sanitizePlayerName(message?.name, generateDefaultPlayerName());
-    const usedColors = getAssignedPlayerColorSet();
-    const color = pickRandomDistinctPlayerColor(usedColors);
-    const spawn = findSpawnForJoin();
-    const player = {
-      id: conn.peer,
-      name,
-      color,
-      x: spawn.x,
-      y: spawn.y,
-      facing: { x: 1, y: 0 },
-      hp: 100,
-      maxHp: 100,
-      toolTier: 1,
-      unlocks: normalizeUnlocks(null),
-      checkpoint: { x: spawn.x, y: spawn.y },
-      inHut: false,
-      houseKey: null,
-      houseX: null,
-      houseY: null,
-      inCave: false,
-      caveId: null,
-    };
-    net.players.set(conn.peer, player);
-    const snapshot = buildSnapshot();
-    conn.send({
-      type: "welcome",
-      playerId: conn.peer,
-      playerState: player,
-      snapshot,
+    ensureRemotePlayerRegistered(conn, message, {
+      sendWelcome: true,
+      broadcastJoin: true,
     });
-    broadcastNet({
-      type: "playerUpdate",
-      id: conn.peer,
-      name: player.name,
-      color: player.color,
-      x: player.x,
-      y: player.y,
-      facing: player.facing,
-      hp: player.hp,
-      maxHp: player.maxHp,
-      toolTier: player.toolTier,
-      unlocks: normalizeUnlocks(player.unlocks),
-      checkpoint: normalizeCheckpoint(player.checkpoint),
-      inHut: player.inHut,
-      houseKey: player.houseKey,
-      houseX: player.houseX,
-      houseY: player.houseY,
-      inCave: player.inCave,
-      caveId: player.caveId,
-    }, conn.peer);
+  }
+
+  function handleResyncRequest(conn) {
+    if (!net.isHost || !conn?.open) return;
+    conn.send(buildSnapshot());
+    const motion = buildMotionUpdate();
+    if (motion) conn.send(motion);
   }
 
   function handleWelcome(message) {
@@ -7496,6 +9544,8 @@
     }
     state.sleepSequence = null;
     net.ready = true;
+    net.lastHostPacketAt = performance.now();
+    net.resyncTimer = NET_CONFIG.resyncRequestCooldown;
     state.inCave = false;
     state.activeCave = null;
     state.activeHouse = null;
@@ -7503,14 +9553,23 @@
     state.world = state.surfaceWorld || state.world;
     if (state.player) state.player.inHut = false;
     if (message.playerState && state.player) {
+      const localWorld = getPlayerWorldForSync(state.inCave, state.activeCave?.id ?? null);
       if (typeof message.playerState.name === "string") {
-        setLocalPlayerName(message.playerState.name, { persist: true, broadcast: false });
+        setLocalPlayerName(message.playerState.name, { persist: false, broadcast: false });
       }
-      state.player.x = message.playerState.x ?? state.player.x;
-      state.player.y = message.playerState.y ?? state.player.y;
-      state.player.hp = message.playerState.hp ?? state.player.hp;
-      state.player.maxHp = message.playerState.maxHp ?? state.player.maxHp;
-      state.player.toolTier = message.playerState.toolTier ?? state.player.toolTier;
+      const normalizedPos = clampPositionToWorldBounds(
+        localWorld,
+        Number.isFinite(message.playerState.x) ? message.playerState.x : state.player.x,
+        Number.isFinite(message.playerState.y) ? message.playerState.y : state.player.y,
+        state.player.x,
+        state.player.y
+      );
+      state.player.x = normalizedPos.x;
+      state.player.y = normalizedPos.y;
+      state.player.facing = normalizePlayerFacingValue(message.playerState.facing, state.player.facing);
+      state.player.maxHp = normalizePlayerMaxHpValue(message.playerState.maxHp, state.player.maxHp);
+      state.player.hp = normalizePlayerHpValue(message.playerState.hp, state.player.maxHp, state.player.hp);
+      if (Number.isFinite(message.playerState.toolTier)) state.player.toolTier = message.playerState.toolTier;
       state.player.unlocks = normalizeUnlocks(message.playerState.unlocks ?? state.player.unlocks);
       state.player.checkpoint = normalizeCheckpoint(message.playerState.checkpoint) ?? state.player.checkpoint;
       const assignedColor = normalizeHexColor(message.playerState.color);
@@ -7522,30 +9581,43 @@
     }
     clearPoisonStatus(state.player);
     updateHealthUI();
-    state.inventory = createEmptyInventory(INVENTORY_SIZE);
+    state.inventory = sanitizeInventorySlots(state.inventory, INVENTORY_SIZE);
+    net.helloRetryTimer = NET_CONFIG.helloRetryInterval;
     updateAllSlotUI();
   }
 
   function handlePlayerUpdate(conn, message) {
-    const player = net.players.get(conn.peer);
+    const player = ensureRemotePlayerRegistered(conn, message, {
+      sendWelcome: true,
+      broadcastJoin: true,
+    });
     if (!player) return;
     if (typeof message.name === "string") {
       player.name = sanitizePlayerName(message.name, player.name || "Survivor");
     }
-    if (typeof message.x === "number") player.x = message.x;
-    if (typeof message.y === "number") player.y = message.y;
-    if (message.facing) player.facing = message.facing;
-    if (typeof message.hp === "number") player.hp = message.hp;
-    if (typeof message.maxHp === "number") player.maxHp = message.maxHp;
-    if (typeof message.toolTier === "number") player.toolTier = message.toolTier;
+    if (Number.isFinite(message.x)) player.x = message.x;
+    if (Number.isFinite(message.y)) player.y = message.y;
+    player.facing = normalizePlayerFacingValue(message.facing, player.facing);
+    if (Number.isFinite(message.maxHp)) {
+      player.maxHp = normalizePlayerMaxHpValue(message.maxHp, player.maxHp);
+      player.hp = normalizePlayerHpValue(player.hp, player.maxHp, player.hp);
+    }
+    if (Number.isFinite(message.hp)) {
+      player.hp = normalizePlayerHpValue(message.hp, player.maxHp, player.hp);
+    }
+    if (Number.isFinite(message.toolTier)) player.toolTier = message.toolTier;
     if (message.unlocks) player.unlocks = normalizeUnlocks(message.unlocks);
     player.checkpoint = normalizeCheckpoint(message.checkpoint) ?? player.checkpoint ?? null;
     player.inHut = !!message.inHut;
     player.houseKey = message.houseKey ?? null;
-    player.houseX = typeof message.houseX === "number" ? message.houseX : null;
-    player.houseY = typeof message.houseY === "number" ? message.houseY : null;
+    player.houseX = Number.isFinite(message.houseX) ? message.houseX : null;
+    player.houseY = Number.isFinite(message.houseY) ? message.houseY : null;
     player.inCave = !!message.inCave;
     player.caveId = message.caveId ?? null;
+    const playerWorld = getPlayerWorldForSync(player.inCave, player.caveId);
+    const normalizedPos = clampPositionToWorldBounds(playerWorld, player.x, player.y, player.x, player.y);
+    player.x = normalizedPos.x;
+    player.y = normalizedPos.y;
     if (!player.inCave && !player.inHut && state.surfaceWorld && !normalizeCheckpoint(player.checkpoint)) {
       setPlayerCheckpoint(player, state.surfaceWorld, player.x, player.y, true);
     }
@@ -7575,13 +9647,19 @@
 
   function applyRemotePlayerUpdate(message) {
     if (!message.id || message.id === net.playerId) {
+      if (!state.player) return;
       if (typeof message?.name === "string") {
         setLocalPlayerName(message.name, { persist: false, broadcast: false });
       }
       const syncedColor = normalizeHexColor(message?.color);
       if (syncedColor) net.localColor = syncedColor;
-      if (typeof message.hp === "number") {
-        state.player.hp = message.hp;
+      if (Number.isFinite(message.hp)) {
+        state.player.hp = normalizePlayerHpValue(message.hp, state.player.maxHp, state.player.hp);
+        updateHealthUI();
+      }
+      if (Number.isFinite(message.maxHp)) {
+        state.player.maxHp = normalizePlayerMaxHpValue(message.maxHp, state.player.maxHp);
+        state.player.hp = normalizePlayerHpValue(state.player.hp, state.player.maxHp, state.player.hp);
         updateHealthUI();
       }
       if (message.unlocks) {
@@ -7595,26 +9673,35 @@
     }
     const current = net.players.get(message.id) || {};
     const syncedColor = normalizeHexColor(message.color) || normalizeHexColor(current.color) || "#6fa8ff";
+    const nextMaxHp = normalizePlayerMaxHpValue(message.maxHp, current.maxHp ?? 100);
+    const remoteWorld = getPlayerWorldForSync(!!message.inCave, message.caveId ?? null);
+    const normalizedPos = clampPositionToWorldBounds(
+      remoteWorld,
+      Number.isFinite(message.x) ? message.x : current.x,
+      Number.isFinite(message.y) ? message.y : current.y,
+      current.x,
+      current.y
+    );
     net.players.set(message.id, {
       id: message.id,
       name: sanitizePlayerName(message.name, current.name || "Survivor"),
       color: syncedColor,
-      x: typeof message.x === "number" ? message.x : current.x ?? 0,
-      y: typeof message.y === "number" ? message.y : current.y ?? 0,
-      facing: message.facing ?? current.facing ?? { x: 1, y: 0 },
-      hp: typeof message.hp === "number" ? message.hp : current.hp ?? 100,
-      maxHp: typeof message.maxHp === "number" ? message.maxHp : current.maxHp ?? 100,
-      toolTier: typeof message.toolTier === "number" ? message.toolTier : current.toolTier ?? 1,
+      x: normalizedPos.x,
+      y: normalizedPos.y,
+      facing: normalizePlayerFacingValue(message.facing, current.facing),
+      hp: normalizePlayerHpValue(message.hp, nextMaxHp, current.hp ?? nextMaxHp),
+      maxHp: nextMaxHp,
+      toolTier: Number.isFinite(message.toolTier) ? message.toolTier : (current.toolTier ?? 1),
       unlocks: normalizeUnlocks(message.unlocks ?? current.unlocks),
       checkpoint: normalizeCheckpoint(message.checkpoint) ?? current.checkpoint ?? null,
       inHut: !!message.inHut,
       houseKey: message.houseKey ?? current.houseKey ?? null,
-      houseX: typeof message.houseX === "number" ? message.houseX : current.houseX ?? null,
-      houseY: typeof message.houseY === "number" ? message.houseY : current.houseY ?? null,
+      houseX: Number.isFinite(message.houseX) ? message.houseX : (current.houseX ?? null),
+      houseY: Number.isFinite(message.houseY) ? message.houseY : (current.houseY ?? null),
       inCave: !!message.inCave,
       caveId: message.caveId ?? null,
-      renderX: current.renderX ?? (typeof message.x === "number" ? message.x : current.x ?? 0),
-      renderY: current.renderY ?? (typeof message.y === "number" ? message.y : current.y ?? 0),
+      renderX: current.renderX ?? (Number.isFinite(message.x) ? message.x : (current.x ?? 0)),
+      renderY: current.renderY ?? (Number.isFinite(message.y) ? message.y : (current.y ?? 0)),
     });
   }
 
@@ -8538,10 +10625,8 @@
   function handleDamageMessage(message) {
     if (typeof message.hp !== "number" || !state.player) return;
     const prevHp = Number(state.player.hp);
-    state.player.hp = message.hp;
-    if (typeof message.maxHp === "number") {
-      state.player.maxHp = Math.max(1, Number(message.maxHp) || state.player.maxHp || 1);
-    }
+    state.player.maxHp = normalizePlayerMaxHpValue(message.maxHp, state.player.maxHp);
+    state.player.hp = normalizePlayerHpValue(message.hp, state.player.maxHp, state.player.hp);
     if (Number(message.poisonDuration) > 0) {
       applyPoisonStatus(message.poisonDuration, Number(message.poisonDps) || POISON_STATUS.defaultDps);
     }
@@ -8577,10 +10662,18 @@
   function handleRespawnMessage(message) {
     if (!state.player) return;
     removePlayerFromAllShips(getLocalShipPlayerId());
-    if (typeof message.hp === "number") state.player.hp = message.hp;
-    if (typeof message.maxHp === "number") state.player.maxHp = message.maxHp;
-    if (typeof message.x === "number") state.player.x = message.x;
-    if (typeof message.y === "number") state.player.y = message.y;
+    state.player.maxHp = normalizePlayerMaxHpValue(message.maxHp, state.player.maxHp);
+    state.player.hp = normalizePlayerHpValue(message.hp, state.player.maxHp, state.player.hp);
+    const respawnWorld = state.surfaceWorld || state.world;
+    const respawnPos = clampPositionToWorldBounds(
+      respawnWorld,
+      Number.isFinite(message.x) ? message.x : state.player.x,
+      Number.isFinite(message.y) ? message.y : state.player.y,
+      state.player.x,
+      state.player.y
+    );
+    state.player.x = respawnPos.x;
+    state.player.y = respawnPos.y;
     state.player.checkpoint = normalizeCheckpoint(message.checkpoint) ?? state.player.checkpoint;
     state.player.inHut = false;
     state.player.invincible = 1;
@@ -8639,16 +10732,25 @@
 
   function sendPlayerUpdate() {
     if (!net.enabled || !state.player) return;
+    const playerWorld = getPlayerWorldForSync(state.inCave, state.activeCave?.id ?? null);
+    const clampedPos = clampPositionToWorldBounds(
+      playerWorld,
+      state.player.x,
+      state.player.y,
+      state.player.x,
+      state.player.y
+    );
+    const maxHp = normalizePlayerMaxHpValue(state.player.maxHp, 100);
     const payload = {
       type: "playerUpdate",
       id: net.playerId,
       name: net.localName,
       color: net.localColor,
-      x: state.player.x,
-      y: state.player.y,
-      facing: state.player.facing,
-      hp: state.player.hp,
-      maxHp: state.player.maxHp,
+      x: clampedPos.x,
+      y: clampedPos.y,
+      facing: normalizePlayerFacingValue(state.player.facing, { x: 1, y: 0 }),
+      hp: normalizePlayerHpValue(state.player.hp, maxHp, maxHp),
+      maxHp,
       toolTier: state.player.toolTier,
       unlocks: normalizeUnlocks(state.player.unlocks),
       checkpoint: normalizeCheckpoint(state.player.checkpoint),
@@ -8895,6 +10997,33 @@
   function netTick(dt) {
     if (!net.enabled) return;
     if (!netIsClientReady()) net.robotPausePingTimer = 0.2;
+    if (!Number.isFinite(net.lastHostPacketAt) || net.lastHostPacketAt <= 0) {
+      net.lastHostPacketAt = performance.now();
+    }
+    if (!Number.isFinite(net.resyncTimer)) {
+      net.resyncTimer = 0;
+    }
+    if (!net.isHost) {
+      if (!net.ready && net.hostConn?.open) {
+        net.helloRetryTimer -= dt;
+        if (net.helloRetryTimer <= 0) {
+          sendHello();
+          net.helloRetryTimer = NET_CONFIG.helloRetryInterval;
+        }
+      } else {
+        net.helloRetryTimer = NET_CONFIG.helloRetryInterval;
+      }
+      if (net.ready && net.hostConn?.open) {
+        net.resyncTimer -= dt;
+        const silenceSeconds = (performance.now() - net.lastHostPacketAt) / 1000;
+        if (silenceSeconds >= NET_CONFIG.resyncSilenceThreshold && net.resyncTimer <= 0) {
+          sendToHost({ type: "resyncRequest" });
+          net.resyncTimer = NET_CONFIG.resyncRequestCooldown;
+        }
+      } else {
+        net.resyncTimer = 0;
+      }
+    }
     expireStalePendingClientRequests();
     net.playerTimer -= dt;
     if (net.playerTimer <= 0) {
@@ -9127,6 +11256,64 @@
     const y = Number(raw.y);
     if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
     return { x, y };
+  }
+
+  function normalizePlayerMaxHpValue(value, fallback = 100) {
+    const base = Number.isFinite(fallback) ? fallback : 100;
+    const next = Number(value);
+    if (!Number.isFinite(next)) return clamp(base, 1, 1000);
+    return clamp(next, 1, 1000);
+  }
+
+  function normalizePlayerHpValue(value, maxHp, fallback = null) {
+    const safeMaxHp = normalizePlayerMaxHpValue(maxHp, 100);
+    const preferredFallback = Number.isFinite(fallback) ? fallback : safeMaxHp;
+    const next = Number(value);
+    if (!Number.isFinite(next)) return clamp(preferredFallback, 0, safeMaxHp);
+    return clamp(next, 0, safeMaxHp);
+  }
+
+  function normalizePlayerFacingValue(value, fallback = null) {
+    const fallbackVec = normalizeDirectionVector(
+      Number(fallback?.x),
+      Number(fallback?.y),
+      1,
+      0
+    );
+    const normalized = normalizeDirectionVector(
+      Number(value?.x),
+      Number(value?.y),
+      fallbackVec.x,
+      fallbackVec.y
+    );
+    return { x: normalized.x, y: normalized.y };
+  }
+
+  function getPlayerWorldForSync(inCave, caveId) {
+    if (inCave) {
+      const caveWorld = getCaveWorld(caveId);
+      if (caveWorld) return caveWorld;
+    }
+    return state.surfaceWorld || state.world || null;
+  }
+
+  function clampPositionToWorldBounds(world, x, y, fallbackX = null, fallbackY = null) {
+    const worldSize = Number(world?.size);
+    const halfTile = CONFIG.tileSize * 0.5;
+    if (!Number.isFinite(worldSize) || worldSize <= 0) {
+      return {
+        x: Number.isFinite(x) ? x : (Number.isFinite(fallbackX) ? fallbackX : 0),
+        y: Number.isFinite(y) ? y : (Number.isFinite(fallbackY) ? fallbackY : 0),
+      };
+    }
+    const minPos = halfTile;
+    const maxPos = Math.max(minPos, worldSize * CONFIG.tileSize - halfTile);
+    const rawX = Number.isFinite(x) ? x : (Number.isFinite(fallbackX) ? fallbackX : minPos);
+    const rawY = Number.isFinite(y) ? y : (Number.isFinite(fallbackY) ? fallbackY : minPos);
+    return {
+      x: clamp(rawX, minPos, maxPos),
+      y: clamp(rawY, minPos, maxPos),
+    };
   }
 
   function ensurePlayerProgress(player) {
@@ -11636,14 +13823,70 @@
     return true;
   }
 
+  function isInventoryOccupied(inventory) {
+    if (!Array.isArray(inventory) || inventory.length <= 0) return false;
+    for (const slot of inventory) {
+      if (!slot?.id) return false;
+    }
+    return true;
+  }
+
+  function addItemToExistingStacksOnly(inventory, itemId, amount) {
+    let remaining = Math.max(0, Math.floor(Number(amount) || 0));
+    if (!remaining) return 0;
+    for (const slot of inventory) {
+      if (slot.id !== itemId || slot.qty >= MAX_STACK) continue;
+      const space = MAX_STACK - slot.qty;
+      const toAdd = Math.min(space, remaining);
+      slot.qty += toAdd;
+      remaining -= toAdd;
+      if (remaining <= 0) return 0;
+    }
+    return remaining;
+  }
+
+  function normalizeOutputEntries(output) {
+    if (!output || typeof output !== "object") return [];
+    const entries = [];
+    for (const [itemId, qtyRaw] of Object.entries(output)) {
+      const qty = Math.max(0, Math.floor(Number(qtyRaw) || 0));
+      if (!itemId || qty <= 0) continue;
+      entries.push([itemId, qty]);
+    }
+    return entries;
+  }
+
   function canCraftWithInventoryReplacement(inventory, cost, output) {
+    if (!Array.isArray(inventory)) return false;
+    const before = inventory.map((slot) => ({ id: slot.id, qty: slot.qty }));
     const temp = inventory.map((slot) => ({ id: slot.id, qty: slot.qty }));
+    const outputEntries = normalizeOutputEntries(output);
+    const wasFull = isInventoryOccupied(before);
     if (cost && !isInfiniteResourcesEnabled()) {
       if (!hasCost(temp, cost)) return false;
       applyCost(temp, cost);
     }
-    if (!output || typeof output !== "object") return true;
-    for (const [itemId, qty] of Object.entries(output)) {
+    if (wasFull && outputEntries.length > 0) {
+      let freedSlot = false;
+      for (let i = 0; i < temp.length; i += 1) {
+        if (!temp[i].id && before[i]?.id) {
+          freedSlot = true;
+          break;
+        }
+      }
+      if (!freedSlot) {
+        const stackOnly = temp.map((slot) => ({ id: slot.id, qty: slot.qty }));
+        let canStackOutput = true;
+        for (const [itemId, qty] of outputEntries) {
+          if (addItemToExistingStacksOnly(stackOnly, itemId, qty) > 0) {
+            canStackOutput = false;
+            break;
+          }
+        }
+        if (!canStackOutput) return false;
+      }
+    }
+    for (const [itemId, qty] of outputEntries) {
       if (addItem(temp, itemId, qty) > 0) return false;
     }
     return true;
@@ -14133,6 +16376,8 @@
     if (!world || !Array.isArray(world.islands)) return;
     const rng = makeRng((world.seedInt ?? seedToInt(world.seed || "island")) + 170341);
     const starterVillageChance = 0.03;
+    const allowRareNearCaveVillage = rng() < VILLAGE_SEEDING_CONFIG.rareNearCaveSeedChance;
+    let consumedRareNearCaveVillage = false;
     const islandEntries = world.islands.map((island, index) => ({ island, index }));
 
     function getIslandIndexForTile(tx, ty) {
@@ -14171,6 +16416,51 @@
       return true;
     }
 
+    function getNearestCaveDistanceTiles(tx, ty) {
+      if (!Array.isArray(world.caves) || world.caves.length <= 0) return Infinity;
+      const px = tx + 0.5;
+      const py = ty + 0.5;
+      let nearest = Infinity;
+      for (const cave of world.caves) {
+        if (!cave) continue;
+        const caveX = Number(cave.tx) + 0.5;
+        const caveY = Number(cave.ty) + 0.5;
+        if (!Number.isFinite(caveX) || !Number.isFinite(caveY)) continue;
+        const dist = Math.hypot(caveX - px, caveY - py);
+        if (dist < nearest) nearest = dist;
+      }
+      return nearest;
+    }
+
+    function evaluateVillageCaveSpacing(tx, ty, options = null) {
+      const nearest = getNearestCaveDistanceTiles(tx, ty);
+      if (nearest < VILLAGE_SEEDING_CONFIG.caveHardBlockDistanceTiles) {
+        return { ok: false, nearCave: true };
+      }
+      if (nearest >= VILLAGE_SEEDING_CONFIG.caveAvoidDistanceTiles) {
+        return { ok: true, nearCave: false };
+      }
+      if (options?.allowSoftFallback) {
+        return { ok: true, nearCave: true };
+      }
+      if (!allowRareNearCaveVillage || consumedRareNearCaveVillage) {
+        return { ok: false, nearCave: true };
+      }
+      if (rng() > VILLAGE_SEEDING_CONFIG.rareNearCaveAttemptChance) {
+        return { ok: false, nearCave: true };
+      }
+      return { ok: true, nearCave: true };
+    }
+
+    function trySpawnVillageAtTile(tx, ty, options = null) {
+      const spacing = evaluateVillageCaveSpacing(tx, ty, options);
+      if (!spacing.ok) return false;
+      const result = spawnVillageAt(world, tx, ty, rng);
+      if (!result.ok) return false;
+      if (spacing.nearCave) consumedRareNearCaveVillage = true;
+      return true;
+    }
+
     const candidates = islandEntries
       .filter(({ island, index }) => !island.starter && isIslandAllowedForVillage(island, index))
       .map((entry) => entry.island)
@@ -14183,8 +16473,7 @@
       for (let attempt = 0; attempt < attempts; attempt += 1) {
         const tx = Math.floor(island.x + (rng() - 0.5) * island.radius * 0.45);
         const ty = Math.floor(island.y + (rng() - 0.5) * island.radius * 0.45);
-        const result = spawnVillageAt(world, tx, ty, rng);
-        if (result.ok) return true;
+        if (trySpawnVillageAtTile(tx, ty)) return true;
       }
       for (let ring = 0.12; ring <= 0.52; ring += 0.08) {
         const radius = island.radius * ring;
@@ -14193,8 +16482,7 @@
           const angle = (i / points) * Math.PI * 2 + ring * 6.4;
           const tx = Math.floor(island.x + Math.cos(angle) * radius);
           const ty = Math.floor(island.y + Math.sin(angle) * radius);
-          const result = spawnVillageAt(world, tx, ty, rng);
-          if (result.ok) return true;
+          if (trySpawnVillageAtTile(tx, ty)) return true;
         }
       }
       return false;
@@ -14225,8 +16513,7 @@
         if (islandIndex < 0) continue;
         const island = world.islands[islandIndex];
         if (!isIslandAllowedForVillage(island, islandIndex)) continue;
-        const result = spawnVillageAt(world, x, y, rng);
-        if (result.ok) {
+        if (trySpawnVillageAtTile(x, y)) {
           placed += 1;
           anyPlaced = true;
           if (placed >= targetVillages) return;
@@ -14243,8 +16530,18 @@
       if (!isIslandAllowedForVillage(island, islandIndex)) continue;
       const tx = Math.floor(island.x);
       const ty = Math.floor(island.y);
-      const result = spawnVillageAt(world, tx, ty, rng);
-      if (result.ok) return;
+      if (trySpawnVillageAtTile(tx, ty)) return;
+    }
+
+    // Guarantee at least one seeded village even on cave-dense layouts.
+    for (const island of world.islands
+      .slice()
+      .sort((a, b) => (b.radius - a.radius) || Number(a.starter) - Number(b.starter))) {
+      const islandIndex = world.islands.indexOf(island);
+      if (!isIslandAllowedForVillage(island, islandIndex)) continue;
+      const tx = Math.floor(island.x);
+      const ty = Math.floor(island.y);
+      if (trySpawnVillageAtTile(tx, ty, { allowSoftFallback: true })) return;
     }
   }
 
@@ -21405,7 +23702,7 @@
 
   function isPoisonMonsterPrimaryBiome(biome) {
     const key = biome?.key;
-    return key === "marsh" || key === "mangrove";
+    return key === "jungle";
   }
 
   function getPoisonMonsterSpawnChanceForBiome(biome) {
@@ -21530,7 +23827,7 @@
       return !isPoisonMonsterPrimaryBiome(biome);
     });
 
-    // Guarantee at least one poison thrower appears when players are active on swamp-like islands.
+    // Guarantee at least one poison thrower appears when players are active on jungle islands.
     let spawned = 0;
     if (countSurfaceMarshStalkers(world) <= 0 && activePrimaryIslands.length > 0) {
       const emptyPrimary = activePrimaryIslands.find((island) => countMarshStalkersOnIsland(world, island) <= 0);
@@ -22006,7 +24303,7 @@
     if (state.player) {
       const hostInWorld = (!state.inCave && world === state.surfaceWorld)
         || (state.inCave && state.activeCave?.world === world);
-      if (hostInWorld) {
+      if (hostInWorld && Number.isFinite(state.player.x) && Number.isFinite(state.player.y)) {
         players.push({
           id: net.playerId || "local",
           x: state.player.x,
@@ -22019,6 +24316,7 @@
     }
     if (net.isHost) {
       for (const player of net.players.values()) {
+        if (!Number.isFinite(player?.x) || !Number.isFinite(player?.y)) continue;
         const playerWorld = player.inCave ? getCaveWorld(player.caveId) : state.surfaceWorld;
         if (playerWorld === world) {
           players.push(player);
@@ -22311,6 +24609,7 @@
     }
     for (const player of players) {
       if (!player) continue;
+      if (!Number.isFinite(player.x) || !Number.isFinite(player.y)) continue;
       if (isSurface && player.inHut && !player.inCave) continue;
       const dx = player.x - monster.x;
       const dy = player.y - monster.y;
@@ -22570,6 +24869,7 @@
 
       let hit = false;
       for (const target of players) {
+        if (!target || !Number.isFinite(target.x) || !Number.isFinite(target.y)) continue;
         if (isSurface && target.inHut && !target.inCave) continue;
         const d = pointSegmentDistance(target.x, target.y, prevX, prevY, nextX, nextY);
         if (d > playerRadius + (projectile.radius || (isPoisonBottle ? POISON_BOTTLE.radius : SKELETON_ARROW.radius))) continue;
@@ -24609,6 +26909,7 @@
     updateHealthUI();
     updateAllSlotUI();
     markDirty();
+    if (net.enabled) sendPlayerUpdate();
     setPrompt(consumedId === "cooked_meat" ? "Ate cooked meat" : "Poultice used", 0.9);
     return true;
   }
@@ -25145,15 +27446,17 @@
       if (localShipSeat || state.activeShipRepair) {
         // Ship occupants and repair flow disable combat/harvest actions.
       } else if (state.inCave) {
-        if (state.targetMonster || state.targetAnimal) performAttack();
-        else attemptHarvest(state.targetResource);
+        if (!useActiveConsumable()) {
+          if (state.targetMonster || state.targetAnimal) performAttack();
+          else attemptHarvest(state.targetResource);
+        }
       } else if (state.player.inHut) {
         const slotId = state.inventory?.[activeSlot]?.id || null;
         const consumableSelected = slotId === "medicine" || slotId === "cooked_meat";
-        if (getActiveHouseRelocation()) {
-          cancelHouseRelocation();
-        } else if (consumableSelected) {
+        if (consumableSelected) {
           useActiveConsumable();
+        } else if (getActiveHouseRelocation()) {
+          cancelHouseRelocation();
         } else {
           beginHouseRelocation();
         }
@@ -25177,6 +27480,7 @@
   }
 
   function updateSave(dt) {
+    if (mpAutotest.active) return;
     if (netIsClientReady()) return;
     if (!state.dirty) return;
     state.saveTimer -= dt;
@@ -25188,6 +27492,7 @@
   function update(dt) {
     if (!state.world || !state.player) {
       runDebugQaSelfTests(dt);
+      runMultiplayerAutotest(dt);
       updatePrompt(dt);
       return;
     }
@@ -25224,6 +27529,7 @@
     updateRemoteRender(dt);
     updateAudio(dt);
     netTick(dt);
+    runMultiplayerAutotest(dt);
     updatePrompt(dt);
     updateSave(dt);
     runDebugQaSelfTests(dt);
@@ -26056,31 +28362,37 @@
     const vx = projectile.vx || 0;
     const vy = projectile.vy || 0;
     if (type === "poison_bottle") {
-      const angle = Math.atan2(vy || 0.0001, vx || 0.0001) + Math.PI * 0.5;
-      const spin = (performance.now() * 0.012) + ((projectile.id || 0) * 0.17);
-      const bodyW = 7.2;
-      const bodyH = 10.5;
+      const len = 12;
+      const speed = Math.hypot(vx, vy);
+      const nx = speed > 0 ? vx / speed : 1;
+      const ny = speed > 0 ? vy / speed : 0;
+      const tx = -ny;
+      const ty = nx;
+      const tailX = screen.x - nx * len * 0.72;
+      const tailY = screen.y - ny * len * 0.72;
+      const tipX = screen.x + nx * len * 0.32;
+      const tipY = screen.y + ny * len * 0.32;
       ctx.save();
-      ctx.translate(screen.x, screen.y);
-      ctx.rotate(angle + spin * 0.02);
-      ctx.fillStyle = "rgba(30, 39, 50, 0.22)";
+      ctx.strokeStyle = "rgba(44, 166, 92, 0.95)";
+      ctx.lineWidth = 2.4;
       ctx.beginPath();
-      ctx.ellipse(0, 6, 4.8, 1.8, 0, 0, Math.PI * 2);
-      ctx.fill();
+      ctx.moveTo(tailX, tailY);
+      ctx.lineTo(tipX, tipY);
+      ctx.stroke();
 
-      ctx.fillStyle = "rgba(170, 232, 209, 0.8)";
+      ctx.strokeStyle = "rgba(170, 245, 206, 0.95)";
+      ctx.lineWidth = 1.35;
       ctx.beginPath();
-      ctx.rect(-bodyW * 0.5, -bodyH * 0.5, bodyW, bodyH);
-      ctx.fill();
-      ctx.fillStyle = "rgba(88, 184, 105, 0.85)";
+      ctx.moveTo(tipX, tipY);
+      ctx.lineTo(tipX - nx * 4.8 + tx * 2.2, tipY - ny * 4.8 + ty * 2.2);
+      ctx.moveTo(tipX, tipY);
+      ctx.lineTo(tipX - nx * 4.8 - tx * 2.2, tipY - ny * 4.8 - ty * 2.2);
+      ctx.stroke();
+
+      ctx.fillStyle = "rgba(112, 235, 149, 0.5)";
       ctx.beginPath();
-      ctx.rect(-bodyW * 0.42, -bodyH * 0.08, bodyW * 0.84, bodyH * 0.5);
+      ctx.arc(tailX, tailY, 2.3, 0, Math.PI * 2);
       ctx.fill();
-      ctx.fillStyle = "rgba(192, 158, 96, 0.95)";
-      ctx.fillRect(-1.6, -bodyH * 0.72, 3.2, 2.2);
-      ctx.strokeStyle = "rgba(34, 86, 58, 0.95)";
-      ctx.lineWidth = 1;
-      ctx.strokeRect(-bodyW * 0.5, -bodyH * 0.5, bodyW, bodyH);
       ctx.restore();
       return;
     }
@@ -29314,15 +31626,13 @@
       menuPlayerNameInput.addEventListener("input", () => {
         const liveName = sanitizePlayerName(menuPlayerNameInput.value, "");
         menuPlayerNameInput.value = liveName;
-        if (liveName) {
-          setLocalPlayerName(liveName, { persist: false, broadcast: false });
-        }
+        setLocalPlayerName(liveName, { persist: false, broadcast: true });
       });
       menuPlayerNameInput.addEventListener("change", () => {
-        setLocalPlayerName(menuPlayerNameInput.value, { persist: true, broadcast: true });
+        setLocalPlayerName(menuPlayerNameInput.value, { persist: false, broadcast: true });
       });
       menuPlayerNameInput.addEventListener("blur", () => {
-        setLocalPlayerName(menuPlayerNameInput.value, { persist: true, broadcast: true });
+        setLocalPlayerName(menuPlayerNameInput.value, { persist: false, broadcast: true });
       });
       menuPlayerNameInput.addEventListener("keydown", (event) => {
         if (event.key === "Enter") {
@@ -29360,12 +31670,36 @@
     if (debugWorldMapBtn) debugWorldMapBtn.addEventListener("click", toggleDebugWorldMap);
     if (continentalShiftBtn) continentalShiftBtn.addEventListener("click", toggleContinentalShift);
     if (debugPlaceBoatBtn) debugPlaceBoatBtn.addEventListener("click", toggleDebugPlaceRepairedBoat);
+    if (mpAutotestQuickBtn) {
+      mpAutotestQuickBtn.addEventListener("click", () => {
+        startMultiplayerAutotest("quick");
+      });
+    }
+    if (mpAutotestStressBtn) {
+      mpAutotestStressBtn.addEventListener("click", () => {
+        startMultiplayerAutotest("stress");
+      });
+    }
+    if (mpAutotestReplayBtn) {
+      mpAutotestReplayBtn.addEventListener("click", () => {
+        replayLastMultiplayerAutotestFailure();
+      });
+    }
+    if (mpAutotestCopyReportBtn) {
+      mpAutotestCopyReportBtn.addEventListener("click", () => {
+        copyMultiplayerAutotestFailureReport();
+      });
+    }
+    if (mpAutotestLogEl) {
+      mpAutotestLogEl.textContent = "Multiplayer autotest idle.";
+    }
     if (toggleRobotRecallBtn) {
       toggleRobotRecallBtn.addEventListener("click", () => {
         ensureAudioContext();
         toggleBenchRobotRecall();
       });
     }
+    updateMpAutotestControls();
     gameLoop();
   }
 

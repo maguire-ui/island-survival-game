@@ -49,7 +49,9 @@
               type="text"
               maxlength="20"
               placeholder="Survivor"
-              autocomplete="nickname"
+              autocomplete="off"
+              autocapitalize="none"
+              autocorrect="off"
               spellcheck="false"
             />
             <label class="start-option-row" for="menuMusicVolume">
@@ -90,7 +92,7 @@
       <div class="topbar-group topbar-group-right">
         <div id="mpStatus">MP: Offline</div>
         <div id="roomDisplay">Room: --</div>
-        <button id="mpCopy" type="button">Copy Link</button>
+        <button id="mpCopy" type="button">Copy Code</button>
         <button id="mpJoin" type="button">Join Room</button>
         <button id="settingsToggle" type="button" aria-label="Settings">⚙</button>
         <button id="debugToggle" type="button" class="hidden">Debug</button>
@@ -228,6 +230,26 @@
         step="5"
         value="100"
       />
+      <div class="panel-section-title">Multiplayer Autotest</div>
+      <div class="mp-autotest-controls">
+        <button id="mpAutotestQuickBtn" class="action-btn" type="button">Run MP Autotest (Quick)</button>
+        <button id="mpAutotestStressBtn" class="action-btn" type="button">Run MP Autotest (Stress)</button>
+        <label class="mp-autotest-field" for="mpAutotestClients">
+          <span>Clients</span>
+          <select id="mpAutotestClients" class="mp-autotest-input">
+            <option value="1" selected>1</option>
+            <option value="2">2</option>
+            <option value="3">3</option>
+          </select>
+        </label>
+        <label class="mp-autotest-field" for="mpAutotestSeed">
+          <span>Seed (optional)</span>
+          <input id="mpAutotestSeed" class="mp-autotest-input" type="text" placeholder="blank = random" />
+        </label>
+        <button id="mpAutotestReplayBtn" class="action-btn secondary-btn" type="button">Replay Last Failure</button>
+        <pre id="mpAutotestLog" class="mp-autotest-log">Multiplayer autotest idle.</pre>
+        <button id="mpAutotestCopyReportBtn" class="action-btn secondary-btn" type="button">Copy Failure Report</button>
+      </div>
     </div>
 
     <div id="settingsPanel" class="panel hidden">
