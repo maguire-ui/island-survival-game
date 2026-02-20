@@ -452,6 +452,8 @@
     monsterSmooth: 10,
     animalSmooth: 10,
     villagerSmooth: 10,
+    projectileSmooth: 26,
+    poisonCloudSmooth: 18,
     robotSmooth: 14,
   };
   const NET_PENDING_REQUEST_TIMEOUT_SECONDS = 8;
@@ -600,7 +602,7 @@
     "#6f8e92",
   ];
 
-  const CAVE_SIZE = 28;
+  const CAVE_SIZE = 44;
 
   const SAVE_KEY = "island_survival_save_v1";
   const SAVE_KEY_PREFIX = "island_survival_seed_save_v1:";
@@ -780,6 +782,16 @@
     { id: "iron_ore", min: 1, max: 2, weight: 7 },
     { id: "gold_ore", min: 1, max: 1, weight: 4 },
     { id: "campfire", min: 1, max: 1, weight: 5 },
+  ];
+
+  const VILLAGE_BLACKSMITH_LOOT_TABLE = [
+    { id: "iron_ore", min: 2, max: 5, weight: 34 },
+    { id: "coal", min: 2, max: 6, weight: 27 },
+    { id: "iron_ingot", min: 1, max: 3, weight: 20 },
+    { id: "gold_ore", min: 1, max: 2, weight: 11 },
+    { id: "gold_ingot", min: 1, max: 1, weight: 6 },
+    { id: "stone", min: 3, max: 8, weight: 10 },
+    { id: "medicine", min: 1, max: 1, weight: 5 },
   ];
 
   const SHIPWRECK_LOOT_TABLE = [
@@ -1539,6 +1551,10 @@
     rareNearCaveSeedChance: 0.11,
     rareNearCaveAttemptChance: 0.22,
   });
+  const VILLAGE_BLACKSMITH_CONFIG = Object.freeze({
+    villageChance: 0.34,
+    maxPerVillage: 1,
+  });
   const SHIPWRECK_STORAGE_SIZE = CHEST_SIZE;
   const SHIPWRECK_CONFIG = Object.freeze({
     minPerWorld: 3,
@@ -1590,10 +1606,10 @@
     maxIslandFactor: 0.6,
     maxIslandOffset: 8,
     maxCap: 16,
-    maxPerIsland: 4,
+    maxPerIsland: 5,
     spawnIslandMax: 5,
     mushroomMaxPerIsland: 3,
-    spawnIslandHarvestMin: 1,
+    spawnIslandHarvestMin: 2,
     activeIslandHarvestMin: 1,
     catchupSpawnBurstMax: 1,
   });
@@ -2811,8 +2827,17 @@
       qaPushIssue(issues, "[snapshot] Invalid snapshot payload");
       return;
     }
+    if (net.isHost) {
+      const snapshotSeq = Number(snapshot.seq);
+      if (!Number.isFinite(snapshotSeq) || Math.floor(snapshotSeq) !== snapshotSeq || snapshotSeq < 0) {
+        qaPushIssue(issues, "[snapshot] Host snapshot missing monotonic seq");
+      }
+    }
     if (!snapshot.seed || typeof snapshot.seed !== "string") {
       qaPushIssue(issues, "[snapshot] Missing seed");
+    }
+    if (!Number.isFinite(Number(snapshot.timeOfDay))) {
+      qaPushIssue(issues, "[snapshot] timeOfDay is non-finite");
     }
     if (!Array.isArray(snapshot.islandLayout)) {
       qaPushIssue(issues, "[snapshot] islandLayout missing array");
@@ -2896,10 +2921,16 @@
         }
       }
     }
+    const seenPlayerIds = new Set();
     for (const player of snapshot.players || []) {
       if (!player || typeof player.id !== "string") {
         qaPushIssue(issues, "[snapshot] player entry missing id");
         continue;
+      }
+      if (seenPlayerIds.has(player.id)) {
+        qaPushIssue(issues, `[snapshot] duplicate player id ${player.id}`);
+      } else {
+        seenPlayerIds.add(player.id);
       }
       if (!Number.isFinite(player.x) || !Number.isFinite(player.y)) {
         qaPushIssue(issues, `[snapshot] player ${player.id} has non-finite position`);
@@ -3259,6 +3290,24 @@
     }
     if (net.pendingSyncAudits instanceof Map && net.pendingSyncAudits.size > MP_DEBUG_SYNC_AUDIT_CONFIG.pendingLimit) {
       qaPushIssue(issues, "[net] Sync audit queue exceeded configured limit");
+    }
+    if (net.remotePlayerSeq instanceof Map) {
+      for (const [playerId, seq] of net.remotePlayerSeq.entries()) {
+        const numericSeq = Number(seq);
+        if (!Number.isFinite(numericSeq) || Math.floor(numericSeq) !== numericSeq || numericSeq < -1) {
+          qaPushIssue(issues, `[net] remotePlayerSeq invalid for ${String(playerId)}`);
+          break;
+        }
+      }
+    }
+    if (net.hostPlayerSeqByPeer instanceof Map) {
+      for (const [peerId, seq] of net.hostPlayerSeqByPeer.entries()) {
+        const numericSeq = Number(seq);
+        if (!Number.isFinite(numericSeq) || Math.floor(numericSeq) !== numericSeq || numericSeq < -1) {
+          qaPushIssue(issues, `[net] hostPlayerSeqByPeer invalid for ${String(peerId)}`);
+          break;
+        }
+      }
     }
     if (!net.enabled && net.remoteInventoryTotalsByPeer instanceof Map && net.remoteInventoryTotalsByPeer.size > 0) {
       qaPushIssue(issues, "[net] Remote inventory totals persisted while multiplayer disabled");
@@ -4284,14 +4333,20 @@
     return mpAutotest.clients.find((entry) => entry && entry.id === clientId) || null;
   }
 
+  function mpAutotestIsReliableHostPacket(payload) {
+    const type = String(payload?.type || "");
+    return type === "playerUpdate" || type === "playerLeft";
+  }
+
   function mpAutotestRefreshShadowPlayerSeqCache(client) {
     if (!client?.shadow || !Array.isArray(client.shadow.snapshot?.players)) return;
     const nextMap = new Map();
     for (const entry of client.shadow.snapshot.players) {
       if (!entry || !entry.id) continue;
+      const id = String(entry.id);
       const seqRaw = Number.isFinite(entry.seq) ? entry.seq : entry.netSeq;
       const seq = Number.isFinite(seqRaw) ? Math.max(0, Math.floor(seqRaw)) : 0;
-      nextMap.set(entry.id, seq);
+      nextMap.set(id, seq);
     }
     client.shadow.playerSeqById = nextMap;
   }
@@ -4367,30 +4422,84 @@
         break;
       }
       case "playerUpdate": {
-        // Keep shadow hash state snapshot-authoritative. Live playerUpdate packets
-        // are intentionally ignored for canonical state to avoid transient
-        // per-client drift under stress jitter/reordering.
-        if (message.id) {
-          const incomingSeq = Number(message.seq);
-          if (Number.isFinite(incomingSeq)) {
-            const normalizedSeq = Math.max(0, Math.floor(incomingSeq));
-            const lastSeq = client.shadow.playerSeqById.get(message.id) ?? -1;
-            if (normalizedSeq > lastSeq) {
-              client.shadow.playerSeqById.set(message.id, normalizedSeq);
-            }
-          }
-          if (message.id === (client.playerId || client.id)) {
+        if (!message.id) break;
+        const playerId = String(message.id);
+        const incomingSeqRaw = Number(message.seq);
+        const hasIncomingSeq = Number.isFinite(incomingSeqRaw);
+        const normalizedIncomingSeq = hasIncomingSeq
+          ? Math.max(0, Math.floor(incomingSeqRaw))
+          : null;
+        const lastSeq = client.shadow.playerSeqById.get(playerId) ?? -1;
+        if (hasIncomingSeq && normalizedIncomingSeq <= lastSeq) {
+          if (playerId === (client.playerId || client.id)) {
             mpAutotestSyncClientPlayerSeqCursor(client);
           }
+          break;
+        }
+        const resolvedSeq = hasIncomingSeq
+          ? normalizedIncomingSeq
+          : Math.max(0, Math.floor(lastSeq) + 1);
+        client.shadow.playerSeqById.set(playerId, resolvedSeq);
+
+        if (client.shadow.snapshot && Array.isArray(client.shadow.snapshot.players)) {
+          const players = client.shadow.snapshot.players;
+          const playerIndex = players.findIndex((entry) => entry && String(entry.id) === playerId);
+          const prev = playerIndex >= 0 ? (players[playerIndex] || {}) : {};
+          const nextPlayer = { ...prev, id: playerId, seq: resolvedSeq };
+
+          if (typeof message.name === "string") nextPlayer.name = message.name;
+          if (typeof message.color === "string") nextPlayer.color = message.color;
+          if (Number.isFinite(message.x)) nextPlayer.x = message.x;
+          if (Number.isFinite(message.y)) nextPlayer.y = message.y;
+          if (message.facing && typeof message.facing === "object") {
+            nextPlayer.facing = {
+              x: Number.isFinite(message.facing.x) ? message.facing.x : (prev?.facing?.x ?? 1),
+              y: Number.isFinite(message.facing.y) ? message.facing.y : (prev?.facing?.y ?? 0),
+            };
+          }
+          if (Number.isFinite(message.hp)) nextPlayer.hp = message.hp;
+          if (Number.isFinite(message.maxHp)) nextPlayer.maxHp = message.maxHp;
+          if (Number.isFinite(message.toolTier)) nextPlayer.toolTier = message.toolTier;
+          if (message.unlocks && typeof message.unlocks === "object") {
+            nextPlayer.unlocks = mpAutotestClone(message.unlocks, prev.unlocks ?? {});
+          }
+          if ("checkpoint" in message) {
+            nextPlayer.checkpoint = message.checkpoint
+              ? mpAutotestClone(message.checkpoint, prev.checkpoint ?? null)
+              : null;
+          }
+          if ("inHut" in message) nextPlayer.inHut = !!message.inHut;
+          if ("houseKey" in message) nextPlayer.houseKey = message.houseKey ?? null;
+          if ("houseX" in message) nextPlayer.houseX = Number.isFinite(message.houseX) ? message.houseX : null;
+          if ("houseY" in message) nextPlayer.houseY = Number.isFinite(message.houseY) ? message.houseY : null;
+          if ("inCave" in message) nextPlayer.inCave = !!message.inCave;
+          if ("caveId" in message) nextPlayer.caveId = message.caveId ?? null;
+          if (typeof message.inventoryFingerprint === "string") {
+            nextPlayer.inventoryFingerprint = message.inventoryFingerprint;
+          }
+          if ("inventoryTotals" in message) {
+            nextPlayer.inventoryTotals = mpAutotestClone(message.inventoryTotals, prev.inventoryTotals ?? {});
+          }
+
+          if (playerIndex >= 0) {
+            players[playerIndex] = nextPlayer;
+          } else {
+            players.push(nextPlayer);
+          }
+        }
+        if (playerId === (client.playerId || client.id)) {
+          mpAutotestSyncClientPlayerSeqCursor(client);
         }
         break;
       }
       case "playerLeft":
         if (client.shadow.snapshot && Array.isArray(client.shadow.snapshot.players)) {
-          client.shadow.snapshot.players = client.shadow.snapshot.players.filter((entry) => entry?.id !== message.id);
+          const removedId = String(message.id);
+          client.shadow.snapshot.players = client.shadow.snapshot.players
+            .filter((entry) => String(entry?.id) !== removedId);
         }
         if (message.id && client.shadow.playerSeqById instanceof Map) {
-          client.shadow.playerSeqById.delete(message.id);
+          client.shadow.playerSeqById.delete(String(message.id));
         }
         break;
       default:
@@ -4482,7 +4591,9 @@
       peer: client.id,
       open: true,
       send(payload) {
-        mpAutotestEnqueueMessage("host", client.id, payload, { reliable: false });
+        mpAutotestEnqueueMessage("host", client.id, payload, {
+          reliable: mpAutotestIsReliableHostPacket(payload),
+        });
       },
     };
     client.connection = connection;
@@ -4547,8 +4658,8 @@
     const players = Array.isArray(client.shadow?.snapshot?.players)
       ? client.shadow.snapshot.players
       : [];
-    const playerId = client.playerId || client.id;
-    const entry = players.find((player) => player && player.id === playerId) || null;
+    const playerId = String(client.playerId || client.id);
+    const entry = players.find((player) => player && String(player.id) === playerId) || null;
     if (entry) {
       const seqRaw = Number.isFinite(entry.seq) ? entry.seq : entry.netSeq;
       if (Number.isFinite(seqRaw)) {
@@ -5240,7 +5351,7 @@
   }
 
   function mpAutotestForceReliableSync() {
-    if (!mpAutotest.active) return;
+    if (!mpAutotest.active) return null;
     const snapshot = buildSnapshot();
     const motion = buildMotionUpdate();
     for (const client of mpAutotest.clients) {
@@ -5248,6 +5359,7 @@
       mpAutotestEnqueueMessage("host", client.id, snapshot, { reliable: true });
       if (motion) mpAutotestEnqueueMessage("host", client.id, motion, { reliable: true });
     }
+    return { snapshot, motion };
   }
 
   function mpAutotestBuildHostHashes() {
@@ -5597,7 +5709,7 @@
     // comparisons are against fully reconciled authoritative state.
     mpAutotestForceReliableSync();
     mpAutotestFlushMessageQueue(true);
-    mpAutotestForceReliableSync();
+    const syncFrame = mpAutotestForceReliableSync();
     mpAutotestFlushMessageQueue(true);
     if (!mpAutotest.active) return;
     if (mpAutotest.eventStats.clientAuthViolations > 0) {
@@ -5616,7 +5728,15 @@
       mpAutotestFail(ledgerViolation, { subsystem: "ledger" });
       return;
     }
-    const hostHashes = mpAutotestBuildHostHashes();
+    const hostSnapshot = syncFrame?.snapshot || buildSnapshot();
+    const hostCanonical = mpAutotestBuildCanonicalFromSnapshot(hostSnapshot);
+    const hostSegments = mpAutotestComputeSegmentHashes(hostCanonical);
+    const hostHashes = {
+      snapshot: hostSnapshot,
+      canonical: hostCanonical,
+      segmentHashes: hostSegments,
+      overall: hostSegments?.overall || "",
+    };
     const deepSyncIssue = mpAutotestValidateDeepSync(hostHashes);
     if (deepSyncIssue) {
       mpAutotestFail(deepSyncIssue.reason, {
@@ -9782,6 +9902,7 @@
       const extra = {};
       if (meta.village) extra.village = true;
       if (meta.spawnedByPlayer) extra.spawnedByPlayer = true;
+      if (meta.villageBlacksmith) extra.villageBlacksmith = true;
       return {
         ...extra,
         house: {
@@ -12754,15 +12875,33 @@
         if (Array.isArray(world.projectiles)) {
           for (const projectile of world.projectiles) {
             if (!Number.isFinite(projectile.x) || !Number.isFinite(projectile.y)) continue;
-            projectile.renderX = projectile.x;
-            projectile.renderY = projectile.y;
+            if (net.enabled) {
+              smoothRemoteEntityRender(
+                projectile,
+                dt,
+                NET_CONFIG.projectileSmooth,
+                CONFIG.tileSize * 1.65
+              );
+            } else {
+              projectile.renderX = projectile.x;
+              projectile.renderY = projectile.y;
+            }
           }
         }
         if (Array.isArray(world.poisonClouds)) {
           for (const cloud of world.poisonClouds) {
             if (!Number.isFinite(cloud.x) || !Number.isFinite(cloud.y)) continue;
-            cloud.renderX = cloud.x;
-            cloud.renderY = cloud.y;
+            if (net.enabled) {
+              smoothRemoteEntityRender(
+                cloud,
+                dt,
+                NET_CONFIG.poisonCloudSmooth,
+                CONFIG.tileSize * 1.2
+              );
+            } else {
+              cloud.renderX = cloud.x;
+              cloud.renderY = cloud.y;
+            }
           }
         }
       }
@@ -14256,44 +14395,56 @@
     const styleRoll = rng();
     const caveStyle = styleRoll < 0.33
       ? {
-          mainStepsScale: 12.5,
-          turnChance: 0.54,
-          sideBranchChance: 0.1,
-          sideBranchMin: 3,
-          sideBranchMax: 6,
-          tunnelRadius: 0.82,
-          chamberRadius: 1.28,
-          chamberChance: 0.012,
-          extraWalkers: 0,
-          extraWalkerSteps: 0,
-          erosionChance: 0.0,
+          roomCountMin: 10,
+          roomCountMax: 14,
+          roomRadiusMin: 1.8,
+          roomRadiusMax: 3.1,
+          roomStretchMin: 0.95,
+          roomStretchMax: 1.5,
+          tunnelRadiusMin: 0.72,
+          tunnelRadiusMax: 0.94,
+          branchChance: 0.82,
+          branchLengthMin: 4,
+          branchLengthMax: 9,
+          loopLinksMin: 3,
+          loopLinksMax: 6,
+          roomLobeChance: 0.42,
+          openTrimChance: 0.28,
         }
       : styleRoll < 0.66
         ? {
-            mainStepsScale: 13.5,
-            turnChance: 0.48,
-            sideBranchChance: 0.12,
-            sideBranchMin: 3,
-            sideBranchMax: 7,
-            tunnelRadius: 0.9,
-            chamberRadius: 1.36,
-            chamberChance: 0.018,
-            extraWalkers: 0,
-            extraWalkerSteps: 0,
-            erosionChance: 0.0,
+            roomCountMin: 11,
+            roomCountMax: 16,
+            roomRadiusMin: 2.0,
+            roomRadiusMax: 3.4,
+            roomStretchMin: 0.9,
+            roomStretchMax: 1.6,
+            tunnelRadiusMin: 0.76,
+            tunnelRadiusMax: 1.02,
+            branchChance: 0.74,
+            branchLengthMin: 5,
+            branchLengthMax: 10,
+            loopLinksMin: 4,
+            loopLinksMax: 7,
+            roomLobeChance: 0.48,
+            openTrimChance: 0.24,
           }
         : {
-            mainStepsScale: 11.8,
-            turnChance: 0.58,
-            sideBranchChance: 0.08,
-            sideBranchMin: 2,
-            sideBranchMax: 5,
-            tunnelRadius: 0.78,
-            chamberRadius: 1.22,
-            chamberChance: 0.01,
-            extraWalkers: 0,
-            extraWalkerSteps: 0,
-            erosionChance: 0.0,
+            roomCountMin: 12,
+            roomCountMax: 18,
+            roomRadiusMin: 1.7,
+            roomRadiusMax: 2.9,
+            roomStretchMin: 0.85,
+            roomStretchMax: 1.45,
+            tunnelRadiusMin: 0.68,
+            tunnelRadiusMax: 0.9,
+            branchChance: 0.9,
+            branchLengthMin: 6,
+            branchLengthMax: 12,
+            loopLinksMin: 5,
+            loopLinksMax: 8,
+            roomLobeChance: 0.35,
+            openTrimChance: 0.32,
           };
 
     function carveCircle(cx, cy, radius) {
@@ -14308,112 +14459,278 @@
       }
     }
 
-    carveCircle(entrance.tx, entrance.ty, 1.15 + rng() * 0.35);
-    let walkerX = entrance.tx;
-    let walkerY = entrance.ty - 1;
-    let dir = rng() < 0.5 ? { x: 0, y: -1 } : (rng() < 0.5 ? { x: -1, y: 0 } : { x: 1, y: 0 });
-    const chambers = [];
-    const walkerTrail = [];
-    const mainSteps = size * caveStyle.mainStepsScale;
-    for (let step = 0; step < mainSteps; step += 1) {
-      if (rng() < caveStyle.turnChance) {
-        const turn = rng();
-        if (turn < 0.24) dir = { x: 1, y: 0 };
-        else if (turn < 0.48) dir = { x: -1, y: 0 };
-        else if (turn < 0.8) dir = { x: 0, y: -1 };
-        else dir = { x: 0, y: 1 };
-      }
-      walkerX = clamp(walkerX + dir.x, 2, size - 3);
-      walkerY = clamp(walkerY + dir.y, 2, size - 3);
-      walkerTrail.push({ x: walkerX, y: walkerY });
-      const radius = rng() < caveStyle.chamberChance ? caveStyle.chamberRadius : caveStyle.tunnelRadius;
-      carveCircle(walkerX, walkerY, radius);
-      if (radius > 2 && chambers.length < 7) {
-        chambers.push({ x: walkerX, y: walkerY });
-      }
-      if (rng() < caveStyle.sideBranchChance) {
-        let bx = walkerX;
-        let by = walkerY;
-        const bDir = rng() < 0.25
-          ? { x: 1, y: 0 }
-          : rng() < 0.5
-            ? { x: -1, y: 0 }
-            : rng() < 0.75
-              ? { x: 0, y: 1 }
-              : { x: 0, y: -1 };
-        const branchLen = caveStyle.sideBranchMin + Math.floor(rng() * caveStyle.sideBranchMax);
-        for (let i = 0; i < branchLen; i += 1) {
-          bx = clamp(bx + bDir.x, 2, size - 3);
-          by = clamp(by + (rng() < 0.3 ? (rng() < 0.5 ? 1 : -1) : 0), 2, size - 3);
-          carveCircle(bx, by, Math.max(0.85, caveStyle.tunnelRadius - 0.18));
+    function carveEllipse(cx, cy, rx, ry, roughness = 0.2) {
+      const safeRx = Math.max(0.6, rx);
+      const safeRy = Math.max(0.6, ry);
+      for (let y = Math.floor(cy - safeRy - 1); y <= Math.ceil(cy + safeRy + 1); y += 1) {
+        for (let x = Math.floor(cx - safeRx - 1); x <= Math.ceil(cx + safeRx + 1); x += 1) {
+          if (!inBounds(x, y, size)) continue;
+          if (x <= 0 || y <= 0 || x >= size - 1 || y >= size - 1) continue;
+          const nx = (x - cx) / safeRx;
+          const ny = (y - cy) / safeRy;
+          const wobble = (rand2d(x * 3 + 17, y * 3 + 29, caveSeed + 1901) - 0.5) * roughness;
+          if ((nx * nx + ny * ny) <= 1 + wobble) {
+            tiles[tileIndex(x, y, size)] = 1;
+          }
         }
       }
     }
 
-    for (let walker = 0; walker < caveStyle.extraWalkers; walker += 1) {
-      const source =
-        (chambers.length > 0 && rng() < 0.7)
-          ? chambers[Math.floor(rng() * chambers.length)]
-          : walkerTrail[Math.floor(rng() * Math.max(1, walkerTrail.length))] || { x: walkerX, y: walkerY };
-      let bx = source.x;
-      let by = source.y;
-      let bDir = rng() < 0.25
-        ? { x: 1, y: 0 }
-        : rng() < 0.5
-          ? { x: -1, y: 0 }
-          : rng() < 0.75
-            ? { x: 0, y: 1 }
-            : { x: 0, y: -1 };
-      const steps = caveStyle.extraWalkerSteps + Math.floor(rng() * Math.max(1, caveStyle.extraWalkerSteps));
-      for (let i = 0; i < steps; i += 1) {
-        if (rng() < 0.27) {
-          bDir = rng() < 0.25
-            ? { x: 1, y: 0 }
-            : rng() < 0.5
-              ? { x: -1, y: 0 }
-              : rng() < 0.75
-                ? { x: 0, y: 1 }
-                : { x: 0, y: -1 };
-        }
-        bx = clamp(bx + bDir.x, 2, size - 3);
-        by = clamp(by + bDir.y, 2, size - 3);
-        const branchRadius = rng() < 0.06 ? caveStyle.chamberRadius * 0.78 : caveStyle.tunnelRadius * (0.9 + rng() * 0.24);
-        carveCircle(bx, by, branchRadius);
-        if (rng() < 0.04 && chambers.length < 10) {
-          chambers.push({ x: bx, y: by });
+    function carveTunnel(a, b, baseRadius = 0.85) {
+      const dist = Math.max(0.001, Math.hypot(b.x - a.x, b.y - a.y));
+      const steps = Math.max(2, Math.ceil(dist * 2.4));
+      for (let step = 0; step <= steps; step += 1) {
+        const t = step / steps;
+        const cx = lerp(a.x, b.x, t);
+        const cy = lerp(a.y, b.y, t);
+        const jitter = (rand2d(step + Math.floor(a.x * 11), Math.floor(b.y * 13) + 19, caveSeed + 2401) - 0.5) * 0.16;
+        carveCircle(cx, cy, Math.max(0.64, baseRadius + jitter));
+        if (rand2d(step * 7 + 11, Math.floor(cx * 5) + 37, caveSeed + 2741) < 0.04) {
+          carveCircle(cx, cy, Math.max(0.8, baseRadius + 0.4));
         }
       }
     }
 
-    for (let y = 2; y < size - 2; y += 1) {
-      for (let x = 2; x < size - 2; x += 1) {
-        const idx = tileIndex(x, y, size);
-        if (tiles[idx]) continue;
-        const neighbors =
-          Number(tiles[tileIndex(x + 1, y, size)])
-          + Number(tiles[tileIndex(x - 1, y, size)])
-          + Number(tiles[tileIndex(x, y + 1, size)])
-          + Number(tiles[tileIndex(x, y - 1, size)]);
-        if (neighbors >= 3 && rng() < caveStyle.erosionChance) {
-          tiles[idx] = 1;
+    const rooms = [];
+    function roomOverlaps(cx, cy, rx, ry, padding = 1.4) {
+      const r = Math.max(rx, ry);
+      for (const room of rooms) {
+        const roomR = Math.max(room.rx, room.ry);
+        if (Math.hypot(cx - room.x, cy - room.y) < r + roomR + padding) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    function addRoom(cx, cy, rx, ry) {
+      const room = {
+        x: clamp(cx, 2.5, size - 3.5),
+        y: clamp(cy, 2.5, size - 3.5),
+        rx: Math.max(1.1, rx),
+        ry: Math.max(1.1, ry),
+      };
+      rooms.push(room);
+      return room;
+    }
+
+    carveCircle(entrance.tx, entrance.ty, 1.25 + rng() * 0.35);
+    const entryRoom = addRoom(
+      entrance.tx + (rng() - 0.5) * 0.8,
+      entrance.ty - (1.3 + rng() * 0.9),
+      2.2 + rng() * 0.8,
+      1.9 + rng() * 0.7
+    );
+
+    let deepRoomAdded = false;
+    for (let attempt = 0; attempt < 80; attempt += 1) {
+      const cx = 3.5 + rng() * (size - 7);
+      const cy = 2.3 + rng() * Math.max(2, size * 0.26);
+      const rx = 2.0 + rng() * 1.2;
+      const ry = 1.8 + rng() * 1.1;
+      if (roomOverlaps(cx, cy, rx, ry, 2.2)) continue;
+      addRoom(cx, cy, rx, ry);
+      deepRoomAdded = true;
+      break;
+    }
+    if (!deepRoomAdded) {
+      addRoom(
+        clamp(size * (0.35 + rng() * 0.3), 3.5, size - 3.5),
+        clamp(2.6 + rng() * (size * 0.2), 2.5, size - 3.5),
+        2.1 + rng() * 0.8,
+        1.9 + rng() * 0.8
+      );
+    }
+
+    const targetRooms = caveStyle.roomCountMin
+      + Math.floor(rng() * (caveStyle.roomCountMax - caveStyle.roomCountMin + 1))
+      + Math.floor(Math.max(0, size - 32) * 0.18);
+    const maxRoomAttempts = targetRooms * 28;
+    for (let attempt = 0; attempt < maxRoomAttempts && rooms.length < targetRooms; attempt += 1) {
+      const cx = 3.2 + rng() * (size - 6.4);
+      let cy = 3 + rng() * (size - 6);
+      if (rng() < 0.46) {
+        cy = clamp(cy - size * 0.12 * rng(), 3, size - 4);
+      }
+      const baseRadius = caveStyle.roomRadiusMin + rng() * (caveStyle.roomRadiusMax - caveStyle.roomRadiusMin);
+      const stretch = caveStyle.roomStretchMin + rng() * (caveStyle.roomStretchMax - caveStyle.roomStretchMin);
+      const horizontalMajor = rng() < 0.5;
+      const rx = horizontalMajor ? baseRadius * stretch : baseRadius;
+      const ry = horizontalMajor ? baseRadius : baseRadius * stretch;
+      if (Math.hypot(cx - entrance.tx, cy - entrance.ty) < 4.6 && rooms.length > 1) continue;
+      if (roomOverlaps(cx, cy, rx, ry, 1.7)) continue;
+      addRoom(cx, cy, rx, ry);
+    }
+
+    for (const room of rooms) {
+      carveEllipse(room.x, room.y, room.rx, room.ry, 0.22 + rng() * 0.08);
+      if (rng() < caveStyle.roomLobeChance) {
+        const angle = rng() * Math.PI * 2;
+        const lobeBase = Math.max(1.1, Math.min(room.rx, room.ry) * (0.52 + rng() * 0.25));
+        const lx = room.x + Math.cos(angle) * Math.max(0.8, room.rx * 0.45);
+        const ly = room.y + Math.sin(angle) * Math.max(0.8, room.ry * 0.45);
+        carveEllipse(
+          lx,
+          ly,
+          lobeBase * (0.9 + rng() * 0.4),
+          lobeBase * (0.75 + rng() * 0.35),
+          0.22
+        );
+      }
+    }
+
+    const links = [];
+    const linkKeys = new Set();
+    function addLink(a, b) {
+      if (a === b) return false;
+      const first = Math.min(a, b);
+      const second = Math.max(a, b);
+      const key = `${first}:${second}`;
+      if (linkKeys.has(key)) return false;
+      linkKeys.add(key);
+      links.push({ a: first, b: second });
+      return true;
+    }
+
+    if (rooms.length > 1) {
+      const connected = new Set([0]);
+      while (connected.size < rooms.length) {
+        let best = null;
+        for (let i = 0; i < rooms.length; i += 1) {
+          if (connected.has(i)) continue;
+          for (const j of connected) {
+            const dist = Math.hypot(rooms[i].x - rooms[j].x, rooms[i].y - rooms[j].y);
+            const score = dist + (rng() - 0.5) * 0.35;
+            if (!best || score < best.score) {
+              best = { i, j, score };
+            }
+          }
+        }
+        if (!best) break;
+        addLink(best.i, best.j);
+        connected.add(best.i);
+      }
+
+      const extraLinks = caveStyle.loopLinksMin
+        + Math.floor(rng() * (caveStyle.loopLinksMax - caveStyle.loopLinksMin + 1));
+      for (let n = 0; n < extraLinks; n += 1) {
+        let best = null;
+        for (let attempt = 0; attempt < 24; attempt += 1) {
+          const a = Math.floor(rng() * rooms.length);
+          const b = Math.floor(rng() * rooms.length);
+          if (a === b) continue;
+          const first = Math.min(a, b);
+          const second = Math.max(a, b);
+          if (linkKeys.has(`${first}:${second}`)) continue;
+          const dist = Math.hypot(rooms[a].x - rooms[b].x, rooms[a].y - rooms[b].y);
+          if (dist < size * 0.18 || dist > size * 0.68) continue;
+          const score = Math.abs(dist - size * 0.34) + rng() * 2;
+          if (!best || score < best.score) {
+            best = { a, b, score };
+          }
+        }
+        if (best) addLink(best.a, best.b);
+      }
+    }
+
+    carveTunnel({ x: entrance.tx, y: entrance.ty }, { x: entryRoom.x, y: entryRoom.y }, 0.9);
+    for (const link of links) {
+      const a = rooms[link.a];
+      const b = rooms[link.b];
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const dist = Math.max(0.001, Math.hypot(dx, dy));
+      const px = -dy / dist;
+      const py = dx / dist;
+      const bendMagnitude = clamp(dist * (0.08 + rng() * 0.08), 0.6, 3.6) * (rng() < 0.5 ? -1 : 1);
+      const bend = {
+        x: clamp((a.x + b.x) * 0.5 + px * bendMagnitude, 2.2, size - 3.2),
+        y: clamp((a.y + b.y) * 0.5 + py * bendMagnitude, 2.2, size - 3.2),
+      };
+      const tunnelRadius = caveStyle.tunnelRadiusMin + rng() * (caveStyle.tunnelRadiusMax - caveStyle.tunnelRadiusMin);
+      carveTunnel(a, bend, tunnelRadius);
+      carveTunnel(bend, b, tunnelRadius);
+    }
+
+    for (const room of rooms) {
+      const branchCount =
+        Number(rng() < caveStyle.branchChance)
+        + Number(rng() < caveStyle.branchChance * 0.45);
+      for (let branch = 0; branch < branchCount; branch += 1) {
+        let dir = rng() * Math.PI * 2;
+        let x = room.x + Math.cos(dir) * Math.max(0.8, room.rx * 0.55);
+        let y = room.y + Math.sin(dir) * Math.max(0.8, room.ry * 0.55);
+        const length = caveStyle.branchLengthMin
+          + Math.floor(rng() * (caveStyle.branchLengthMax - caveStyle.branchLengthMin + 1));
+        const branchRadius = caveStyle.tunnelRadiusMin * 0.9 + rng() * 0.12;
+        for (let step = 0; step < length; step += 1) {
+          if (rng() < 0.26) dir += (rng() - 0.5) * 1.05;
+          const nx = clamp(x + Math.cos(dir), 2, size - 3);
+          const ny = clamp(y + Math.sin(dir), 2, size - 3);
+          carveTunnel({ x, y }, { x: nx, y: ny }, branchRadius);
+          x = nx;
+          y = ny;
+        }
+        if (rng() < 0.35) {
+          carveEllipse(x, y, 1.2 + rng() * 0.8, 1.1 + rng() * 0.7, 0.24);
         }
       }
     }
 
-    // Trim oversized open areas so caves stay narrow/winding instead of boxy.
+    const chambers = rooms
+      .map((room) => ({
+        x: room.x,
+        y: room.y,
+        dist: Math.hypot(room.x - entrance.tx, room.y - entrance.ty),
+      }))
+      .sort((a, b) => b.dist - a.dist)
+      .slice(0, Math.min(8, rooms.length))
+      .map((room) => ({ x: room.x, y: room.y }));
+
+    // Trim oversized open pockets so caves stay maze-like instead of boxy.
     for (let y = 2; y < size - 2; y += 1) {
       for (let x = 2; x < size - 2; x += 1) {
         const idx = tileIndex(x, y, size);
         if (!tiles[idx]) continue;
-        if (Math.hypot(x - entrance.tx, y - entrance.ty) < 3) continue;
+        if (Math.hypot(x - entrance.tx, y - entrance.ty) < 3.2) continue;
         let openNeighbors = 0;
+        let cardinalOpen = 0;
         for (let oy = -1; oy <= 1; oy += 1) {
           for (let ox = -1; ox <= 1; ox += 1) {
             if (ox === 0 && oy === 0) continue;
-            if (tiles[tileIndex(x + ox, y + oy, size)]) openNeighbors += 1;
+            if (!tiles[tileIndex(x + ox, y + oy, size)]) continue;
+            openNeighbors += 1;
+            if (ox === 0 || oy === 0) cardinalOpen += 1;
           }
         }
-        if (openNeighbors >= 7 && rng() < 0.48) {
+        if (
+          (openNeighbors >= 7 && rng() < caveStyle.openTrimChance)
+          || (openNeighbors >= 6 && cardinalOpen >= 4 && rng() < caveStyle.openTrimChance * 0.42)
+        ) {
+          tiles[idx] = 0;
+        }
+      }
+    }
+
+    // Keep cave topology connected from the entrance so players do not get
+    // unreachable pockets generated by aggressive shaping.
+    const reachable = new Array(size * size).fill(false);
+    const floodStack = [{ x: entrance.tx, y: entrance.ty }];
+    while (floodStack.length > 0) {
+      const current = floodStack.pop();
+      if (!current || !inBounds(current.x, current.y, size)) continue;
+      const idx = tileIndex(current.x, current.y, size);
+      if (!tiles[idx] || reachable[idx]) continue;
+      reachable[idx] = true;
+      floodStack.push({ x: current.x + 1, y: current.y });
+      floodStack.push({ x: current.x - 1, y: current.y });
+      floodStack.push({ x: current.x, y: current.y + 1 });
+      floodStack.push({ x: current.x, y: current.y - 1 });
+    }
+    for (let y = 1; y < size - 1; y += 1) {
+      for (let x = 1; x < size - 1; x += 1) {
+        const idx = tileIndex(x, y, size);
+        if (tiles[idx] && !reachable[idx]) {
           tiles[idx] = 0;
         }
       }
@@ -14582,7 +14899,14 @@
 
     const monsters = [];
     let nextMonsterId = 1;
-    const monsterCount = spawnHostiles ? (2 + Math.floor(rng() * 3)) : 0;
+    const walkableTileCount = tiles.reduce((total, tile) => total + Number(!!tile), 0);
+    const monsterCount = spawnHostiles
+      ? clamp(
+        Math.round(walkableTileCount / 190) + 2 + Math.floor(rng() * 2),
+        4,
+        12
+      )
+      : 0;
     for (let i = 0; i < monsterCount; i += 1) {
       for (let attempt = 0; attempt < 50; attempt += 1) {
         const tx = 2 + Math.floor(rng() * (size - 4));
@@ -17797,33 +18121,171 @@
     return true;
   }
 
-  function randomLootEntry(rng) {
-    const total = VILLAGE_LOOT_TABLE.reduce((sum, entry) => sum + entry.weight, 0);
+  function randomLootEntryFromTable(table, rng) {
+    if (!Array.isArray(table) || table.length === 0) return null;
+    const total = table.reduce((sum, entry) => sum + entry.weight, 0);
     let roll = rng() * total;
-    for (const entry of VILLAGE_LOOT_TABLE) {
+    for (const entry of table) {
       roll -= entry.weight;
       if (roll <= 0) return entry;
     }
-    return VILLAGE_LOOT_TABLE[0];
+    return table[0];
   }
 
-  function fillVillageChest(storage, rng) {
+  function fillLootStorageFromTable(storage, rng, table, minPicks = 2, maxPicks = 4) {
     if (!Array.isArray(storage)) return;
     for (const slot of storage) {
       slot.id = null;
       slot.qty = 0;
     }
-    const picks = 2 + Math.floor(rng() * 3);
+    if (!Array.isArray(table) || table.length === 0) return;
+    const low = clamp(Math.floor(minPicks), 0, 12);
+    const high = Math.max(low, clamp(Math.floor(maxPicks), low, 12));
+    const picks = low + Math.floor(rng() * (high - low + 1));
     for (let i = 0; i < picks; i += 1) {
-      const loot = randomLootEntry(rng);
+      const loot = randomLootEntryFromTable(table, rng);
+      if (!loot) break;
       const qty = loot.min + Math.floor(rng() * (loot.max - loot.min + 1));
       addItem(storage, loot.id, qty);
     }
   }
 
+  function fillVillageChest(storage, rng) {
+    fillLootStorageFromTable(storage, rng, VILLAGE_LOOT_TABLE, 2, 4);
+  }
+
+  function fillVillageBlacksmithChest(storage, rng) {
+    if (!Array.isArray(storage)) return;
+    fillLootStorageFromTable(storage, rng, VILLAGE_BLACKSMITH_LOOT_TABLE, 2, 3);
+    addItem(storage, "iron_ore", 3 + Math.floor(rng() * 4));
+    if (rng() < 0.38) {
+      addItem(storage, "iron_ingot", 1 + Math.floor(rng() * 2));
+    }
+    const goldItemId = rng() < 0.3 ? "gold_ingot" : "gold_ore";
+    addItem(storage, goldItemId, 1 + (goldItemId === "gold_ore" && rng() < 0.34 ? 1 : 0));
+  }
+
   function buildVillageStructureMeta(spawnedByPlayer = false) {
     if (spawnedByPlayer) return { village: true, spawnedByPlayer: true };
     return { village: true };
+  }
+
+  function findVillageInteriorOpenTile(house, interior, candidates = []) {
+    if (!house || !interior || !Array.isArray(candidates)) return null;
+    const doorTx = Math.floor(interior.width / 2);
+    const seen = new Set();
+    for (const candidate of candidates) {
+      if (!candidate) continue;
+      const tx = Math.floor(candidate.tx);
+      const ty = Math.floor(candidate.ty);
+      if (!Number.isInteger(tx) || !Number.isInteger(ty)) continue;
+      if (tx < 0 || ty < 0 || tx >= interior.width || ty >= interior.height) continue;
+      if (ty === interior.height - 1 && tx === doorTx) continue;
+      const key = `${tx},${ty}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const occupied = getInteriorStructureAt(house, tx, ty);
+      if (!occupied) return { tx, ty };
+    }
+    for (let ty = 0; ty < interior.height; ty += 1) {
+      for (let tx = 0; tx < interior.width; tx += 1) {
+        if (ty === interior.height - 1 && tx === doorTx) continue;
+        const occupied = getInteriorStructureAt(house, tx, ty);
+        if (!occupied) return { tx, ty };
+      }
+    }
+    return null;
+  }
+
+  function designateVillageBlacksmithHouse(house, rng = Math.random) {
+    if (!house || house.removed || !isHouseType(house.type)) return false;
+    const interior = getHouseInterior(house);
+    if (!interior || !Array.isArray(interior.items)) return false;
+    if (!house.meta || typeof house.meta !== "object") house.meta = {};
+    house.meta.village = true;
+    house.meta.villageBlacksmith = true;
+
+    interior.items = interior.items.filter((item) => item && item.type !== "bed");
+
+    let smelter = interior.items.find((item) => item?.type === "smelter") || null;
+    if (!smelter) {
+      const smelterSpot = findVillageInteriorOpenTile(house, interior, [
+        { tx: interior.width - 2, ty: 1 },
+        { tx: 1, ty: 1 },
+        { tx: Math.floor(interior.width * 0.5), ty: 1 },
+        { tx: interior.width - 2, ty: interior.height - 2 },
+        { tx: 1, ty: interior.height - 2 },
+      ]);
+      if (smelterSpot) {
+        smelter = addInteriorStructure(house, "smelter", smelterSpot.tx, smelterSpot.ty);
+      } else {
+        const spareCampfire = interior.items.find((item) => item?.type === "campfire");
+        if (spareCampfire) {
+          spareCampfire.type = "smelter";
+          spareCampfire.storage = null;
+          spareCampfire.storageRevision = 0;
+          smelter = spareCampfire;
+        }
+      }
+    }
+
+    let chest = interior.items.find((item) => item?.type === "chest") || null;
+    if (!chest) {
+      const chestSpot = findVillageInteriorOpenTile(house, interior, [
+        { tx: interior.width - 2, ty: 1 },
+        { tx: Math.max(1, interior.width - 2), ty: 2 },
+        { tx: 1, ty: 1 },
+        { tx: 1, ty: 2 },
+        { tx: Math.floor(interior.width * 0.5), ty: 1 },
+      ]);
+      if (chestSpot) {
+        chest = addInteriorStructure(house, "chest", chestSpot.tx, chestSpot.ty);
+      }
+    }
+    if (!chest || !Array.isArray(chest.storage)) {
+      if (chest) {
+        chest.storage = createEmptyInventory(CHEST_SIZE);
+        chest.storageRevision = 0;
+      } else {
+        delete house.meta.villageBlacksmith;
+        return false;
+      }
+    }
+    chest.storage = sanitizeInventorySlots(chest.storage, CHEST_SIZE);
+    chest.storageRevision = normalizeStorageRevisionValue(chest.storageRevision);
+    fillVillageBlacksmithChest(chest.storage, rng);
+    return true;
+  }
+
+  function maybeAddVillageBlacksmith(houses, centerTx, centerTy, rng = Math.random) {
+    if (!Array.isArray(houses) || houses.length <= 0) return null;
+    const maxCount = Math.max(1, Number(VILLAGE_BLACKSMITH_CONFIG.maxPerVillage) || 1);
+    const existingCount = houses.reduce(
+      (count, house) => count + (house?.meta?.villageBlacksmith ? 1 : 0),
+      0
+    );
+    if (existingCount >= maxCount) return null;
+    if (rng() > VILLAGE_BLACKSMITH_CONFIG.villageChance) return null;
+
+    const weightedCandidates = houses
+      .filter((house) => house && !house.removed && isHouseType(house.type))
+      .map((house) => {
+        const tierScore = house.type === "large_house" ? 3 : (house.type === "medium_house" ? 2 : 1);
+        const centerX = house.tx + getStructureFootprint(house.type).w * 0.5;
+        const centerY = house.ty + getStructureFootprint(house.type).h * 0.5;
+        const dist = Math.hypot(centerX - centerTx, centerY - centerTy);
+        return {
+          house,
+          score: tierScore * 1.75 + dist * 0.08 + rng() * 0.5,
+        };
+      })
+      .sort((a, b) => b.score - a.score);
+    if (weightedCandidates.length === 0) return null;
+
+    const choicePool = weightedCandidates.slice(0, Math.min(3, weightedCandidates.length));
+    const selected = choicePool[Math.floor(rng() * choicePool.length)]?.house || weightedCandidates[0]?.house;
+    if (!selected) return null;
+    return designateVillageBlacksmithHouse(selected, rng) ? selected : null;
   }
 
   function addVillageHouse(world, tx, ty, type, rng, withChest, withBed, spawnedByPlayer = false) {
@@ -18049,6 +18511,8 @@
       return { ok: false, reason: "Village footprint blocked" };
     }
 
+    const blacksmithHouse = maybeAddVillageBlacksmith(houses, centerTx, centerTy, rng);
+
     for (const house of houses) {
       const footprint = getStructureFootprint(house.type);
       const pathTx = house.tx + Math.floor(footprint.w / 2);
@@ -18073,7 +18537,7 @@
     }
 
     const villagers = spawnVillageVillagers(world, centerTx, centerTy, houses, rng);
-    return { ok: true, houses: houses.length, villagers };
+    return { ok: true, houses: houses.length, villagers, blacksmith: !!blacksmithHouse };
   }
 
   function seedSurfaceVillages(world) {
@@ -18262,6 +18726,42 @@
     const added = state.structures.length > beforeCount && hasVillageStructures();
     if (added) {
       markDirty();
+    }
+    return added;
+  }
+
+  function ensureVillageBlacksmithPresence(world) {
+    if (!world || !Array.isArray(state.structures)) return 0;
+    const centers = getVillageCenters(world, { includePlayerSpawned: false });
+    if (centers.length === 0) return 0;
+    const seedBase = ((world.seedInt ?? seedToInt(world.seed || "island")) ^ 0x5b1d3a77) >>> 0;
+    let added = 0;
+
+    for (const center of centers) {
+      if (!center) continue;
+      const houses = state.structures.filter((structure) => (
+        structure
+        && !structure.removed
+        && isHouseType(structure.type)
+        && !!structure.meta?.village
+        && !structure.meta?.spawnedByPlayer
+        && Math.hypot(
+          structure.tx + getStructureFootprint(structure.type).w * 0.5 - center.tx,
+          structure.ty + getStructureFootprint(structure.type).h * 0.5 - center.ty
+        ) <= 8.5
+      ));
+      if (houses.length <= 0) continue;
+      if (houses.some((house) => !!house?.meta?.villageBlacksmith)) continue;
+
+      const centerSeed = (
+        (Math.round(center.tx * 10) * 73856093)
+        ^ (Math.round(center.ty * 10) * 19349663)
+        ^ seedBase
+      ) >>> 0;
+      const villageRng = makeRng(centerSeed || 1);
+      if (maybeAddVillageBlacksmith(houses, center.tx, center.ty, villageRng)) {
+        added += 1;
+      }
     }
     return added;
   }
@@ -19539,6 +20039,7 @@
       }
 
       const villagesAdded = ensureSurfaceVillagePresence(world);
+      const villageBlacksmithsAdded = ensureVillageBlacksmithPresence(world);
       const villagersAdded = ensureVillageVillagers(world);
       const wildRobotAdded = ensureGuaranteedOuterWildRobot(world);
       const shipFeaturesAdded = ensureSeedShipFeatures(world);
@@ -19561,6 +20062,7 @@
       state.debugBoatPlacePending = false;
       state.dirty = (!layoutCompatible)
         || villagesAdded
+        || villageBlacksmithsAdded > 0
         || villagersAdded > 0
         || wildRobotAdded
         || shipFeaturesAdded
@@ -20290,7 +20792,10 @@
     closeShipRepairPanel();
     closeInventory();
     buildMenu.classList.add("hidden");
-    setPrompt(`Inside ${STRUCTURE_DEFS[structure.type]?.name}`, 1.2);
+    const insideLabel = structure.meta?.villageBlacksmith
+      ? "Blacksmith"
+      : (STRUCTURE_DEFS[structure.type]?.name || "House");
+    setPrompt(`Inside ${insideLabel}`, 1.2);
     if (net.enabled) sendPlayerUpdate();
   }
 
@@ -27132,15 +27637,8 @@
     if (trimmedByIslandCap > 0 || trimmedAnimals > 0) {
       markDirty();
     }
-    const immediateSpawnIslandTopUp = ensureSpawnIslandHarvestAnimals(
-      world,
-      state.spawnTile,
-      passiveTargets.spawnIslandHarvestMin,
-      maxAnimals
-    );
-    if (immediateSpawnIslandTopUp > 0) {
-      markDirty();
-    }
+    // Only repopulate on the timed spawn cadence below. This avoids instant
+    // one-for-one replacement pop-in when a passive animal is killed.
     world.animalSpawnTimer -= dt;
     if (world.animalSpawnTimer <= 0) {
       const catchupDeficit = Math.max(0, passiveTargets.baselineAnimals - world.animals.length);
@@ -27200,6 +27698,13 @@
       }
       if (animal.hitTimer > 0) animal.hitTimer -= dt;
       if (animal.hp <= 0) {
+        // Smooth respawn pacing after kills to avoid immediate replacement pop-in.
+        const respawnGrace = 3.5 + Math.random() * 2.5;
+        if (Number.isFinite(world.animalSpawnTimer)) {
+          world.animalSpawnTimer = Math.max(world.animalSpawnTimer, respawnGrace);
+        } else {
+          world.animalSpawnTimer = respawnGrace;
+        }
         world.animals.splice(i, 1);
         correctedAnimalPlacement = true;
         continue;
@@ -29515,6 +30020,35 @@
     }
   }
 
+  function getPlayerNameLabel(name) {
+    return sanitizePlayerName(name, "Survivor");
+  }
+
+  function drawPlayerNameLabel(name, screenX, screenY, verticalOffset = 18) {
+    const label = getPlayerNameLabel(name);
+    if (!label) return;
+    ctx.font = "12px Trebuchet MS";
+    ctx.fillStyle = "rgba(255, 255, 255, 0.9)";
+    ctx.textAlign = "center";
+    ctx.fillText(label, screenX, screenY - verticalOffset);
+  }
+
+  function isRemotePlayerInLocalViewContext(player) {
+    if (!player) return false;
+    if (state.player?.inHut) {
+      if (!state.activeHouse) return false;
+      return !!player.inHut && player.houseKey === getHouseKey(state.activeHouse);
+    }
+    if (state.inCave) {
+      const activeCaveId = state.activeCave?.id;
+      return !!player.inCave
+        && Number.isInteger(activeCaveId)
+        && Number.isInteger(player.caveId)
+        && player.caveId === activeCaveId;
+    }
+    return !player.inCave && !player.inHut;
+  }
+
   function drawCrawlingPlayerAvatar(screenX, screenY, bodyColor, direction, name = null) {
     const dir = normalizeDirectionVector(direction?.x ?? 1, direction?.y ?? 0, 1, 0);
     const angle = Math.atan2(dir.y, dir.x);
@@ -29590,11 +30124,8 @@
     }
     ctx.restore();
 
-    if (name) {
-      ctx.font = "12px Trebuchet MS";
-      ctx.fillStyle = "rgba(255, 255, 255, 0.9)";
-      ctx.textAlign = "center";
-      ctx.fillText(name, screenX, screenY - 18);
+    if (name != null) {
+      drawPlayerNameLabel(name, screenX, screenY, 18);
     }
   }
 
@@ -29689,11 +30220,8 @@
 
     drawPlayerArmorOverlay(screen.x, screen.y, player);
 
-    if (name) {
-      ctx.font = "12px Trebuchet MS";
-      ctx.fillStyle = "rgba(255, 255, 255, 0.9)";
-      ctx.textAlign = "center";
-      ctx.fillText(name, screen.x, screen.y - 18);
+    if (name != null) {
+      drawPlayerNameLabel(name, screen.x, screen.y, 18);
     }
   }
 
@@ -29723,11 +30251,7 @@
   function drawRemotePlayers(camera) {
     if (!net.enabled) return;
     for (const player of net.players.values()) {
-      if (state.inCave) {
-        if (!player.inCave || player.caveId !== state.activeCave?.id) continue;
-      } else if (player.inCave || player.inHut) {
-        continue;
-      }
+      if (!isRemotePlayerInLocalViewContext(player)) continue;
       drawPlayerAvatar(player, camera, player.color, player.name);
     }
   }
@@ -30095,8 +30619,8 @@
     const now = performance.now() * 0.001;
     for (const cloud of world.poisonClouds) {
       if (!cloud || cloud.maxLife <= 0 || cloud.life >= cloud.maxLife) continue;
-      const px = Number.isFinite(cloud.x) ? cloud.x : cloud.renderX;
-      const py = Number.isFinite(cloud.y) ? cloud.y : cloud.renderY;
+      const px = Number.isFinite(cloud.renderX) ? cloud.renderX : cloud.x;
+      const py = Number.isFinite(cloud.renderY) ? cloud.renderY : cloud.y;
       if (!Number.isFinite(px) || !Number.isFinite(py)) continue;
       const screen = worldToScreen(px, py, camera);
       const radius = clamp(
@@ -30147,8 +30671,8 @@
     if (!projectile) return;
     const type = projectile.type || "arrow";
     if (type !== "arrow" && type !== "poison_bottle") return;
-    const px = Number.isFinite(projectile.x) ? projectile.x : projectile.renderX;
-    const py = Number.isFinite(projectile.y) ? projectile.y : projectile.renderY;
+    const px = Number.isFinite(projectile.renderX) ? projectile.renderX : projectile.x;
+    const py = Number.isFinite(projectile.renderY) ? projectile.renderY : projectile.y;
     if (!Number.isFinite(px) || !Number.isFinite(py)) return;
     const cameraViewWidth = getCameraViewWidth(camera);
     const cameraViewHeight = getCameraViewHeight(camera);
@@ -30686,8 +31210,13 @@
       case "medium_house":
       case "large_house": {
         const isVillageHouse = !!structure.meta?.village;
-        const wallColor = isVillageHouse ? tintColor(def.color, 0.12) : tintColor(def.color, 0.05);
-        const roofColor = isVillageHouse ? "#8f6f41" : tintColor(def.color, -0.25);
+        const isVillageBlacksmith = !!structure.meta?.villageBlacksmith;
+        const wallColor = isVillageBlacksmith
+          ? "#857156"
+          : (isVillageHouse ? tintColor(def.color, 0.12) : tintColor(def.color, 0.05));
+        const roofColor = isVillageBlacksmith
+          ? "#5a616b"
+          : (isVillageHouse ? "#8f6f41" : tintColor(def.color, -0.25));
         const wallTop = baseY + Math.max(10, Math.floor(baseHeight * 0.28));
         const wallHeight = Math.max(8, baseHeight - (wallTop - baseY) - 2);
 
@@ -30700,7 +31229,7 @@
         ctx.lineTo(baseX + baseWidth - 2, wallTop + 2);
         ctx.closePath();
         ctx.fill();
-        if (isVillageHouse) {
+        if (isVillageHouse && !isVillageBlacksmith) {
           ctx.strokeStyle = "rgba(235, 214, 152, 0.45)";
           ctx.lineWidth = 1;
           const stripeCount = Math.max(4, Math.floor(baseWidth / 18));
@@ -30713,6 +31242,23 @@
             ctx.stroke();
           }
         }
+        if (isVillageBlacksmith) {
+          const chimneyW = 6;
+          const chimneyH = Math.max(10, Math.floor(baseHeight * 0.42));
+          const chimneyX = baseX + baseWidth - chimneyW - 8;
+          const chimneyY = wallTop - chimneyH - 2;
+          ctx.fillStyle = "#4a515c";
+          ctx.fillRect(chimneyX, chimneyY, chimneyW, chimneyH);
+          ctx.fillStyle = "rgba(197, 205, 218, 0.32)";
+          ctx.fillRect(chimneyX - 1, chimneyY - 2, chimneyW + 2, 2);
+
+          ctx.fillStyle = "rgba(201, 178, 131, 0.82)";
+          ctx.fillRect(baseX + baseWidth / 2 - 6, wallTop + 3, 12, 5);
+          ctx.fillStyle = "#353f49";
+          ctx.fillRect(baseX + baseWidth / 2 - 2, wallTop + 2, 4, 7);
+          ctx.fillStyle = "rgba(240, 246, 255, 0.45)";
+          ctx.fillRect(baseX + baseWidth / 2 - 4, wallTop + 4, 2, 1);
+        }
         const doorWidth = clamp(Math.floor(baseWidth * 0.14), 8, 14);
         const doorHeight = clamp(Math.floor(baseHeight * 0.22), 8, 12);
         ctx.fillStyle = "#3a2a1b";
@@ -30723,7 +31269,9 @@
           ctx.fillRect(baseX + 8, windowY, 7, 5);
           ctx.fillRect(baseX + baseWidth - 15, windowY, 7, 5);
         }
-        const tierLabel = structure.type === "small_house" ? "S" : structure.type === "medium_house" ? "M" : "L";
+        const tierLabel = isVillageBlacksmith
+          ? "BS"
+          : (structure.type === "small_house" ? "S" : structure.type === "medium_house" ? "M" : "L");
         ctx.fillStyle = "rgba(255, 240, 210, 0.8)";
         ctx.font = "bold 10px Trebuchet MS";
         ctx.textAlign = "center";
@@ -31250,12 +31798,13 @@
       drawPlayerArmorOverlay(playerPx, playerPy + 2, state.player);
     }
 
-    const currentHouseKey = getHouseKey(state.activeHouse);
     for (const remote of net.players.values()) {
-      if (!remote.inHut || remote.houseKey !== currentHouseKey) continue;
-      if (typeof remote.houseX !== "number" || typeof remote.houseY !== "number") continue;
-      const houseX = typeof remote.renderHouseX === "number" ? remote.renderHouseX : remote.houseX;
-      const houseY = typeof remote.renderHouseY === "number" ? remote.renderHouseY : remote.houseY;
+      if (!isRemotePlayerInLocalViewContext(remote)) continue;
+      const hasHousePos = Number.isFinite(remote.houseX) && Number.isFinite(remote.houseY);
+      const hasRenderPos = Number.isFinite(remote.renderHouseX) && Number.isFinite(remote.renderHouseY);
+      if (!hasHousePos && !hasRenderPos) continue;
+      const houseX = hasRenderPos ? remote.renderHouseX : remote.houseX;
+      const houseY = hasRenderPos ? remote.renderHouseY : remote.houseY;
       const rx = layout.originX + houseX * layout.tileSize;
       const ry = layout.originY + houseY * layout.tileSize;
       const body = remote.color || "#6fa8ff";
@@ -31273,11 +31822,10 @@
       ctx.fillRect(rx - 6, ry + 14, 5, 6);
       ctx.fillRect(rx + 1, ry + 14, 5, 6);
       drawPlayerArmorOverlay(rx, ry + 2, remote);
-      ctx.font = "12px Trebuchet MS";
-      ctx.fillStyle = "rgba(255, 255, 255, 0.9)";
-      ctx.textAlign = "center";
-      ctx.fillText(remote.name ?? "Survivor", rx, ry - 14);
+      drawPlayerNameLabel(remote.name, rx, ry + 2, 16);
     }
+
+    drawPlayerNameLabel(net.localName, playerPx, playerPy + 2, 16);
     drawGuidanceMapOverlay();
     drawDebugWorldMiniMapOverlay();
     drawSleepTransitionOverlay();
@@ -33430,16 +33978,19 @@
       if (next) {
         setLocalPlayerName(next, { persist: false, broadcast: true });
       } else {
-        // Clearing the field intentionally resets to a fresh default for this run.
-        const fresh = generateDefaultPlayerName();
-        setLocalPlayerName(fresh, { persist: false, broadcast: true });
+        // Keep it truly clear while editing; a fallback name is assigned only when
+        // entering a game session.
+        net.localName = "";
+        state.playerName = "";
+        if (menuPlayerNameInput.value !== "") {
+          menuPlayerNameInput.value = "";
+        }
       }
     };
 
     if (menuPlayerNameInput) {
       menuPlayerNameInput.addEventListener("input", () => {
-        const liveName = sanitizePlayerName(menuPlayerNameInput.value, "");
-        menuPlayerNameInput.value = liveName;
+        // Allow full free-form editing; sanitize only on commit.
       });
       menuPlayerNameInput.addEventListener("change", () => {
         commitMenuPlayerName();
