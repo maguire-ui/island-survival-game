@@ -2136,6 +2136,7 @@
 
   function updatePlayerNameUI() {
     if (!menuPlayerNameInput) return;
+    if (document.activeElement === menuPlayerNameInput) return;
     const name = sanitizePlayerName(net.localName || state.playerName || "", "");
     if (menuPlayerNameInput.value !== name) {
       menuPlayerNameInput.value = name;
@@ -2148,7 +2149,7 @@
       broadcast = false,
     } = options;
     const fallback = sanitizePlayerName(
-      net.localName || state.playerName || getLegacyStoredPlayerName() || generateDefaultPlayerName(),
+      net.localName || state.playerName || generateDefaultPlayerName(),
       generateDefaultPlayerName()
     );
     const nextName = sanitizePlayerName(name, fallback);
@@ -2319,7 +2320,6 @@
 
   function saveUserSettings() {
     const payload = {
-      playerName: sanitizePlayerName(state.playerName || net.localName, ""),
       musicVolume: clampVolume(state.musicVolume, SETTINGS_DEFAULTS.musicVolume),
       sfxVolume: clampVolume(state.sfxVolume, SETTINGS_DEFAULTS.sfxVolume),
       debugUnlocked: !!state.debugUnlocked,
@@ -2342,11 +2342,9 @@
     } catch (err) {
       raw = null;
     }
-    let loadedName = "";
     try {
       if (raw) {
         const data = JSON.parse(raw);
-        loadedName = sanitizePlayerName(data.playerName, "");
         state.musicVolume = clampVolume(data.musicVolume, SETTINGS_DEFAULTS.musicVolume);
         state.sfxVolume = clampVolume(data.sfxVolume, SETTINGS_DEFAULTS.sfxVolume);
         // Debug access is session-based: always start locked on every load/join.
@@ -2367,7 +2365,7 @@
       state.debugWorldSpeedMultiplier = SETTINGS_DEFAULTS.debugWorldSpeedMultiplier;
       state.debugFovMultiplier = SETTINGS_DEFAULTS.debugFovMultiplier;
     }
-    const fallbackName = loadedName || getLegacyStoredPlayerName() || generateDefaultPlayerName();
+    const fallbackName = generateDefaultPlayerName();
     setLocalPlayerName(fallbackName, { persist: false, broadcast: false });
   }
 
@@ -4052,26 +4050,32 @@
 
     const normalizePlayers = (players) => {
       if (!Array.isArray(players)) return [];
-      return players
-        .filter((entry) => entry && entry.id)
-        .map((entry) => ({
-          id: String(entry.id),
-          x: Number.isFinite(entry.x) ? entry.x : 0,
-          y: Number.isFinite(entry.y) ? entry.y : 0,
-          hp: Number.isFinite(entry.hp) ? entry.hp : 0,
-          maxHp: Number.isFinite(entry.maxHp) ? entry.maxHp : 0,
-          toolTier: Number.isFinite(entry.toolTier) ? entry.toolTier : 0,
+      const byId = new Map();
+      for (const entry of players) {
+        if (!entry || !entry.id) continue;
+        const id = String(entry.id);
+        const seqRaw = Number.isFinite(entry.seq) ? entry.seq : entry.netSeq;
+        const seq = Number.isFinite(seqRaw) ? Math.max(0, Math.floor(seqRaw)) : 0;
+        const normalized = {
+          id,
+          x: Number.isFinite(entry.x) ? Number(entry.x).toFixed(2) : "0.00",
+          y: Number.isFinite(entry.y) ? Number(entry.y).toFixed(2) : "0.00",
+          hp: Number.isFinite(entry.hp) ? Number(entry.hp).toFixed(2) : "0.00",
+          maxHp: Number.isFinite(entry.maxHp) ? Number(entry.maxHp).toFixed(2) : "0.00",
           inCave: !!entry.inCave,
           caveId: Number.isInteger(entry.caveId) ? entry.caveId : null,
           inHut: !!entry.inHut,
           houseKey: entry.houseKey || null,
-          houseX: Number.isFinite(entry.houseX) ? entry.houseX : null,
-          houseY: Number.isFinite(entry.houseY) ? entry.houseY : null,
-          name: String(entry.name || ""),
-          color: String(entry.color || ""),
-          inventoryFingerprint: String(entry.inventoryFingerprint || ""),
-          inventoryTotalsFingerprint: getInventoryTotalsFingerprint(entry.inventoryTotals),
-        }))
+          houseX: Number.isFinite(entry.houseX) ? Number(entry.houseX).toFixed(2) : null,
+          houseY: Number.isFinite(entry.houseY) ? Number(entry.houseY).toFixed(2) : null,
+        };
+        const prev = byId.get(id);
+        if (!prev || seq >= prev.seq) {
+          byId.set(id, { seq, data: normalized });
+        }
+      }
+      return [...byId.values()]
+        .map((entry) => entry.data)
         .sort((a, b) => (a.id < b.id ? -1 : (a.id > b.id ? 1 : 0)));
     };
 
@@ -4318,9 +4322,22 @@
         client.connected = true;
         client.playerId = message.playerId || client.id;
         if (message.snapshot) {
-          client.shadow.snapshot = mpAutotestClone(message.snapshot, null);
-          client.shadow.lastSnapshotAt = mpAutotest.elapsed;
-          mpAutotestRefreshShadowPlayerSeqCache(client);
+          const incomingSeq = Number(message.snapshot.seq);
+          let shouldApplySnapshot = true;
+          if (Number.isFinite(incomingSeq)) {
+            const normalizedSeq = Math.max(0, Math.floor(incomingSeq));
+            if (normalizedSeq <= client.shadow.lastSnapshotSeq) {
+              shouldApplySnapshot = false;
+            } else {
+              client.shadow.lastSnapshotSeq = normalizedSeq;
+            }
+          }
+          if (shouldApplySnapshot) {
+            client.shadow.snapshot = mpAutotestClone(message.snapshot, null);
+            client.shadow.lastSnapshotAt = mpAutotest.elapsed;
+            mpAutotestRefreshShadowPlayerSeqCache(client);
+            mpAutotestSyncClientPlayerSeqCursor(client);
+          }
         }
         break;
       case "snapshot": {
@@ -4333,6 +4350,7 @@
         client.shadow.snapshot = mpAutotestClone(message, null);
         client.shadow.lastSnapshotAt = mpAutotest.elapsed;
         mpAutotestRefreshShadowPlayerSeqCache(client);
+        mpAutotestSyncClientPlayerSeqCursor(client);
         break;
       }
       case "motion": {
@@ -4349,27 +4367,21 @@
         break;
       }
       case "playerUpdate": {
-        if (!client.shadow.snapshot || !Array.isArray(client.shadow.snapshot.players)) break;
-        if (!message.id) break;
-        const incomingSeq = Number(message.seq);
-        if (Number.isFinite(incomingSeq)) {
-          const normalizedSeq = Math.max(0, Math.floor(incomingSeq));
-          const lastSeq = client.shadow.playerSeqById.get(message.id) ?? -1;
-          if (normalizedSeq <= lastSeq) break;
-          client.shadow.playerSeqById.set(message.id, normalizedSeq);
-        } else {
-          const lastSeq = client.shadow.playerSeqById.get(message.id) ?? -1;
-          client.shadow.playerSeqById.set(message.id, lastSeq + 1);
-        }
-        const players = client.shadow.snapshot.players;
-        const idx = players.findIndex((entry) => entry && entry.id === message.id);
-        if (idx >= 0) {
-          players[idx] = {
-            ...players[idx],
-            ...mpAutotestClone(message, message),
-          };
-        } else if (message.id) {
-          players.push(mpAutotestClone(message, message));
+        // Keep shadow hash state snapshot-authoritative. Live playerUpdate packets
+        // are intentionally ignored for canonical state to avoid transient
+        // per-client drift under stress jitter/reordering.
+        if (message.id) {
+          const incomingSeq = Number(message.seq);
+          if (Number.isFinite(incomingSeq)) {
+            const normalizedSeq = Math.max(0, Math.floor(incomingSeq));
+            const lastSeq = client.shadow.playerSeqById.get(message.id) ?? -1;
+            if (normalizedSeq > lastSeq) {
+              client.shadow.playerSeqById.set(message.id, normalizedSeq);
+            }
+          }
+          if (message.id === (client.playerId || client.id)) {
+            mpAutotestSyncClientPlayerSeqCursor(client);
+          }
         }
         break;
       }
@@ -4450,11 +4462,11 @@
   function mpAutotestFlushMessageQueue(forceAll = false, limit = 512) {
     if (!mpAutotest.active) return 0;
     let delivered = 0;
-    mpAutotest.messageQueue.sort((a, b) => {
-      if (a.deliverAt !== b.deliverAt) return a.deliverAt - b.deliverAt;
-      return a.seq - b.seq;
-    });
     while (mpAutotest.messageQueue.length > 0 && delivered < limit) {
+      mpAutotest.messageQueue.sort((a, b) => {
+        if (a.deliverAt !== b.deliverAt) return a.deliverAt - b.deliverAt;
+        return a.seq - b.seq;
+      });
       const head = mpAutotest.messageQueue[0];
       if (!forceAll && head.deliverAt > mpAutotest.elapsed) break;
       mpAutotest.messageQueue.shift();
@@ -4508,6 +4520,9 @@
       color,
       connected: false,
       playerId: `autotest-c${index + 1}`,
+      nextPlayerSeq: 1,
+      inventoryFingerprint: "",
+      inventoryTotals: Object.create(null),
       connection: null,
       shadow: {
         snapshot: null,
@@ -4524,13 +4539,36 @@
     };
   }
 
+  function mpAutotestSyncClientPlayerSeqCursor(client) {
+    if (!client) return;
+    let nextSeq = Number.isFinite(client.nextPlayerSeq)
+      ? Math.max(1, Math.floor(client.nextPlayerSeq))
+      : 1;
+    const players = Array.isArray(client.shadow?.snapshot?.players)
+      ? client.shadow.snapshot.players
+      : [];
+    const playerId = client.playerId || client.id;
+    const entry = players.find((player) => player && player.id === playerId) || null;
+    if (entry) {
+      const seqRaw = Number.isFinite(entry.seq) ? entry.seq : entry.netSeq;
+      if (Number.isFinite(seqRaw)) {
+        nextSeq = Math.max(nextSeq, Math.floor(seqRaw) + 1);
+      }
+    }
+    client.nextPlayerSeq = nextSeq;
+  }
+
+  function mpAutotestNextClientPlayerSeq(client) {
+    if (!client) return 1;
+    const seq = Number.isFinite(client.nextPlayerSeq)
+      ? Math.max(1, Math.floor(client.nextPlayerSeq))
+      : 1;
+    client.nextPlayerSeq = seq + 1;
+    return seq;
+  }
+
   function mpAutotestSendFromClient(client, payload, options = null) {
     if (!client || !client.connected) return false;
-    if (payload && payload.type === "playerUpdate") {
-      // Shadow clients should apply their own immediate movement updates locally
-      // before host reconciliation, matching how real clients behave.
-      mpAutotestApplyClientMessage(client, payload);
-    }
     mpAutotestEnqueueMessage(client.id, "host", payload, options || { reliable: false });
     return true;
   }
@@ -4642,9 +4680,11 @@
   }
 
   function mpAutotestBuildPlayerUpdatePayload(client, x, y, extra = null) {
+    const seq = mpAutotestNextClientPlayerSeq(client);
     const payload = {
       type: "playerUpdate",
-      id: client.id,
+      id: client.playerId || client.id,
+      seq,
       name: client.name,
       color: client.color,
       x,
@@ -4666,6 +4706,10 @@
       houseY: null,
       inCave: false,
       caveId: null,
+      inventoryFingerprint: typeof client.inventoryFingerprint === "string"
+        ? client.inventoryFingerprint
+        : "",
+      inventoryTotals: sanitizeInventoryTotalsPayload(client.inventoryTotals),
     };
     if (extra && typeof extra === "object") {
       Object.assign(payload, extra);
@@ -5266,6 +5310,65 @@
     return { mismatches, clientReports };
   }
 
+  function mpAutotestDescribePlayerMismatch(hostPlayers, clientPlayers) {
+    const hostList = Array.isArray(hostPlayers) ? hostPlayers : [];
+    const clientList = Array.isArray(clientPlayers) ? clientPlayers : [];
+    const hostCounts = new Map();
+    const clientCounts = new Map();
+    for (const entry of hostList) {
+      if (!entry || !entry.id) continue;
+      const id = String(entry.id);
+      hostCounts.set(id, (hostCounts.get(id) || 0) + 1);
+    }
+    for (const entry of clientList) {
+      if (!entry || !entry.id) continue;
+      const id = String(entry.id);
+      clientCounts.set(id, (clientCounts.get(id) || 0) + 1);
+    }
+    const duplicateLines = [];
+    for (const id of new Set([...hostCounts.keys(), ...clientCounts.keys()])) {
+      const hostCount = hostCounts.get(id) || 0;
+      const clientCount = clientCounts.get(id) || 0;
+      if (hostCount > 1 || clientCount > 1) {
+        duplicateLines.push(`${id}: dupCounts host=${hostCount}, client=${clientCount}`);
+      }
+    }
+    if (duplicateLines.length > 0) return duplicateLines.slice(0, 10);
+    const hostById = new Map();
+    const clientById = new Map();
+    for (const entry of hostList) {
+      if (!entry || !entry.id) continue;
+      hostById.set(entry.id, entry);
+    }
+    for (const entry of clientList) {
+      if (!entry || !entry.id) continue;
+      clientById.set(entry.id, entry);
+    }
+    const ids = [...new Set([...hostById.keys(), ...clientById.keys()])].sort();
+    const fields = ["x", "y", "hp", "maxHp", "inCave", "caveId", "inHut", "houseKey", "houseX", "houseY"];
+    const lines = [];
+    for (const id of ids) {
+      const hostEntry = hostById.get(id) || null;
+      const clientEntry = clientById.get(id) || null;
+      if (!hostEntry || !clientEntry) {
+        lines.push(`${id}: host=${hostEntry ? "present" : "missing"}, client=${clientEntry ? "present" : "missing"}`);
+        if (lines.length >= 10) break;
+        continue;
+      }
+      const diffs = [];
+      for (const field of fields) {
+        if (hostEntry[field] !== clientEntry[field]) {
+          diffs.push(`${field}(${String(hostEntry[field])}!=${String(clientEntry[field])})`);
+        }
+      }
+      if (diffs.length > 0) {
+        lines.push(`${id}: ${diffs.slice(0, 6).join(", ")}`);
+        if (lines.length >= 10) break;
+      }
+    }
+    return lines;
+  }
+
   function mpAutotestValidateSafety() {
     const issues = [];
     const checkSlots = (slots, label) => {
@@ -5395,6 +5498,17 @@
     } else {
       mismatchLines.push("- none");
     }
+    const playerMismatchDetailLines = [];
+    for (const mismatch of hashCompare.mismatches || []) {
+      if (!String(mismatch.subsystem || "").includes("players")) continue;
+      const client = mpAutotestFindClient(mismatch.clientId);
+      const clientPlayers = client?.shadow?.lastCanonical?.players;
+      const hostPlayers = hostHashes?.canonical?.players;
+      const diffs = mpAutotestDescribePlayerMismatch(hostPlayers, clientPlayers);
+      if (diffs.length > 0) {
+        playerMismatchDetailLines.push(`- ${mismatch.clientId}: ${diffs[0]}`);
+      }
+    }
     const recentMessages = mpAutotest.messageLog
       .filter((entry) => entry?.event === "deliver")
       .slice(-30)
@@ -5416,6 +5530,8 @@
       "",
       "mismatch summary:",
       ...mismatchLines,
+      playerMismatchDetailLines.length > 0 ? "player mismatch details:" : "",
+      ...playerMismatchDetailLines,
       "",
       ...diagnosticsLines,
       "",
@@ -5476,6 +5592,13 @@
   }
 
   function mpAutotestEnsureChecks(actionDescriptor) {
+    if (!mpAutotest.active) return;
+    // Always settle in-flight client->host inputs before hashing so strict
+    // comparisons are against fully reconciled authoritative state.
+    mpAutotestForceReliableSync();
+    mpAutotestFlushMessageQueue(true);
+    mpAutotestForceReliableSync();
+    mpAutotestFlushMessageQueue(true);
     if (!mpAutotest.active) return;
     if (mpAutotest.eventStats.clientAuthViolations > 0) {
       mpAutotestFail("Authority violation: client sent host-authoritative packet", {
@@ -8775,7 +8898,7 @@
 
   function getLocalProfile() {
     const name = setLocalPlayerName(
-      state.playerName || net.localName || getLegacyStoredPlayerName() || generateDefaultPlayerName(),
+      state.playerName || net.localName || generateDefaultPlayerName(),
       { persist: false, broadcast: false }
     );
     const color = pickRandomDistinctPlayerColor();
@@ -10770,7 +10893,7 @@
     }
     if (player.renderX == null) player.renderX = player.x;
     if (player.renderY == null) player.renderY = player.y;
-    broadcastNet({
+    const authoritativeUpdate = {
       type: "playerUpdate",
       id: conn.peer,
       name: player.name,
@@ -10794,7 +10917,13 @@
         ? player.inventoryFingerprint
         : "",
       inventoryTotals: sanitizeInventoryTotalsPayload(player.inventoryTotals),
-    }, conn.peer);
+    };
+    // Echo authoritative player state back to sender as well so the client can
+    // reconcile immediately (prevents optimistic drift and hash mismatches).
+    if (conn?.open) {
+      conn.send(authoritativeUpdate);
+    }
+    broadcastNet(authoritativeUpdate, conn.peer);
   }
 
   function applyRemotePlayerUpdate(message) {
@@ -33295,17 +33424,28 @@
         setSfxVolumeFromPercent(menuSfxVolumeInput.value);
       });
     }
+    const commitMenuPlayerName = () => {
+      if (!menuPlayerNameInput) return;
+      const next = sanitizePlayerName(menuPlayerNameInput.value, "");
+      if (next) {
+        setLocalPlayerName(next, { persist: false, broadcast: true });
+      } else {
+        // Clearing the field intentionally resets to a fresh default for this run.
+        const fresh = generateDefaultPlayerName();
+        setLocalPlayerName(fresh, { persist: false, broadcast: true });
+      }
+    };
+
     if (menuPlayerNameInput) {
       menuPlayerNameInput.addEventListener("input", () => {
         const liveName = sanitizePlayerName(menuPlayerNameInput.value, "");
         menuPlayerNameInput.value = liveName;
-        setLocalPlayerName(liveName, { persist: false, broadcast: true });
       });
       menuPlayerNameInput.addEventListener("change", () => {
-        setLocalPlayerName(menuPlayerNameInput.value, { persist: false, broadcast: true });
+        commitMenuPlayerName();
       });
       menuPlayerNameInput.addEventListener("blur", () => {
-        setLocalPlayerName(menuPlayerNameInput.value, { persist: false, broadcast: true });
+        commitMenuPlayerName();
       });
       menuPlayerNameInput.addEventListener("keydown", (event) => {
         if (event.key === "Enter") {
