@@ -603,6 +603,19 @@
   ];
 
   const CAVE_SIZE = 44;
+  const CAVE_LAYER_COUNT = 3;
+  const CAVE_LAYER_LABELS = Object.freeze(["Layer 1", "Layer 2", "Layer 3"]);
+  const CAVE_DEEP_ENTRANCE_CONFIG = Object.freeze({
+    firstPairChance: 0.72,
+    secondPairChance: 0.44,
+    minPortalDistanceTiles: 8.5,
+    minFromMainEntranceTiles: 6.2,
+    minPortalSeparationTiles: 4.4,
+  });
+  const CAVE_LAYER_TRANSITION = Object.freeze({
+    duration: 0.55,
+    maxAlpha: 0.72,
+  });
 
   const SAVE_KEY = "island_survival_save_v1";
   const SAVE_KEY_PREFIX = "island_survival_seed_save_v1:";
@@ -1918,9 +1931,11 @@
     activeStation: null,
     activeChest: null,
     activeCave: null,
+    activeCaveLayer: 0,
     activeHouse: null,
     inCave: false,
     returnPosition: null,
+    caveTransition: null,
     housePlayer: null,
     spawnTile: null,
     timeOfDay: 0,
@@ -2615,12 +2630,9 @@
     const surface = state.surfaceWorld || state.world;
     if (!surface) return [];
     const contexts = [{ label: "surface", world: surface, isSurface: true }];
-    if (Array.isArray(surface.caves)) {
-      for (const cave of surface.caves) {
-        if (!cave?.world) continue;
-        contexts.push({ label: `cave:${cave.id}`, world: cave.world, isSurface: false });
-      }
-    }
+    forEachGeneratedCaveLayerWorld(surface, (caveWorld, cave, layer) => {
+      contexts.push({ label: `cave:${cave.id}:L${layer + 1}`, world: caveWorld, isSurface: false });
+    });
     return contexts;
   }
 
@@ -2911,13 +2923,29 @@
       if (!Number.isInteger(cave.tx) || !Number.isInteger(cave.ty)) {
         qaPushIssue(issues, `[snapshot] cave ${cave.id} missing integer surface tile`);
       }
-      if (!cave.world || typeof cave.world !== "object") {
-        qaPushIssue(issues, `[snapshot] cave ${cave.id} missing world payload`);
+      const layerEntries = Array.isArray(cave.layers) && cave.layers.length > 0
+        ? cave.layers
+        : [{ layer: 0, world: cave.world && typeof cave.world === "object" ? cave.world : cave }];
+      if (layerEntries.length <= 0) {
+        qaPushIssue(issues, `[snapshot] cave ${cave.id} missing layer payloads`);
         continue;
       }
-      for (const key of requiredArrays) {
-        if (!Array.isArray(cave.world[key])) {
-          qaPushIssue(issues, `[snapshot] cave ${cave.id} world.${key} missing array`);
+      for (const layerEntry of layerEntries) {
+        const layer = normalizeCaveLayerIndex(layerEntry?.layer ?? 0);
+        if (!Number.isInteger(layer)) {
+          qaPushIssue(issues, `[snapshot] cave ${cave.id} has invalid layer index`);
+        }
+        const layerWorld = layerEntry?.world && typeof layerEntry.world === "object"
+          ? layerEntry.world
+          : null;
+        if (!layerWorld) {
+          qaPushIssue(issues, `[snapshot] cave ${cave.id} layer ${layer + 1} missing world payload`);
+          continue;
+        }
+        for (const key of requiredArrays) {
+          if (!Array.isArray(layerWorld[key])) {
+            qaPushIssue(issues, `[snapshot] cave ${cave.id} L${layer + 1} world.${key} missing array`);
+          }
         }
       }
     }
@@ -3509,7 +3537,8 @@
     pushWorldEntities(message?.world, "surface");
     if (Array.isArray(message?.caves)) {
       for (const cave of message.caves) {
-        const scope = Number.isInteger(cave?.id) ? `cave:${cave.id}` : "cave:?";
+        const caveLayer = normalizeCaveLayerIndex(cave?.layer ?? 0);
+        const scope = Number.isInteger(cave?.id) ? `cave:${cave.id}:L${caveLayer + 1}` : "cave:?";
         pushWorldEntities(cave?.world, scope);
       }
     }
@@ -3916,11 +3945,9 @@
     }
     const surface = state.surfaceWorld || state.world;
     mpAutotestItemTotalsFromWorld(surface, totals);
-    if (Array.isArray(surface?.caves)) {
-      for (const cave of surface.caves) {
-        mpAutotestItemTotalsFromWorld(cave?.world, totals);
-      }
-    }
+    forEachGeneratedCaveLayerWorld(surface, (caveWorld) => {
+      mpAutotestItemTotalsFromWorld(caveWorld, totals);
+    });
     return totals;
   }
 
@@ -3984,12 +4011,13 @@
       return resources;
     };
 
-    const normalizeDrops = (drops, caveId = null) => {
+    const normalizeDrops = (drops, caveId = null, caveLayer = 0) => {
       if (!Array.isArray(drops)) return [];
       return drops
         .filter((drop) => drop && drop.itemId)
         .map((drop) => ({
           caveId,
+          caveLayer,
           id: Number.isInteger(drop.id) ? drop.id : null,
           itemId: String(drop.itemId),
           qty: Math.max(0, Math.floor(Number(drop.qty) || 0)),
@@ -3998,18 +4026,20 @@
         }))
         .sort((a, b) => {
           if ((a.caveId ?? -1) !== (b.caveId ?? -1)) return (a.caveId ?? -1) - (b.caveId ?? -1);
+          if ((a.caveLayer ?? -1) !== (b.caveLayer ?? -1)) return (a.caveLayer ?? -1) - (b.caveLayer ?? -1);
           if ((a.id ?? -1) !== (b.id ?? -1)) return (a.id ?? -1) - (b.id ?? -1);
           if (a.itemId !== b.itemId) return a.itemId < b.itemId ? -1 : 1;
           return a.qty - b.qty;
         });
     };
 
-    const normalizeMonsters = (monsters, caveId = null) => {
+    const normalizeMonsters = (monsters, caveId = null, caveLayer = 0) => {
       if (!Array.isArray(monsters)) return [];
       return monsters
         .filter((entry) => entry && Number.isInteger(entry.id))
         .map((entry) => ({
           caveId,
+          caveLayer,
           id: entry.id,
           type: String(entry.type || ""),
           x: Number.isFinite(entry.x) ? entry.x : 0,
@@ -4019,16 +4049,18 @@
         }))
         .sort((a, b) => {
           if ((a.caveId ?? -1) !== (b.caveId ?? -1)) return (a.caveId ?? -1) - (b.caveId ?? -1);
+          if ((a.caveLayer ?? -1) !== (b.caveLayer ?? -1)) return (a.caveLayer ?? -1) - (b.caveLayer ?? -1);
           return a.id - b.id;
         });
     };
 
-    const normalizeAnimals = (animals, caveId = null) => {
+    const normalizeAnimals = (animals, caveId = null, caveLayer = 0) => {
       if (!Array.isArray(animals)) return [];
       return animals
         .filter((entry) => entry && Number.isInteger(entry.id))
         .map((entry) => ({
           caveId,
+          caveLayer,
           id: entry.id,
           type: String(entry.type || ""),
           x: Number.isFinite(entry.x) ? entry.x : 0,
@@ -4037,16 +4069,18 @@
         }))
         .sort((a, b) => {
           if ((a.caveId ?? -1) !== (b.caveId ?? -1)) return (a.caveId ?? -1) - (b.caveId ?? -1);
+          if ((a.caveLayer ?? -1) !== (b.caveLayer ?? -1)) return (a.caveLayer ?? -1) - (b.caveLayer ?? -1);
           return a.id - b.id;
         });
     };
 
-    const normalizeVillagers = (villagers, caveId = null) => {
+    const normalizeVillagers = (villagers, caveId = null, caveLayer = 0) => {
       if (!Array.isArray(villagers)) return [];
       return villagers
         .filter((entry) => entry && Number.isInteger(entry.id))
         .map((entry) => ({
           caveId,
+          caveLayer,
           id: entry.id,
           x: Number.isFinite(entry.x) ? entry.x : 0,
           y: Number.isFinite(entry.y) ? entry.y : 0,
@@ -4055,16 +4089,18 @@
         }))
         .sort((a, b) => {
           if ((a.caveId ?? -1) !== (b.caveId ?? -1)) return (a.caveId ?? -1) - (b.caveId ?? -1);
+          if ((a.caveLayer ?? -1) !== (b.caveLayer ?? -1)) return (a.caveLayer ?? -1) - (b.caveLayer ?? -1);
           return a.id - b.id;
         });
     };
 
-    const normalizeProjectiles = (projectiles, caveId = null) => {
+    const normalizeProjectiles = (projectiles, caveId = null, caveLayer = 0) => {
       if (!Array.isArray(projectiles)) return [];
       return projectiles
         .filter((entry) => entry && Number.isInteger(entry.id))
         .map((entry) => ({
           caveId,
+          caveLayer,
           id: entry.id,
           type: String(entry.type || ""),
           x: Number.isFinite(entry.x) ? entry.x : 0,
@@ -4075,16 +4111,18 @@
         }))
         .sort((a, b) => {
           if ((a.caveId ?? -1) !== (b.caveId ?? -1)) return (a.caveId ?? -1) - (b.caveId ?? -1);
+          if ((a.caveLayer ?? -1) !== (b.caveLayer ?? -1)) return (a.caveLayer ?? -1) - (b.caveLayer ?? -1);
           return a.id - b.id;
         });
     };
 
-    const normalizePoisonClouds = (clouds, caveId = null) => {
+    const normalizePoisonClouds = (clouds, caveId = null, caveLayer = 0) => {
       if (!Array.isArray(clouds)) return [];
       return clouds
         .filter((entry) => entry && Number.isInteger(entry.id))
         .map((entry) => ({
           caveId,
+          caveLayer,
           id: entry.id,
           x: Number.isFinite(entry.x) ? entry.x : 0,
           y: Number.isFinite(entry.y) ? entry.y : 0,
@@ -4093,6 +4131,7 @@
         }))
         .sort((a, b) => {
           if ((a.caveId ?? -1) !== (b.caveId ?? -1)) return (a.caveId ?? -1) - (b.caveId ?? -1);
+          if ((a.caveLayer ?? -1) !== (b.caveLayer ?? -1)) return (a.caveLayer ?? -1) - (b.caveLayer ?? -1);
           return a.id - b.id;
         });
     };
@@ -4113,6 +4152,7 @@
           maxHp: Number.isFinite(entry.maxHp) ? Number(entry.maxHp).toFixed(2) : "0.00",
           inCave: !!entry.inCave,
           caveId: Number.isInteger(entry.caveId) ? entry.caveId : null,
+          caveLayer: normalizeCaveLayerIndex(entry.caveLayer ?? 0),
           inHut: !!entry.inHut,
           houseKey: entry.houseKey || null,
           houseX: Number.isFinite(entry.houseX) ? Number(entry.houseX).toFixed(2) : null,
@@ -4179,23 +4219,30 @@
     for (const caveEntry of caveEntries) {
       if (!caveEntry || !Number.isInteger(caveEntry.id)) continue;
       const caveId = caveEntry.id;
-      const caveWorld = caveEntry.world && typeof caveEntry.world === "object"
-        ? caveEntry.world
-        : caveEntry;
-      const caveResources = normalizeResources(caveWorld.resourceStates);
-      for (const res of caveResources) {
-        resources.push({ ...res, caveId });
+      const layerEntries = Array.isArray(caveEntry.layers) && caveEntry.layers.length > 0
+        ? caveEntry.layers
+        : [{ layer: 0, world: caveEntry.world && typeof caveEntry.world === "object" ? caveEntry.world : caveEntry }];
+      for (const layerEntry of layerEntries) {
+        const caveLayer = normalizeCaveLayerIndex(layerEntry?.layer ?? 0);
+        const caveWorld = layerEntry?.world && typeof layerEntry.world === "object"
+          ? layerEntry.world
+          : {};
+        const caveResources = normalizeResources(caveWorld.resourceStates);
+        for (const res of caveResources) {
+          resources.push({ ...res, caveId, caveLayer });
+        }
+        drops.push(...normalizeDrops(caveWorld.drops, caveId, caveLayer));
+        monsters.push(...normalizeMonsters(caveWorld.monsters, caveId, caveLayer));
+        animals.push(...normalizeAnimals(caveWorld.animals, caveId, caveLayer));
+        villagers.push(...normalizeVillagers(caveWorld.villagers, caveId, caveLayer));
+        projectiles.push(...normalizeProjectiles(caveWorld.projectiles, caveId, caveLayer));
+        poisonClouds.push(...normalizePoisonClouds(caveWorld.poisonClouds, caveId, caveLayer));
       }
-      drops.push(...normalizeDrops(caveWorld.drops, caveId));
-      monsters.push(...normalizeMonsters(caveWorld.monsters, caveId));
-      animals.push(...normalizeAnimals(caveWorld.animals, caveId));
-      villagers.push(...normalizeVillagers(caveWorld.villagers, caveId));
-      projectiles.push(...normalizeProjectiles(caveWorld.projectiles, caveId));
-      poisonClouds.push(...normalizePoisonClouds(caveWorld.poisonClouds, caveId));
     }
 
     resources.sort((a, b) => {
       if ((a.caveId ?? -1) !== (b.caveId ?? -1)) return (a.caveId ?? -1) - (b.caveId ?? -1);
+      if ((a.caveLayer ?? -1) !== (b.caveLayer ?? -1)) return (a.caveLayer ?? -1) - (b.caveLayer ?? -1);
       return a.id - b.id;
     });
 
@@ -5122,9 +5169,10 @@
       case "caveTrip": {
         if (!Array.isArray(world.caves) || world.caves.length === 0) return null;
         const cave = world.caves[Math.floor(mpAutotest.rng() * world.caves.length)];
-        if (!cave || !cave.world || !cave.world.entrance) return null;
-        const caveX = (cave.world.entrance.tx + 0.5) * CONFIG.tileSize;
-        const caveY = (cave.world.entrance.ty + 0.5) * CONFIG.tileSize;
+        const caveLayerWorld = cave ? ensureCaveLayerWorld(cave, 0, world) : null;
+        if (!cave || !caveLayerWorld || !caveLayerWorld.entrance) return null;
+        const caveX = (caveLayerWorld.entrance.tx + 0.5) * CONFIG.tileSize;
+        const caveY = (caveLayerWorld.entrance.ty + 0.5) * CONFIG.tileSize;
         descriptor.note = `cave trip cave#${cave.id}`;
         descriptor.ledgerRule = "allowAny";
         descriptor.payloads.push(mpAutotestBuildPlayerUpdatePayload(client, caveX, caveY, {
@@ -5132,11 +5180,11 @@
           caveId: cave.id,
         }));
         const caveWalkTile = findOpenSurfaceTileNear(
-          cave.world,
-          cave.world.entrance.tx + Math.floor((mpAutotest.rng() - 0.5) * 6),
-          cave.world.entrance.ty + Math.floor((mpAutotest.rng() - 0.5) * 6),
+          caveLayerWorld,
+          caveLayerWorld.entrance.tx + Math.floor((mpAutotest.rng() - 0.5) * 6),
+          caveLayerWorld.entrance.ty + Math.floor((mpAutotest.rng() - 0.5) * 6),
           10
-        ) || cave.world.entrance;
+        ) || caveLayerWorld.entrance;
         const caveWalkX = (caveWalkTile.tx + 0.5) * CONFIG.tileSize;
         const caveWalkY = (caveWalkTile.ty + 0.5) * CONFIG.tileSize;
         descriptor.payloads.push(
@@ -5153,12 +5201,13 @@
             }
           )
         );
-        if (Array.isArray(cave.world.resources) && cave.world.resources.length > 0) {
+        if (Array.isArray(caveLayerWorld.resources) && caveLayerWorld.resources.length > 0) {
           descriptor.payloads.push({
             type: "harvest",
             resId: 0,
             world: "cave",
             caveId: cave.id,
+            caveLayer: 0,
             unlocks: normalizeUnlocks({
               pickaxe: true,
               orePickaxe: true,
@@ -5457,7 +5506,7 @@
       clientById.set(entry.id, entry);
     }
     const ids = [...new Set([...hostById.keys(), ...clientById.keys()])].sort();
-    const fields = ["x", "y", "hp", "maxHp", "inCave", "caveId", "inHut", "houseKey", "houseX", "houseY"];
+    const fields = ["x", "y", "hp", "maxHp", "inCave", "caveId", "caveLayer", "inHut", "houseKey", "houseX", "houseY"];
     const lines = [];
     for (const id of ids) {
       const hostEntry = hostById.get(id) || null;
@@ -5559,11 +5608,9 @@
 
     const surface = state.surfaceWorld || state.world;
     checkWorld(surface, "surface");
-    if (Array.isArray(surface?.caves)) {
-      for (const cave of surface.caves) {
-        checkWorld(cave?.world, `cave:${cave?.id ?? "?"}`);
-      }
-    }
+    forEachGeneratedCaveLayerWorld(surface, (caveWorld, cave, layer) => {
+      checkWorld(caveWorld, `cave:${cave?.id ?? "?"}:L${layer + 1}`);
+    });
     return issues;
   }
 
@@ -7831,11 +7878,18 @@
     if (world === surface) {
       return `surface:${surface?.seed || "seed"}`;
     }
-    if (state.activeCave?.world === world) {
-      return `cave:${state.activeCave?.id ?? "active"}`;
+    if (state.inCave && world === state.world) {
+      const caveId = Number.isInteger(state.activeCave?.id) ? state.activeCave.id : "active";
+      const layer = normalizeCaveLayerIndex(state.activeCaveLayer ?? 0);
+      return `cave:${caveId}:L${layer + 1}`;
     }
-    const cave = surface?.caves?.find((entry) => entry?.world === world);
-    if (cave) return `cave:${cave.id}`;
+    if (surface) {
+      const generated = collectGeneratedCaveLayerWorlds(surface);
+      const match = generated.find((entry) => entry.world === world);
+      if (match) {
+        return `cave:${match.cave?.id ?? "unknown"}:L${normalizeCaveLayerIndex(match.layer) + 1}`;
+      }
+    }
     return `world:${world.size || 0}`;
   }
 
@@ -9430,6 +9484,7 @@
       houseY: player.houseY,
       inCave: player.inCave,
       caveId: player.caveId,
+      caveLayer: normalizeCaveLayerIndex(player.caveLayer ?? 0),
       inventoryFingerprint: typeof player.inventoryFingerprint === "string"
         ? player.inventoryFingerprint
         : "",
@@ -9460,6 +9515,7 @@
       houseY: null,
       inCave: false,
       caveId: null,
+      caveLayer: 0,
       inventoryFingerprint: "",
       inventoryTotals: Object.create(null),
     };
@@ -9654,7 +9710,11 @@
   function getPlayersSnapshot() {
     const players = [];
     if (state.player) {
-      const localWorld = getPlayerWorldForSync(state.inCave, state.activeCave?.id ?? null);
+      const localWorld = getPlayerWorldForSync(
+        state.inCave,
+        state.activeCave?.id ?? null,
+        state.activeCaveLayer ?? 0
+      );
       const localPos = clampPositionToWorldBounds(
         localWorld,
         state.player.x,
@@ -9681,13 +9741,14 @@
         houseY: state.player.inHut ? state.housePlayer?.y ?? null : null,
         inCave: state.inCave,
         caveId: state.activeCave?.id ?? null,
+        caveLayer: state.inCave ? normalizeCaveLayerIndex(state.activeCaveLayer) : 0,
         unlocks: normalizeUnlocks(state.player.unlocks),
         inventoryFingerprint: mpAutotestInventoryFingerprintFromSlots(state.inventory),
         inventoryTotals: getLocalInventoryTotalsPayload(),
       });
     }
     for (const [id, player] of net.players.entries()) {
-      const playerWorld = getPlayerWorldForSync(player?.inCave, player?.caveId);
+      const playerWorld = getPlayerWorldForSync(player?.inCave, player?.caveId, player?.caveLayer ?? 0);
       const remotePos = clampPositionToWorldBounds(
         playerWorld,
         player?.x,
@@ -9714,6 +9775,7 @@
         houseY: player.houseY ?? null,
         inCave: player.inCave,
         caveId: player.caveId,
+        caveLayer: normalizeCaveLayerIndex(player.caveLayer ?? 0),
         unlocks: normalizeUnlocks(player.unlocks),
         inventoryFingerprint: typeof player.inventoryFingerprint === "string"
           ? player.inventoryFingerprint
@@ -10121,6 +10183,20 @@
   function buildSnapshot() {
     const surface = state.surfaceWorld || state.world;
     const seq = net.isHost ? nextNetSequence("snapshotSeq") : null;
+    const serializeCaveLayers = (cave) => {
+      if (!cave) return [];
+      const layers = [];
+      const layerWorlds = Array.isArray(cave.layers) ? cave.layers : [];
+      for (let layer = 0; layer < CAVE_LAYER_COUNT; layer += 1) {
+        const layerWorld = layerWorlds[layer] || (layer === 0 ? cave.world : null);
+        if (!layerWorld) continue;
+        layers.push({
+          layer,
+          world: serializeWorldState(layerWorld),
+        });
+      }
+      return layers;
+    };
     return {
       type: "snapshot",
       seq,
@@ -10130,14 +10206,21 @@
       isNight: state.isNight,
       gameWon: state.gameWon,
       world: serializeWorldState(surface),
-      caves: surface.caves?.map((cave) => ({
-        id: cave.id,
-        tx: cave.tx,
-        ty: cave.ty,
-        spawnedByPlayer: !!cave.spawnedByPlayer,
-        hostileBlocked: !!cave.hostileBlocked,
-        world: serializeWorldState(cave.world),
-      })) ?? [],
+      caves: surface.caves?.map((cave) => {
+        const layers = serializeCaveLayers(cave);
+        const layerZeroWorld = layers.find((entry) => normalizeCaveLayerIndex(entry.layer) === 0)?.world
+          || serializeWorldState(ensureCaveLayerWorld(cave, 0, surface));
+        return {
+          id: cave.id,
+          tx: cave.tx,
+          ty: cave.ty,
+          spawnedByPlayer: !!cave.spawnedByPlayer,
+          hostileBlocked: !!cave.hostileBlocked,
+          linkConfig: getNormalizedCaveLinkConfig(cave, surface),
+          world: layerZeroWorld,
+          layers,
+        };
+      }) ?? [],
       structures: serializeStructuresList(),
       players: getPlayersSnapshot(),
     };
@@ -10265,17 +10348,27 @@
     const surface = state.surfaceWorld || state.world;
     if (!surface) return null;
     const seq = net.isHost ? nextNetSequence("motionSeq") : null;
+    const caveMotions = [];
+    for (const cave of surface.caves ?? []) {
+      if (!cave) continue;
+      const layerWorlds = Array.isArray(cave.layers) ? cave.layers : [];
+      for (let layer = 0; layer < CAVE_LAYER_COUNT; layer += 1) {
+        const layerWorld = layerWorlds[layer] || (layer === 0 ? cave.world : null);
+        if (!layerWorld) continue;
+        if (getPlayersForWorld(layerWorld).length <= 0) continue;
+        caveMotions.push({
+          id: cave.id,
+          layer,
+          world: serializeWorldMotion(layerWorld),
+        });
+      }
+    }
     return {
       type: "motion",
       seq,
       seed: surface.seed,
       world: serializeWorldMotion(surface),
-      caves: (surface.caves ?? [])
-        .filter((cave) => cave?.world && getPlayersForWorld(cave.world).length > 0)
-        .map((cave) => ({
-          id: cave.id,
-          world: serializeWorldMotion(cave.world),
-        })),
+      caves: caveMotions,
       robots: serializeRobotMotion(),
       ships: serializeShipMotion(),
     };
@@ -10407,8 +10500,11 @@
       for (const caveMotion of message.caves) {
         if (!caveMotion || typeof caveMotion.id !== "number") continue;
         const cave = state.surfaceWorld.caves.find((entry) => entry.id === caveMotion.id);
-        if (!cave?.world) continue;
-        applyMotionWorld(cave.world, caveMotion.world);
+        if (!cave) continue;
+        const layer = normalizeCaveLayerIndex(caveMotion.layer ?? 0);
+        const caveWorld = ensureCaveLayerWorld(cave, layer, state.surfaceWorld);
+        if (!caveWorld) continue;
+        applyMotionWorld(caveWorld, caveMotion.world);
       }
     }
     applyRobotMotion(message.robots);
@@ -10599,6 +10695,7 @@
           houseY: Number.isFinite(entry.houseY) ? entry.houseY : (prev.houseY ?? null),
           inCave: !!entry.inCave,
           caveId: entry.caveId ?? null,
+          caveLayer: normalizeCaveLayerIndex(entry.caveLayer ?? prev.caveLayer ?? 0),
           unlocks: normalizeUnlocks(entry.unlocks ?? prev.unlocks),
           inventoryFingerprint: staleInventoryFingerprint,
           inventoryTotals: staleInventoryTotals,
@@ -10613,7 +10710,7 @@
       }
       const normalizedColor = normalizeHexColor(entry.color) || normalizeHexColor(prev?.color) || "#6fa8ff";
       const nextMaxHp = normalizePlayerMaxHpValue(entry.maxHp, prev?.maxHp ?? 100);
-      const remoteWorld = getPlayerWorldForSync(!!entry.inCave, entry.caveId ?? null);
+      const remoteWorld = getPlayerWorldForSync(!!entry.inCave, entry.caveId ?? null, entry.caveLayer ?? 0);
       const normalizedRemotePos = clampPositionToWorldBounds(
         remoteWorld,
         Number.isFinite(entry.x) ? entry.x : prev?.x,
@@ -10645,6 +10742,7 @@
         houseY: Number.isFinite(entry.houseY) ? entry.houseY : null,
         inCave: !!entry.inCave,
         caveId: entry.caveId ?? null,
+        caveLayer: normalizeCaveLayerIndex(entry.caveLayer ?? prev?.caveLayer ?? 0),
         unlocks: normalizeUnlocks(entry.unlocks ?? prev?.unlocks),
         inventoryFingerprint,
         inventoryTotals,
@@ -10667,15 +10765,24 @@
       const existingById = world.caves.find((cave) => cave.id === entry.id);
       if (existingById) {
         if (entry.spawnedByPlayer) existingById.spawnedByPlayer = true;
+        if (entry.linkConfig && typeof entry.linkConfig === "object") {
+          existingById.linkConfig = {
+            toLayer2: clamp(Math.floor(entry.linkConfig.toLayer2 ?? existingById.linkConfig?.toLayer2 ?? 2), 2, 4),
+            toLayer3: clamp(Math.floor(entry.linkConfig.toLayer3 ?? existingById.linkConfig?.toLayer3 ?? 1), 1, 3),
+          };
+        }
         if (typeof entry.hostileBlocked === "boolean") {
           existingById.hostileBlocked = entry.hostileBlocked;
         } else {
           existingById.hostileBlocked = shouldBlockCaveHostilesForSurfaceTile(world, existingById.tx, existingById.ty);
         }
-        if (existingById.hostileBlocked && existingById.world) {
-          existingById.world.monsters = [];
-          existingById.world.projectiles = [];
-          existingById.world.poisonClouds = [];
+        if (existingById.hostileBlocked) {
+          const generatedLayers = getGeneratedCaveLayerWorldEntries(existingById);
+          for (const layerEntry of generatedLayers) {
+            layerEntry.world.monsters = [];
+            layerEntry.world.projectiles = [];
+            layerEntry.world.poisonClouds = [];
+          }
         }
         continue;
       }
@@ -10688,6 +10795,7 @@
       if (world.caves.some((cave) => cave.tx === tx && cave.ty === ty)) continue;
       addSurfaceCave(world, tx, ty, entry.id, {
         spawnedByPlayer: !!entry.spawnedByPlayer,
+        linkConfig: entry.linkConfig,
         hostileBlocked: typeof entry.hostileBlocked === "boolean"
           ? entry.hostileBlocked
           : shouldBlockCaveHostilesForSurfaceTile(world, tx, ty),
@@ -10709,6 +10817,9 @@
     if (state.sleepSequence) {
       state.sleepSequence = null;
     }
+    if (state.caveTransition) {
+      state.caveTransition = null;
+    }
     if (!state.surfaceWorld || state.surfaceWorld.seed !== snapshot.seed) {
       closeStationMenu();
       closeChest();
@@ -10722,9 +10833,11 @@
       state.world = world;
       state.inCave = false;
       state.activeCave = null;
+      state.activeCaveLayer = 0;
       state.activeHouse = null;
       state.housePlayer = null;
       state.sleepSequence = null;
+      state.caveTransition = null;
       state.returnPosition = null;
       state.ambientFish = [];
       state.ambientFishSpawnTimer = 0;
@@ -10805,22 +10918,39 @@
       for (const cave of world.caves) {
         const caveSnapshot = snapshot.caves.find((entry) => entry.id === cave.id);
         if (!caveSnapshot) continue;
+        if (caveSnapshot.linkConfig && typeof caveSnapshot.linkConfig === "object") {
+          cave.linkConfig = {
+            toLayer2: clamp(Math.floor(caveSnapshot.linkConfig.toLayer2 ?? cave.linkConfig?.toLayer2 ?? 2), 2, 4),
+            toLayer3: clamp(Math.floor(caveSnapshot.linkConfig.toLayer3 ?? cave.linkConfig?.toLayer3 ?? 1), 1, 3),
+          };
+        }
         cave.hostileBlocked = typeof caveSnapshot.hostileBlocked === "boolean"
           ? caveSnapshot.hostileBlocked
           : shouldBlockCaveHostilesForSurfaceTile(world, cave.tx, cave.ty);
-        applyResourceStates(cave.world, caveSnapshot.world?.resourceStates ?? []);
-        applyRespawnTasks(cave.world, caveSnapshot.world?.respawnTasks ?? []);
-        applyDrops(cave.world, caveSnapshot.world?.drops ?? []);
-        applyAnimals(cave.world, caveSnapshot.world?.animals ?? []);
-        applyVillagers(cave.world, caveSnapshot.world?.villagers ?? []);
-        cave.world.monsters = buildMonstersFromSnapshot(cave.world.monsters, caveSnapshot.world?.monsters, cave.world);
-        cave.world.projectiles = buildProjectilesFromSnapshot(cave.world.projectiles, caveSnapshot.world?.projectiles, cave.world);
-        cave.world.poisonClouds = buildPoisonCloudsFromSnapshot(cave.world.poisonClouds, caveSnapshot.world?.poisonClouds);
-        cave.world.nextPoisonCloudId = cave.world.poisonClouds.reduce((max, cloud) => Math.max(max, (cloud.id || 0) + 1), 1);
+        const layerSnapshots = Array.isArray(caveSnapshot.layers) && caveSnapshot.layers.length > 0
+          ? caveSnapshot.layers
+          : [{ layer: 0, world: caveSnapshot.world && typeof caveSnapshot.world === "object" ? caveSnapshot.world : caveSnapshot }];
+        for (const layerSnapshot of layerSnapshots) {
+          if (!layerSnapshot || typeof layerSnapshot !== "object") continue;
+          const layer = normalizeCaveLayerIndex(layerSnapshot.layer ?? 0);
+          const caveWorld = ensureCaveLayerWorld(cave, layer, world);
+          if (!caveWorld) continue;
+          applySerializedWorldState(caveWorld, layerSnapshot.world ?? layerSnapshot, {
+            applyAnimals: true,
+            applyVillagers: true,
+          });
+          if (isCaveHostilesBlocked(world, cave)) {
+            caveWorld.monsters = [];
+            caveWorld.projectiles = [];
+            caveWorld.poisonClouds = [];
+          }
+        }
         if (isCaveHostilesBlocked(world, cave)) {
-          cave.world.monsters = [];
-          cave.world.projectiles = [];
-          cave.world.poisonClouds = [];
+          for (const layerEntry of getGeneratedCaveLayerWorldEntries(cave)) {
+            layerEntry.world.monsters = [];
+            layerEntry.world.projectiles = [];
+            layerEntry.world.poisonClouds = [];
+          }
         }
       }
     }
@@ -10833,11 +10963,12 @@
     updateTimeUI();
     seedDisplay.textContent = `Seed: ${snapshot.seed}`;
     applyPlayersSnapshot(snapshot.players);
-    if (state.inCave && state.activeCave) {
-      state.world = state.activeCave.world;
-    } else if (state.surfaceWorld) {
-      state.world = state.surfaceWorld;
-    }
+    const syncedWorld = getPlayerWorldForSync(
+      state.inCave,
+      state.activeCave?.id ?? null,
+      state.activeCaveLayer ?? 0
+    );
+    state.world = syncedWorld || state.surfaceWorld || state.world;
     updateObjectiveUI();
     if (state.gameWon && !wasWon && !state.winSequencePlayed) {
       state.winPlayerPos = state.player ? { x: state.player.x, y: state.player.y } : state.winPlayerPos;
@@ -10896,6 +11027,8 @@
     net.resyncTimer = NET_CONFIG.resyncRequestCooldown;
     state.inCave = false;
     state.activeCave = null;
+    state.activeCaveLayer = 0;
+    state.caveTransition = null;
     state.activeHouse = null;
     state.housePlayer = null;
     state.world = state.surfaceWorld || state.world;
@@ -11005,7 +11138,8 @@
     player.houseY = Number.isFinite(message.houseY) ? message.houseY : null;
     player.inCave = !!message.inCave;
     player.caveId = message.caveId ?? null;
-    const playerWorld = getPlayerWorldForSync(player.inCave, player.caveId);
+    player.caveLayer = normalizeCaveLayerIndex(message.caveLayer ?? player.caveLayer ?? 0);
+    const playerWorld = getPlayerWorldForSync(player.inCave, player.caveId, player.caveLayer ?? 0);
     const normalizedPos = clampPositionToWorldBounds(playerWorld, player.x, player.y, player.x, player.y);
     player.x = normalizedPos.x;
     player.y = normalizedPos.y;
@@ -11034,6 +11168,7 @@
       houseY: player.houseY,
       inCave: player.inCave,
       caveId: player.caveId,
+      caveLayer: normalizeCaveLayerIndex(player.caveLayer ?? 0),
       inventoryFingerprint: typeof player.inventoryFingerprint === "string"
         ? player.inventoryFingerprint
         : "",
@@ -11099,7 +11234,7 @@
     }
     const syncedColor = normalizeHexColor(message.color) || normalizeHexColor(current.color) || "#6fa8ff";
     const nextMaxHp = normalizePlayerMaxHpValue(message.maxHp, current.maxHp ?? 100);
-    const remoteWorld = getPlayerWorldForSync(!!message.inCave, message.caveId ?? null);
+    const remoteWorld = getPlayerWorldForSync(!!message.inCave, message.caveId ?? null, message.caveLayer ?? 0);
     const normalizedPos = clampPositionToWorldBounds(
       remoteWorld,
       Number.isFinite(message.x) ? message.x : current.x,
@@ -11132,6 +11267,7 @@
       houseY: Number.isFinite(message.houseY) ? message.houseY : (current.houseY ?? null),
       inCave: !!message.inCave,
       caveId: message.caveId ?? null,
+      caveLayer: normalizeCaveLayerIndex(message.caveLayer ?? current.caveLayer ?? 0),
       inventoryFingerprint,
       inventoryTotals,
       renderX: current.renderX ?? (Number.isFinite(message.x) ? message.x : (current.x ?? 0)),
@@ -11363,7 +11499,9 @@
       if (!player.inCave) return null;
       const caveId = Number(message?.caveId);
       if (!Number.isInteger(caveId) || caveId !== player.caveId) return null;
-      return getCaveWorld(caveId);
+      const caveLayer = normalizeCaveLayerIndex(message?.caveLayer ?? player.caveLayer ?? 0);
+      if (caveLayer !== normalizeCaveLayerIndex(player.caveLayer ?? 0)) return null;
+      return getCaveWorld(caveId, caveLayer);
     }
     if (player.inCave) return null;
     return state.surfaceWorld;
@@ -12108,8 +12246,11 @@
 
   function shouldPlayWorldSfx(world, x, y, radius = CONFIG.tileSize * 15) {
     if (!state.player || !world) return false;
-    const localWorld = state.inCave ? state.activeCave?.world : (state.surfaceWorld || state.world);
-    if (localWorld !== world) return false;
+    const localWorld = state.inCave
+      ? getPlayerWorldForSync(true, state.activeCave?.id ?? null, state.activeCaveLayer ?? 0)
+      : (state.surfaceWorld || state.world);
+    const resolvedLocalWorld = localWorld || state.world;
+    if (resolvedLocalWorld !== world) return false;
     if (!Number.isFinite(x) || !Number.isFinite(y)) return true;
     return Math.hypot(state.player.x - x, state.player.y - y) <= radius;
   }
@@ -12174,6 +12315,8 @@
     state.sleepSequence = null;
     state.inCave = false;
     state.activeCave = null;
+    state.activeCaveLayer = 0;
+    state.caveTransition = null;
     state.world = state.surfaceWorld || state.world;
     state.player.attackTimer = 0;
     clearPoisonStatus(state.player);
@@ -12216,10 +12359,11 @@
     return { x: (base.x + 0.5) * CONFIG.tileSize, y: (base.y + 0.5) * CONFIG.tileSize };
   }
 
-  function getCaveWorld(caveId) {
+  function getCaveWorld(caveId, layerIndex = 0) {
     if (!state.surfaceWorld || !state.surfaceWorld.caves) return null;
     const cave = state.surfaceWorld.caves.find((entry) => entry.id === caveId);
-    return cave ? cave.world : null;
+    if (!cave) return null;
+    return ensureCaveLayerWorld(cave, layerIndex, state.surfaceWorld);
   }
 
   function sanitizeInventoryTotalsPayload(value) {
@@ -12271,6 +12415,7 @@
       Number.isFinite(payload.houseY) ? Number(payload.houseY).toFixed(2) : "",
       payload.inCave ? 1 : 0,
       Number.isInteger(payload.caveId) ? payload.caveId : "",
+      payload.inCave ? normalizeCaveLayerIndex(payload.caveLayer ?? 0) : "",
       unlocks,
       payload.inventoryFingerprint || "",
       getInventoryTotalsFingerprint(payload.inventoryTotals),
@@ -12279,7 +12424,11 @@
 
   function sendPlayerUpdate() {
     if (!net.enabled || !state.player) return;
-    const playerWorld = getPlayerWorldForSync(state.inCave, state.activeCave?.id ?? null);
+    const playerWorld = getPlayerWorldForSync(
+      state.inCave,
+      state.activeCave?.id ?? null,
+      state.activeCaveLayer ?? 0
+    );
     const clampedPos = clampPositionToWorldBounds(
       playerWorld,
       state.player.x,
@@ -12305,6 +12454,7 @@
       houseY: state.player.inHut ? state.housePlayer?.y ?? null : null,
       inCave: state.inCave,
       caveId: state.activeCave?.id ?? null,
+      caveLayer: state.inCave ? normalizeCaveLayerIndex(state.activeCaveLayer) : 0,
       inventoryFingerprint: mpAutotestInventoryFingerprintFromSlots(state.inventory),
       inventoryTotals: getLocalInventoryTotalsPayload(),
     };
@@ -12841,11 +12991,10 @@
       const surface = state.surfaceWorld || state.world;
       if (surface) {
         clientWorlds.push(surface);
-        if (Array.isArray(surface.caves)) {
-          for (const cave of surface.caves) {
-            if (cave?.world) clientWorlds.push(cave.world);
-          }
-        }
+        forEachGeneratedCaveLayerWorld(surface, (caveWorld) => {
+          if (!caveWorld || clientWorlds.includes(caveWorld)) return;
+          clientWorlds.push(caveWorld);
+        });
       }
       for (const world of clientWorlds) {
         if (Array.isArray(world.monsters)) {
@@ -12968,12 +13117,9 @@
     const surface = state.surfaceWorld || state.world;
     if (!surface) return;
     alignWorldEntityRenderPositions(surface);
-    if (Array.isArray(surface.caves)) {
-      for (const cave of surface.caves) {
-        if (!cave?.world) continue;
-        alignWorldEntityRenderPositions(cave.world);
-      }
-    }
+    forEachGeneratedCaveLayerWorld(surface, (caveWorld) => {
+      alignWorldEntityRenderPositions(caveWorld);
+    });
   }
 
   function seedToInt(seedStr) {
@@ -13096,9 +13242,9 @@
     return { x: normalized.x, y: normalized.y };
   }
 
-  function getPlayerWorldForSync(inCave, caveId) {
+  function getPlayerWorldForSync(inCave, caveId, caveLayer = 0) {
     if (inCave) {
-      const caveWorld = getCaveWorld(caveId);
+      const caveWorld = getCaveWorld(caveId, caveLayer);
       if (caveWorld) return caveWorld;
     }
     return state.surfaceWorld || state.world || null;
@@ -13128,7 +13274,11 @@
     const opts = options || {};
     const force = !!opts.force;
     if (!force && (state.player.inHut || state.inCave)) return;
-    const localWorld = getPlayerWorldForSync(state.inCave, state.activeCave?.id ?? null);
+    const localWorld = getPlayerWorldForSync(
+      state.inCave,
+      state.activeCave?.id ?? null,
+      state.activeCaveLayer ?? 0
+    );
     const normalized = clampPositionToWorldBounds(
       localWorld,
       Number.isFinite(x) ? x : state.player.x,
@@ -14043,10 +14193,12 @@
       cave.ty = ty;
       used.add(`${tx},${ty}`);
       cave.hostileBlocked = shouldBlockCaveHostilesForSurfaceTile(world, tx, ty);
-      if (cave.hostileBlocked && cave.world) {
-        cave.world.monsters = [];
-        cave.world.projectiles = [];
-        cave.world.poisonClouds = [];
+      if (cave.hostileBlocked) {
+        for (const layerEntry of getGeneratedCaveLayerWorldEntries(cave)) {
+          layerEntry.world.monsters = [];
+          layerEntry.world.projectiles = [];
+          layerEntry.world.poisonClouds = [];
+        }
       }
     }
   }
@@ -14377,11 +14529,75 @@
     return pickMonsterType(rng);
   }
 
+  function normalizeCaveLayerIndex(value) {
+    const parsed = Number.isFinite(Number(value)) ? Math.floor(Number(value)) : 0;
+    return clamp(parsed, 0, CAVE_LAYER_COUNT - 1);
+  }
+
+  function buildCaveLayerLinkConfig(seed, caveId) {
+    const rng = makeRng((seed ^ ((caveId + 1) * 1931) ^ 0x6e7d1) >>> 0);
+    return {
+      toLayer2: 2 + Math.floor(rng() * 3),
+      toLayer3: 1 + Math.floor(rng() * 3),
+    };
+  }
+
+  function getCaveLayerPortalRequests(layerIndex, linkConfig) {
+    const layer = normalizeCaveLayerIndex(layerIndex);
+    const requests = [];
+    const toLayer2 = clamp(Math.floor(linkConfig?.toLayer2 ?? 2), 2, 4);
+    const toLayer3 = clamp(Math.floor(linkConfig?.toLayer3 ?? 1), 1, 3);
+    if (layer === 0) {
+      for (let slot = 0; slot < toLayer2; slot += 1) {
+        requests.push({
+          direction: "down",
+          targetLayer: 1,
+          slot,
+        });
+      }
+      return requests;
+    }
+    if (layer === 1) {
+      for (let slot = 0; slot < toLayer2; slot += 1) {
+        requests.push({
+          direction: "up",
+          targetLayer: 0,
+          slot,
+        });
+      }
+      for (let slot = 0; slot < toLayer3; slot += 1) {
+        requests.push({
+          direction: "down",
+          targetLayer: 2,
+          slot,
+        });
+      }
+      return requests;
+    }
+    for (let slot = 0; slot < toLayer3; slot += 1) {
+      requests.push({
+        direction: "up",
+        targetLayer: 1,
+        slot,
+      });
+    }
+    return requests;
+  }
+
+  function getCaveLayerSeed(seed, caveId, layerIndex) {
+    const layer = normalizeCaveLayerIndex(layerIndex);
+    return seed + caveId * 7919 + layer * 3571;
+  }
+
   function generateCaveWorld(seed, caveId, options = null) {
     const size = CAVE_SIZE;
-    const caveSeed = seed + caveId * 7919;
+    const layerIndex = normalizeCaveLayerIndex(options?.layerIndex ?? 0);
+    const linkConfig = options?.linkConfig || buildCaveLayerLinkConfig(seed, caveId);
+    const caveSeed = getCaveLayerSeed(seed, caveId, layerIndex);
     const rng = makeRng(caveSeed);
     const spawnHostiles = options?.spawnHostiles !== false;
+    const layerDangerScale = 1 + layerIndex * 0.28;
+    const layerResourceScale = 1 + layerIndex * 0.22;
     const tiles = new Array(size * size).fill(0);
     const shades = new Array(size * size).fill(1);
     const resources = [];
@@ -14390,62 +14606,72 @@
     const landmarks = [];
     const entrance = {
       tx: clamp(Math.floor(size / 2 + (rng() - 0.5) * 8), 4, size - 5),
-      ty: size - 3 - Math.floor(rng() * 2),
+      ty: size - 3 - Math.floor(rng() * 3),
     };
     const styleRoll = rng();
     const caveStyle = styleRoll < 0.33
       ? {
-          roomCountMin: 10,
-          roomCountMax: 14,
-          roomRadiusMin: 1.8,
-          roomRadiusMax: 3.1,
-          roomStretchMin: 0.95,
-          roomStretchMax: 1.5,
-          tunnelRadiusMin: 0.72,
-          tunnelRadiusMax: 0.94,
-          branchChance: 0.82,
-          branchLengthMin: 4,
-          branchLengthMax: 9,
-          loopLinksMin: 3,
-          loopLinksMax: 6,
-          roomLobeChance: 0.42,
-          openTrimChance: 0.28,
+          roomCountMin: 13,
+          roomCountMax: 19,
+          roomRadiusMin: 1.45,
+          roomRadiusMax: 2.5,
+          roomStretchMin: 0.9,
+          roomStretchMax: 1.45,
+          tunnelRadiusMin: 0.56,
+          tunnelRadiusMax: 0.82,
+          branchChance: 0.9,
+          branchLengthMin: 6,
+          branchLengthMax: 13,
+          loopLinksMin: 5,
+          loopLinksMax: 9,
+          roomLobeChance: 0.32,
+          openTrimChance: 0.41,
+          mazeCutChance: 0.12,
         }
       : styleRoll < 0.66
         ? {
-            roomCountMin: 11,
-            roomCountMax: 16,
-            roomRadiusMin: 2.0,
-            roomRadiusMax: 3.4,
-            roomStretchMin: 0.9,
-            roomStretchMax: 1.6,
-            tunnelRadiusMin: 0.76,
-            tunnelRadiusMax: 1.02,
-            branchChance: 0.74,
-            branchLengthMin: 5,
-            branchLengthMax: 10,
-            loopLinksMin: 4,
-            loopLinksMax: 7,
-            roomLobeChance: 0.48,
-            openTrimChance: 0.24,
-          }
-        : {
             roomCountMin: 12,
             roomCountMax: 18,
-            roomRadiusMin: 1.7,
-            roomRadiusMax: 2.9,
+            roomRadiusMin: 1.55,
+            roomRadiusMax: 2.75,
+            roomStretchMin: 0.88,
+            roomStretchMax: 1.5,
+            tunnelRadiusMin: 0.6,
+            tunnelRadiusMax: 0.86,
+            branchChance: 0.85,
+            branchLengthMin: 7,
+            branchLengthMax: 14,
+            loopLinksMin: 6,
+            loopLinksMax: 10,
+            roomLobeChance: 0.36,
+            openTrimChance: 0.36,
+            mazeCutChance: 0.1,
+          }
+        : {
+            roomCountMin: 14,
+            roomCountMax: 21,
+            roomRadiusMin: 1.35,
+            roomRadiusMax: 2.35,
             roomStretchMin: 0.85,
-            roomStretchMax: 1.45,
-            tunnelRadiusMin: 0.68,
-            tunnelRadiusMax: 0.9,
-            branchChance: 0.9,
-            branchLengthMin: 6,
-            branchLengthMax: 12,
-            loopLinksMin: 5,
-            loopLinksMax: 8,
-            roomLobeChance: 0.35,
-            openTrimChance: 0.32,
+            roomStretchMax: 1.42,
+            tunnelRadiusMin: 0.52,
+            tunnelRadiusMax: 0.78,
+            branchChance: 0.95,
+            branchLengthMin: 8,
+            branchLengthMax: 15,
+            loopLinksMin: 7,
+            loopLinksMax: 11,
+            roomLobeChance: 0.26,
+            openTrimChance: 0.46,
+            mazeCutChance: 0.15,
           };
+    caveStyle.tunnelRadiusMin = Math.max(0.46, caveStyle.tunnelRadiusMin - layerIndex * 0.04);
+    caveStyle.tunnelRadiusMax = Math.max(
+      caveStyle.tunnelRadiusMin + 0.1,
+      caveStyle.tunnelRadiusMax - layerIndex * 0.04
+    );
+    caveStyle.openTrimChance = clamp(caveStyle.openTrimChance + layerIndex * 0.05, 0.18, 0.62);
+    caveStyle.mazeCutChance = clamp(caveStyle.mazeCutChance + layerIndex * 0.03, 0.08, 0.28);
 
     function carveCircle(cx, cy, radius) {
       for (let y = Math.floor(cy - radius); y <= Math.ceil(cy + radius); y += 1) {
@@ -14703,10 +14929,31 @@
             if (ox === 0 || oy === 0) cardinalOpen += 1;
           }
         }
+        const mazeNoise = rand2d(x * 9 + 17, y * 11 + 31, caveSeed + 3361);
         if (
           (openNeighbors >= 7 && rng() < caveStyle.openTrimChance)
-          || (openNeighbors >= 6 && cardinalOpen >= 4 && rng() < caveStyle.openTrimChance * 0.42)
+          || (openNeighbors >= 6 && cardinalOpen >= 4 && rng() < caveStyle.openTrimChance * 0.45)
+          || (openNeighbors >= 5 && cardinalOpen >= 4 && mazeNoise < caveStyle.mazeCutChance)
         ) {
+          tiles[idx] = 0;
+        }
+      }
+    }
+
+    // Add thin crosscuts and narrow chokepoints so caves read as tunnels.
+    for (let y = 3; y < size - 3; y += 1) {
+      for (let x = 3; x < size - 3; x += 1) {
+        const idx = tileIndex(x, y, size);
+        if (!tiles[idx]) continue;
+        if (Math.hypot(x - entrance.tx, y - entrance.ty) < 4.2) continue;
+        const north = tiles[tileIndex(x, y - 1, size)] === 1;
+        const south = tiles[tileIndex(x, y + 1, size)] === 1;
+        const east = tiles[tileIndex(x + 1, y, size)] === 1;
+        const west = tiles[tileIndex(x - 1, y, size)] === 1;
+        const ring = (north ? 1 : 0) + (south ? 1 : 0) + (east ? 1 : 0) + (west ? 1 : 0);
+        if (ring < 3) continue;
+        const cutNoise = rand2d(x * 13 + 7, y * 7 + 41, caveSeed + 3721);
+        if (cutNoise < caveStyle.mazeCutChance * 0.8) {
           tiles[idx] = 0;
         }
       }
@@ -14736,10 +14983,328 @@
       }
     }
 
+    function getCardinalOpenCount(tx, ty) {
+      let open = 0;
+      if (tiles[tileIndex(tx + 1, ty, size)]) open += 1;
+      if (tiles[tileIndex(tx - 1, ty, size)]) open += 1;
+      if (tiles[tileIndex(tx, ty + 1, size)]) open += 1;
+      if (tiles[tileIndex(tx, ty - 1, size)]) open += 1;
+      return open;
+    }
+
+    function analyzeCaveMazeTopology() {
+      let walkableTiles = 0;
+      let edgeLinks = 0;
+      let deadEnds = 0;
+      let junctions = 0;
+      const deadEndTiles = [];
+      const corridorTiles = [];
+      for (let y = 1; y < size - 1; y += 1) {
+        for (let x = 1; x < size - 1; x += 1) {
+          if (!tiles[tileIndex(x, y, size)]) continue;
+          walkableTiles += 1;
+          const open = getCardinalOpenCount(x, y);
+          edgeLinks += open;
+          if (open === 1) {
+            deadEnds += 1;
+            deadEndTiles.push({ tx: x, ty: y });
+          }
+          if (open >= 3) junctions += 1;
+          if (open >= 2) corridorTiles.push({ tx: x, ty: y });
+        }
+      }
+      const edges = edgeLinks * 0.5;
+      const loopCount = Math.max(0, Math.floor(edges - walkableTiles + 1));
+      return {
+        walkableTiles,
+        deadEnds,
+        junctions,
+        deadEndTiles,
+        corridorTiles,
+        loopCount,
+      };
+    }
+
+    function carveDeadEndSpurFrom(origin) {
+      if (!origin) return false;
+      const dirs = [
+        { x: 1, y: 0 },
+        { x: -1, y: 0 },
+        { x: 0, y: 1 },
+        { x: 0, y: -1 },
+      ];
+      for (let i = dirs.length - 1; i > 0; i -= 1) {
+        const j = Math.floor(rng() * (i + 1));
+        const tmp = dirs[i];
+        dirs[i] = dirs[j];
+        dirs[j] = tmp;
+      }
+      for (const dir of dirs) {
+        const startX = origin.tx + dir.x;
+        const startY = origin.ty + dir.y;
+        if (!inBounds(startX, startY, size)) continue;
+        if (startX <= 1 || startY <= 1 || startX >= size - 2 || startY >= size - 2) continue;
+        if (tiles[tileIndex(startX, startY, size)]) continue;
+        const spurLength = 2 + Math.floor(rng() * 3);
+        let valid = true;
+        for (let step = 1; step <= spurLength; step += 1) {
+          const nx = origin.tx + dir.x * step;
+          const ny = origin.ty + dir.y * step;
+          if (!inBounds(nx, ny, size) || nx <= 1 || ny <= 1 || nx >= size - 2 || ny >= size - 2) {
+            valid = false;
+            break;
+          }
+          if (tiles[tileIndex(nx, ny, size)]) {
+            valid = false;
+            break;
+          }
+        }
+        if (!valid) continue;
+        for (let step = 1; step <= spurLength; step += 1) {
+          const nx = origin.tx + dir.x * step;
+          const ny = origin.ty + dir.y * step;
+          carveCircle(nx, ny, Math.max(0.52, caveStyle.tunnelRadiusMin * 0.92));
+        }
+        return true;
+      }
+      return false;
+    }
+
+    function carveLoopConnector(topology) {
+      if (!topology || !Array.isArray(topology.corridorTiles) || topology.corridorTiles.length < 2) return false;
+      for (let attempt = 0; attempt < 40; attempt += 1) {
+        const a = topology.corridorTiles[Math.floor(rng() * topology.corridorTiles.length)];
+        const b = topology.corridorTiles[Math.floor(rng() * topology.corridorTiles.length)];
+        if (!a || !b) continue;
+        if (a.tx === b.tx && a.ty === b.ty) continue;
+        const dist = Math.hypot(a.tx - b.tx, a.ty - b.ty);
+        if (dist < 5 || dist > size * 0.5) continue;
+        carveTunnel({ x: a.tx, y: a.ty }, { x: b.tx, y: b.ty }, Math.max(0.52, caveStyle.tunnelRadiusMin * 0.95));
+        return true;
+      }
+      return false;
+    }
+
+    function connectDeadEndToNearbyPath(topology) {
+      if (!topology || !Array.isArray(topology.deadEndTiles) || topology.deadEndTiles.length === 0) return false;
+      const deadEnd = topology.deadEndTiles[Math.floor(rng() * topology.deadEndTiles.length)];
+      if (!deadEnd) return false;
+      let best = null;
+      let bestScore = Infinity;
+      for (let radius = 3; radius <= 8; radius += 1) {
+        for (let dy = -radius; dy <= radius; dy += 1) {
+          for (let dx = -radius; dx <= radius; dx += 1) {
+            const tx = deadEnd.tx + dx;
+            const ty = deadEnd.ty + dy;
+            if (!inBounds(tx, ty, size) || tx <= 1 || ty <= 1 || tx >= size - 2 || ty >= size - 2) continue;
+            if (!tiles[tileIndex(tx, ty, size)]) continue;
+            const dist = Math.hypot(dx, dy);
+            if (dist < 2.4 || dist > 8.2) continue;
+            const score = Math.abs(dist - 4.6) + rng() * 0.4;
+            if (score < bestScore) {
+              bestScore = score;
+              best = { tx, ty };
+            }
+          }
+        }
+        if (best) break;
+      }
+      if (!best) return false;
+      carveTunnel(
+        { x: deadEnd.tx, y: deadEnd.ty },
+        { x: best.tx, y: best.ty },
+        Math.max(0.5, caveStyle.tunnelRadiusMin * 0.88)
+      );
+      return true;
+    }
+
+    function enforceCaveMazeQuality() {
+      let topology = analyzeCaveMazeTopology();
+      let loopAttempts = 0;
+      while (topology.loopCount < 3 && loopAttempts < 14) {
+        if (!carveLoopConnector(topology)) break;
+        topology = analyzeCaveMazeTopology();
+        loopAttempts += 1;
+      }
+
+      let deadEndRatio = topology.deadEnds / Math.max(1, topology.deadEnds + topology.junctions);
+      let growAttempts = 0;
+      while (deadEndRatio < 0.25 && growAttempts < 18) {
+        const origin = topology.corridorTiles[Math.floor(rng() * Math.max(1, topology.corridorTiles.length))];
+        if (!carveDeadEndSpurFrom(origin)) {
+          growAttempts += 1;
+          continue;
+        }
+        topology = analyzeCaveMazeTopology();
+        deadEndRatio = topology.deadEnds / Math.max(1, topology.deadEnds + topology.junctions);
+        growAttempts += 1;
+      }
+
+      let trimAttempts = 0;
+      while (deadEndRatio > 0.35 && trimAttempts < 18) {
+        if (!connectDeadEndToNearbyPath(topology)) break;
+        topology = analyzeCaveMazeTopology();
+        deadEndRatio = topology.deadEnds / Math.max(1, topology.deadEnds + topology.junctions);
+        trimAttempts += 1;
+      }
+    }
+
+    enforceCaveMazeQuality();
+
+    function findNearestWalkableTile(originX, originY, maxRadius = 6, options = null) {
+      const originTx = clamp(Math.round(originX), 1, size - 2);
+      const originTy = clamp(Math.round(originY), 1, size - 2);
+      const minFromEntrance = Number.isFinite(options?.minFromEntrance)
+        ? Math.max(0, Number(options.minFromEntrance))
+        : 0;
+      const reserved = options?.reserved instanceof Set ? options.reserved : null;
+      let best = null;
+      let bestScore = Infinity;
+      for (let radius = 0; radius <= maxRadius; radius += 1) {
+        for (let dy = -radius; dy <= radius; dy += 1) {
+          for (let dx = -radius; dx <= radius; dx += 1) {
+            const tx = originTx + dx;
+            const ty = originTy + dy;
+            if (!inBounds(tx, ty, size)) continue;
+            if (!tiles[tileIndex(tx, ty, size)]) continue;
+            if (Math.hypot(tx - entrance.tx, ty - entrance.ty) < minFromEntrance) continue;
+            if (reserved?.has(`${tx},${ty}`)) continue;
+            let cardinalOpen = 0;
+            if (tiles[tileIndex(tx + 1, ty, size)]) cardinalOpen += 1;
+            if (tiles[tileIndex(tx - 1, ty, size)]) cardinalOpen += 1;
+            if (tiles[tileIndex(tx, ty + 1, size)]) cardinalOpen += 1;
+            if (tiles[tileIndex(tx, ty - 1, size)]) cardinalOpen += 1;
+            if (cardinalOpen < 2) continue;
+            const score = Math.hypot(tx - originX, ty - originY);
+            if (score < bestScore) {
+              bestScore = score;
+              best = { tx, ty };
+            }
+          }
+        }
+      }
+      return best;
+    }
+
+    function findDeterministicDepthFallbackTile(minFromEntrance = 0, reserved = null, salt = 0) {
+      const startOffset = Math.floor(rand2d(17 + salt, 31 + salt, caveSeed + 7817) * (size - 2));
+      const total = (size - 2) * (size - 2);
+      for (let step = 0; step < total; step += 1) {
+        const flat = (startOffset + step) % total;
+        const tx = 1 + (flat % (size - 2));
+        const ty = 1 + Math.floor(flat / (size - 2));
+        if (!tiles[tileIndex(tx, ty, size)]) continue;
+        if (Math.hypot(tx - entrance.tx, ty - entrance.ty) < minFromEntrance) continue;
+        if (reserved?.has(`${tx},${ty}`)) continue;
+        if (hasReservedDepthNear(tx, ty, 2)) continue;
+        let cardinalOpen = 0;
+        if (tiles[tileIndex(tx + 1, ty, size)]) cardinalOpen += 1;
+        if (tiles[tileIndex(tx - 1, ty, size)]) cardinalOpen += 1;
+        if (tiles[tileIndex(tx, ty + 1, size)]) cardinalOpen += 1;
+        if (tiles[tileIndex(tx, ty - 1, size)]) cardinalOpen += 1;
+        if (cardinalOpen < 2) continue;
+        return { tx, ty };
+      }
+      return null;
+    }
+
+    const depthEntrances = [];
+    const reservedDepthTiles = new Set();
+    function hasReservedDepthNear(tx, ty, radius = 3) {
+      for (let dy = -radius; dy <= radius; dy += 1) {
+        for (let dx = -radius; dx <= radius; dx += 1) {
+          if (reservedDepthTiles.has(`${tx + dx},${ty + dy}`)) return true;
+        }
+      }
+      return false;
+    }
+    function reserveDepthTile(tx, ty) {
+      reservedDepthTiles.add(`${tx},${ty}`);
+      occupancy[tileIndex(tx, ty, size)] = true;
+    }
+    const roomDepths = rooms
+      .map((room) => ({
+        x: room.x,
+        y: room.y,
+        dist: Math.hypot(room.x - entrance.tx, room.y - entrance.ty),
+      }))
+      .sort((a, b) => b.dist - a.dist);
+    const farRooms = roomDepths.filter((entry) => entry.dist >= size * 0.26);
+    const midRooms = roomDepths.filter(
+      (entry) => (
+        entry.dist >= CAVE_DEEP_ENTRANCE_CONFIG.minFromMainEntranceTiles
+        && entry.dist <= size * 0.72
+      )
+    );
+    const portalRequests = getCaveLayerPortalRequests(layerIndex, linkConfig);
+      for (const request of portalRequests) {
+      const requestSalt = (
+        (request.direction === "down" ? 37 : 97)
+        + (request.targetLayer * 131)
+        + (request.slot * 211)
+      );
+      const preferredRooms = request.direction === "down"
+        ? (farRooms.length > 0 ? farRooms : roomDepths)
+        : (midRooms.length > 0 ? midRooms : roomDepths);
+        const fallbackRooms = roomDepths;
+        let placed = null;
+        const minFromEntrance = request.direction === "down"
+          ? (CAVE_DEEP_ENTRANCE_CONFIG.minFromMainEntranceTiles + layerIndex * 0.6)
+          : Math.max(4.4, CAVE_DEEP_ENTRANCE_CONFIG.minFromMainEntranceTiles - 1.1);
+        for (let attempt = 0; attempt < 56; attempt += 1) {
+          const useFallback = attempt >= 36 || preferredRooms.length === 0;
+          const roomPool = useFallback ? fallbackRooms : preferredRooms;
+          if (!roomPool.length) break;
+        const pick = Math.floor(
+          rand2d(requestSalt + attempt * 17, layerIndex * 41 + request.targetLayer * 19, caveSeed + 5431) * roomPool.length
+          );
+          const room = roomPool[pick];
+          if (!room) continue;
+          const candidate = findNearestWalkableTile(room.x, room.y, 8, {
+            minFromEntrance,
+            reserved: reservedDepthTiles,
+          });
+        if (!candidate) continue;
+        if (hasReservedDepthNear(candidate.tx, candidate.ty, 3)) continue;
+          placed = candidate;
+          break;
+        }
+        if (!placed) {
+          placed = findDeterministicDepthFallbackTile(
+            minFromEntrance,
+            reservedDepthTiles,
+            requestSalt + request.slot * 97
+          );
+        }
+        if (!placed) continue;
+        reserveDepthTile(placed.tx, placed.ty);
+        depthEntrances.push({
+        tx: placed.tx,
+        ty: placed.ty,
+        direction: request.direction === "down" ? 1 : -1,
+        slot: request.slot,
+        targetLayer: request.targetLayer,
+      });
+    }
+
+    function isNearAnyCaveEntrance(tx, ty, minDistance = 2.2) {
+      if (Math.hypot(tx - entrance.tx, ty - entrance.ty) < minDistance) return true;
+      for (const depthEntrance of depthEntrances) {
+        if (
+          Math.hypot(tx - depthEntrance.tx, ty - depthEntrance.ty)
+          < Math.max(CAVE_DEEP_ENTRANCE_CONFIG.minPortalSeparationTiles, minDistance)
+        ) {
+          return true;
+        }
+      }
+      return false;
+    }
+
     for (let y = 0; y < size; y += 1) {
       for (let x = 0; x < size; x += 1) {
         const idx = tileIndex(x, y, size);
-        shades[idx] = 0.45 + fbm(x * 0.18, y * 0.18, caveSeed + 300) * 0.22;
+        const baseShade = 0.45 - layerIndex * 0.07;
+        shades[idx] = baseShade + fbm(x * 0.18, y * 0.18, caveSeed + 300) * 0.22;
       }
     }
 
@@ -14781,20 +15346,22 @@
       for (let x = 1; x < size - 1; x += 1) {
         const idx = tileIndex(x, y, size);
         if (!tiles[idx]) continue;
+        if (isNearAnyCaveEntrance(x, y, 2.4)) continue;
         if (!isClear(x, y, 1)) continue;
         const r = rand2d(x, y, caveSeed + 42);
         const depth = 1 - y / (size - 1);
-        if (r < 0.02) {
+        const oreBoost = (layerResourceScale - 1) * 0.018;
+        if (r < 0.02 + oreBoost * 0.9) {
           addResource("ore", x, y, 4, { oreKind: "coal" });
-        } else if (r < 0.034) {
+        } else if (r < 0.034 + oreBoost * 1.1) {
           addResource("ore", x, y, 5, { oreKind: "iron_ore" });
-        } else if (r < 0.043 && depth > 0.2) {
+        } else if (r < 0.043 + oreBoost * 1.2 && depth > 0.16) {
           addResource("ore", x, y, 5, { oreKind: "gold_ore" });
-        } else if (r < 0.049 && depth > 0.35) {
+        } else if (r < 0.049 + oreBoost * 0.95 && depth > 0.28) {
           addResource("ore", x, y, 6, { oreKind: "emerald" });
-        } else if (r < 0.053 && depth > 0.5) {
+        } else if (r < 0.053 + oreBoost * 0.75 && depth > 0.38) {
           addResource("ore", x, y, 7, { oreKind: "diamond" });
-        } else if (r < 0.065) {
+        } else if (r < 0.065 + oreBoost * 1.3) {
           addResource("rock", x, y, 4);
         }
       }
@@ -14830,7 +15397,7 @@
       if (!inBounds(tx, ty, size)) return false;
       const idx = tileIndex(tx, ty, size);
       if (!tiles[idx]) return false;
-      if (Math.hypot(tx - entrance.tx, ty - entrance.ty) < 4.5) return false;
+      if (isNearAnyCaveEntrance(tx, ty, 2.8)) return false;
       if (getCaveDepthAtY(ty) < getCaveOreMinDepth(oreKind)) return false;
 
       const existingId = resourceGrid[idx];
@@ -14889,6 +15456,79 @@
       ensureGuaranteedCaveOre(guaranteedOreKinds[i], 131 + i * 97);
     }
 
+    function pickDeadEndRewardOreKind(depthRatio) {
+      const depth = clamp(Number(depthRatio) || 0, 0, 1);
+      const roll = rand2d(Math.floor(depth * 1000) + 19, layerIndex * 127 + caveId * 43, caveSeed + 12193);
+      if (layerIndex >= 2) {
+        if (roll < 0.3) return "diamond";
+        if (roll < 0.58) return "emerald";
+        if (roll < 0.84) return "gold_ore";
+        return "iron_ore";
+      }
+      if (layerIndex >= 1) {
+        if (roll < 0.16 && depth > 0.32) return "diamond";
+        if (roll < 0.45 && depth > 0.2) return "emerald";
+        if (roll < 0.76) return "gold_ore";
+        return "iron_ore";
+      }
+      if (roll < 0.14 && depth > 0.45) return "emerald";
+      if (roll < 0.46 && depth > 0.25) return "gold_ore";
+      if (roll < 0.84) return "iron_ore";
+      return "coal";
+    }
+
+    const deadEndTiles = [];
+    for (let y = 2; y < size - 2; y += 1) {
+      for (let x = 2; x < size - 2; x += 1) {
+        const idx = tileIndex(x, y, size);
+        if (!tiles[idx]) continue;
+        if (isNearAnyCaveEntrance(x, y, 3)) continue;
+        let cardinalOpen = 0;
+        if (tiles[tileIndex(x + 1, y, size)]) cardinalOpen += 1;
+        if (tiles[tileIndex(x - 1, y, size)]) cardinalOpen += 1;
+        if (tiles[tileIndex(x, y + 1, size)]) cardinalOpen += 1;
+        if (tiles[tileIndex(x, y - 1, size)]) cardinalOpen += 1;
+        if (cardinalOpen !== 1) continue;
+        deadEndTiles.push({
+          tx: x,
+          ty: y,
+          dist: Math.hypot(x - entrance.tx, y - entrance.ty),
+        });
+      }
+    }
+    deadEndTiles.sort((a, b) => b.dist - a.dist);
+    const rewardNodeCount = clamp(Math.round(deadEndTiles.length * 0.34), 2, 8);
+    const usedRewardTiles = new Set();
+    for (let i = 0; i < rewardNodeCount && i < deadEndTiles.length; i += 1) {
+      const endpoint = deadEndTiles[i];
+      if (!endpoint) continue;
+      const key = `${endpoint.tx},${endpoint.ty}`;
+      if (usedRewardTiles.has(key)) continue;
+      usedRewardTiles.add(key);
+      const oreKind = pickDeadEndRewardOreKind(getCaveDepthAtY(endpoint.ty));
+      if (canPlaceGuaranteedOreAt(endpoint.tx, endpoint.ty, oreKind, "preferred")) {
+        spawnGuaranteedOreAt(endpoint.tx, endpoint.ty, oreKind);
+      }
+      for (let branch = 0; branch < 2; branch += 1) {
+        const offsetX = branch === 0 ? 1 : -1;
+        const neighborX = endpoint.tx + offsetX;
+        const neighborY = endpoint.ty;
+        if (!canPlaceGuaranteedOreAt(neighborX, neighborY, oreKind, "preferred")) continue;
+        if (rand2d(i * 13 + branch * 71, caveId * 17 + layerIndex * 19, caveSeed + 14993) < 0.58) {
+          spawnGuaranteedOreAt(neighborX, neighborY, oreKind);
+        }
+      }
+      if (spawnHostiles && layerIndex >= 1) {
+        const nestRoll = rand2d(i * 23 + 7, layerIndex * 47 + caveId * 11, caveSeed + 17389);
+        if (nestRoll < 0.42) {
+          chambers.push({
+            x: endpoint.tx + (rand2d(i + 31, caveId + 53, caveSeed + 11903) - 0.5) * 0.8,
+            y: endpoint.ty + (rand2d(i + 37, caveId + 61, caveSeed + 12011) - 0.5) * 0.8,
+          });
+        }
+      }
+    }
+
     for (const chamber of chambers.slice(0, 4)) {
       landmarks.push({
         x: (chamber.x + 0.5) * CONFIG.tileSize,
@@ -14898,13 +15538,14 @@
     }
 
     const monsters = [];
-    let nextMonsterId = 1;
+    const caveEntityBaseId = ((caveId + 1) * 100000) + (layerIndex * 15000);
+    let nextMonsterId = caveEntityBaseId + 1;
     const walkableTileCount = tiles.reduce((total, tile) => total + Number(!!tile), 0);
     const monsterCount = spawnHostiles
       ? clamp(
-        Math.round(walkableTileCount / 190) + 2 + Math.floor(rng() * 2),
-        4,
-        12
+        Math.round(walkableTileCount / 190) + 2 + Math.floor(rng() * 2) + layerIndex,
+        4 + layerIndex,
+        14 + layerIndex * 2
       )
       : 0;
     for (let i = 0; i < monsterCount; i += 1) {
@@ -14913,7 +15554,7 @@
         const ty = 2 + Math.floor(rng() * (size - 4));
         const idx = tileIndex(tx, ty, size);
         if (!tiles[idx]) continue;
-        if (Math.hypot(tx - entrance.tx, ty - entrance.ty) < 7) continue;
+        if (isNearAnyCaveEntrance(tx, ty, 6.4)) continue;
         if (resourceGrid[idx] !== -1) continue;
         const type = pickMonsterType(rng);
         const variant = getMonsterVariant(type);
@@ -14923,13 +15564,13 @@
           color: variant.color,
           x: (tx + 0.5) * CONFIG.tileSize,
           y: (ty + 0.5) * CONFIG.tileSize,
-          hp: variant.hp,
-          maxHp: variant.hp,
-          speed: variant.speed * 0.9,
-          damage: variant.damage,
+          hp: Math.round(variant.hp * layerDangerScale),
+          maxHp: Math.round(variant.hp * layerDangerScale),
+          speed: variant.speed * (0.9 + layerIndex * 0.05),
+          damage: Math.round(variant.damage * (1 + layerIndex * 0.18)),
           attackRange: variant.attackRange,
           attackCooldown: variant.attackCooldown,
-          aggroRange: variant.aggroRange,
+          aggroRange: variant.aggroRange + layerIndex * CONFIG.tileSize * 0.1,
           rangedRange: variant.rangedRange,
           attackTimer: 0,
           hitTimer: 0,
@@ -14946,6 +15587,7 @@
     return {
       id: caveId,
       seed: caveSeed,
+      layerIndex,
       size,
       tiles,
       shades,
@@ -14954,16 +15596,21 @@
       drops: [],
       respawnTasks: [],
       entrance,
+      depthEntrances,
+      linkConfig: {
+        toLayer2: clamp(Math.floor(linkConfig?.toLayer2 ?? 2), 2, 4),
+        toLayer3: clamp(Math.floor(linkConfig?.toLayer3 ?? 1), 1, 3),
+      },
       caves: [],
       monsters,
       nextMonsterId,
       monsterBurnFx: [],
       projectiles: [],
-      nextProjectileId: 1,
+      nextProjectileId: caveEntityBaseId + 5001,
       poisonClouds: [],
-      nextPoisonCloudId: 1,
+      nextPoisonCloudId: caveEntityBaseId + 9001,
       villagers: [],
-      nextVillagerId: 1,
+      nextVillagerId: caveEntityBaseId + 12001,
       landmarks,
       ambience: "wind-echo",
     };
@@ -15557,14 +16204,24 @@
     function addCaveAt(tx, ty, allowOccupied = false) {
       if (!canUseCaveTile(tx, ty, allowOccupied)) return false;
       if (allowOccupied) clearResourceAt(tx, ty);
+      const caveId = caves.length;
       const hostileBlocked = isMushroomBiomeAtTile({ biomeGrid, size }, tx, ty);
+      const linkConfig = buildCaveLayerLinkConfig(seed, caveId);
+      const layerZeroWorld = generateCaveWorld(seed, caveId, {
+        spawnHostiles: !hostileBlocked,
+        layerIndex: 0,
+        linkConfig,
+      });
       caves.push({
-        id: caves.length,
+        id: caveId,
         tx,
         ty,
         spawnedByPlayer: false,
         hostileBlocked,
-        world: generateCaveWorld(seed, caves.length, { spawnHostiles: !hostileBlocked }),
+        seedInt: seed,
+        linkConfig,
+        layers: [layerZeroWorld],
+        world: layerZeroWorld,
       });
       return true;
     }
@@ -16350,6 +17007,7 @@
       checkpoint: null,
       inCave: false,
       caveId: null,
+      caveLayer: 0,
       returnPosition: null,
       hp: Number(save.player?.maxHp) || Number(save.player?.hp) || 100,
     };
@@ -16380,6 +17038,10 @@
     if (!surface) return;
     const seedKey = getSeedSaveKey(surface.seed);
 
+    const surfaceState = serializePersistedWorldState(surface, {
+      includeAnimals: true,
+      includeVillagers: true,
+    });
     const data = {
       version: SAVE_VERSION,
       seed: surface.seed,
@@ -16396,87 +17058,50 @@
         hp: state.player.hp,
         inCave: state.inCave,
         caveId: state.activeCave?.id ?? null,
+        caveLayer: state.inCave ? normalizeCaveLayerIndex(state.activeCaveLayer ?? 0) : 0,
         returnPosition: state.returnPosition,
       },
       timeOfDay: state.timeOfDay,
       gameWon: state.gameWon,
       inventory: state.inventory,
-      resourceStates: surface.resources.map((res) => serializeResource(res)),
-      respawnTasks: surface.respawnTasks ?? [],
+      resourceStates: surfaceState.resourceStates,
+      respawnTasks: surfaceState.respawnTasks,
       structures: serializeStructuresList(),
-      drops: (surface.drops ?? []).map((drop) => ({
-        id: drop.id,
-        itemId: drop.itemId,
-        qty: drop.qty,
-        x: drop.x,
-        y: drop.y,
-        ttl: Number.isFinite(drop.ttl) ? drop.ttl : DROP_DESPAWN.lifetime,
-      })),
-      monsters: (surface.monsters ?? []).map((monster) => ({
-        id: monster.id,
-        type: monster.type ?? "crawler",
-        x: monster.x,
-        y: monster.y,
-        hp: monster.hp,
-        maxHp: monster.maxHp,
-        attackTimer: Math.max(0, Number(monster.attackTimer) || 0),
-        dayBurning: !!monster.dayBurning,
-        burnTimer: Math.max(0, Number(monster.burnTimer) || 0),
-        burnDuration: Math.max(0, Number(monster.burnDuration) || 0),
-        poisonDuration: Math.max(0, Number(monster.poisonDuration) || 0),
-        poisonDps: Math.max(0, Number(monster.poisonDps) || 0),
-      })),
-      animals: (surface.animals ?? []).map((animal) => ({
-        id: animal.id,
-        type: animal.type,
-        x: animal.x,
-        y: animal.y,
-        hp: animal.hp,
-        maxHp: animal.maxHp,
-        speed: animal.speed,
-        color: animal.color,
-      })),
-      villagers: (surface.villagers ?? []).map((villager) => ({
-        id: villager.id,
-        x: villager.x,
-        y: villager.y,
-        homeX: villager.homeX,
-        homeY: villager.homeY,
-        speed: villager.speed,
-        color: villager.color,
-        wanderRadius: villager.wanderRadius,
-      })),
-      caves: surface.caves?.map((cave) => ({
-        id: cave.id,
-        tx: cave.tx,
-        ty: cave.ty,
-        spawnedByPlayer: !!cave.spawnedByPlayer,
-        hostileBlocked: !!cave.hostileBlocked,
-        resourceStates: cave.world.resources.map((res) => serializeResource(res)),
-        respawnTasks: cave.world.respawnTasks ?? [],
-        drops: (cave.world.drops ?? []).map((drop) => ({
-          id: drop.id,
-          itemId: drop.itemId,
-          qty: drop.qty,
-          x: drop.x,
-          y: drop.y,
-          ttl: Number.isFinite(drop.ttl) ? drop.ttl : DROP_DESPAWN.lifetime,
-        })),
-        monsters: (cave.world.monsters ?? []).map((monster) => ({
-          id: monster.id,
-          type: monster.type ?? "crawler",
-          x: monster.x,
-          y: monster.y,
-          hp: monster.hp,
-          maxHp: monster.maxHp,
-          attackTimer: Math.max(0, Number(monster.attackTimer) || 0),
-          dayBurning: !!monster.dayBurning,
-          burnTimer: Math.max(0, Number(monster.burnTimer) || 0),
-          burnDuration: Math.max(0, Number(monster.burnDuration) || 0),
-          poisonDuration: Math.max(0, Number(monster.poisonDuration) || 0),
-          poisonDps: Math.max(0, Number(monster.poisonDps) || 0),
-        })),
-      })) ?? [],
+      drops: surfaceState.drops,
+      monsters: surfaceState.monsters,
+      animals: surfaceState.animals,
+      villagers: surfaceState.villagers,
+      caves: surface.caves?.map((cave) => {
+        const generatedEntries = getGeneratedCaveLayerWorldEntries(cave);
+        const fallbackLayerZero = ensureCaveLayerWorld(cave, 0, surface);
+        const layerPayloads = generatedEntries.map((entry) => ({
+          layer: normalizeCaveLayerIndex(entry.layer),
+          world: serializePersistedWorldState(entry.world, {
+            includeAnimals: true,
+            includeVillagers: true,
+          }),
+        }));
+        const layerZeroState = layerPayloads.find((entry) => entry.layer === 0)?.world
+          || serializePersistedWorldState(fallbackLayerZero, {
+            includeAnimals: true,
+            includeVillagers: true,
+          });
+        return {
+          id: cave.id,
+          tx: cave.tx,
+          ty: cave.ty,
+          spawnedByPlayer: !!cave.spawnedByPlayer,
+          hostileBlocked: !!cave.hostileBlocked,
+          linkConfig: getNormalizedCaveLinkConfig(cave, surface),
+          world: layerZeroState,
+          layers: layerPayloads,
+          // Backward compatibility for older save readers expecting layer 1 fields.
+          resourceStates: layerZeroState.resourceStates ?? [],
+          respawnTasks: layerZeroState.respawnTasks ?? [],
+          drops: layerZeroState.drops ?? [],
+          monsters: layerZeroState.monsters ?? [],
+        };
+      }) ?? [],
     };
 
     try {
@@ -16543,13 +17168,24 @@
     data.version = Number.isFinite(version) ? version : 1;
     const islandLayout = Array.isArray(data.islandLayout) ? data.islandLayout : null;
     if (data.version === SAVE_VERSION) {
+      const player = data.player && typeof data.player === "object"
+        ? data.player
+        : Object.create(null);
       return {
         ...data,
         version: SAVE_VERSION,
         seed: normalizeSeedValue(data.seed),
         islandLayout,
+        player: {
+          ...player,
+          inCave: !!player.inCave,
+          caveId: Number.isInteger(player.caveId) ? player.caveId : null,
+          caveLayer: normalizeCaveLayerIndex(player.caveLayer ?? 0),
+          returnPosition: player.returnPosition ?? null,
+        },
         monsters: Array.isArray(data.monsters) ? data.monsters : [],
         villagers: Array.isArray(data.villagers) ? data.villagers : [],
+        caves: Array.isArray(data.caves) ? data.caves : [],
       };
     }
     if (data.version === 1) {
@@ -16565,6 +17201,7 @@
           hp: 100,
           inCave: false,
           caveId: null,
+          caveLayer: 0,
           returnPosition: null,
         },
         timeOfDay: 0,
@@ -16593,6 +17230,7 @@
           hp: 100,
           inCave: false,
           caveId: null,
+          caveLayer: 0,
           returnPosition: null,
         },
         timeOfDay: 0,
@@ -16621,6 +17259,7 @@
           hp: data.player?.hp ?? 100,
           inCave: data.player?.inCave ?? false,
           caveId: data.player?.caveId ?? null,
+          caveLayer: 0,
           returnPosition: data.player?.returnPosition ?? null,
         },
         timeOfDay: typeof data.timeOfDay === "number" ? data.timeOfDay : 0,
@@ -16649,6 +17288,7 @@
           hp: data.player?.hp ?? 100,
           inCave: data.player?.inCave ?? false,
           caveId: data.player?.caveId ?? null,
+          caveLayer: 0,
           returnPosition: data.player?.returnPosition ?? null,
         },
         timeOfDay: typeof data.timeOfDay === "number" ? data.timeOfDay : 0,
@@ -16683,6 +17323,7 @@
         hp: data.player?.hp ?? 100,
         inCave: data.player?.inCave ?? false,
         caveId: data.player?.caveId ?? null,
+        caveLayer: normalizeCaveLayerIndex(data.player?.caveLayer ?? 0),
         returnPosition: data.player?.returnPosition ?? null,
       },
       timeOfDay: typeof data.timeOfDay === "number" ? data.timeOfDay : 0,
@@ -16764,6 +17405,99 @@
             : getRespawnDelayForTaskType(task.type),
         }))
       : [];
+  }
+
+  function applySerializedWorldState(world, payload = null, options = null) {
+    if (!world) return;
+    const source = payload && typeof payload === "object" ? payload : Object.create(null);
+    const applyAnimalsFlag = options?.applyAnimals !== false;
+    const applyVillagersFlag = options?.applyVillagers !== false;
+    applyResourceStates(world, source.resourceStates ?? []);
+    applyRespawnTasks(world, source.respawnTasks ?? []);
+    applyDrops(world, source.drops ?? []);
+    if (applyAnimalsFlag) applyAnimals(world, source.animals ?? []);
+    if (applyVillagersFlag) applyVillagers(world, source.villagers ?? []);
+    world.monsters = buildMonstersFromSnapshot(world.monsters, source.monsters, world);
+    world.projectiles = buildProjectilesFromSnapshot(world.projectiles, source.projectiles, world);
+    world.poisonClouds = buildPoisonCloudsFromSnapshot(world.poisonClouds, source.poisonClouds);
+    world.nextMonsterId = world.monsters.reduce((max, monster) => Math.max(max, (monster.id || 0) + 1), 1);
+    world.nextProjectileId = world.projectiles.reduce((max, projectile) => Math.max(max, (projectile.id || 0) + 1), 1);
+    world.nextPoisonCloudId = world.poisonClouds.reduce((max, cloud) => Math.max(max, (cloud.id || 0) + 1), 1);
+    world.animals = world.animals || [];
+    world.nextAnimalId = world.animals.reduce((max, animal) => Math.max(max, (animal.id || 0) + 1), 1);
+    world.villagers = world.villagers || [];
+    world.nextVillagerId = world.villagers.reduce((max, villager) => Math.max(max, (villager.id || 0) + 1), 1);
+    world.drops = world.drops || [];
+    world.respawnTasks = world.respawnTasks || [];
+  }
+
+  function serializePersistedWorldState(world, options = null) {
+    if (!world) {
+      return {
+        resourceStates: [],
+        respawnTasks: [],
+        drops: [],
+        monsters: [],
+        projectiles: [],
+        poisonClouds: [],
+        animals: [],
+        villagers: [],
+      };
+    }
+    const includeAnimals = options?.includeAnimals === true;
+    const includeVillagers = options?.includeVillagers === true;
+    return {
+      resourceStates: world.resources.map((res) => serializeResource(res)),
+      respawnTasks: world.respawnTasks ?? [],
+      drops: (world.drops ?? []).map((drop) => ({
+        id: drop.id,
+        itemId: drop.itemId,
+        qty: drop.qty,
+        x: drop.x,
+        y: drop.y,
+        ttl: Number.isFinite(drop.ttl) ? drop.ttl : DROP_DESPAWN.lifetime,
+      })),
+      monsters: (world.monsters ?? []).map((monster) => ({
+        id: monster.id,
+        type: monster.type ?? "crawler",
+        x: monster.x,
+        y: monster.y,
+        hp: monster.hp,
+        maxHp: monster.maxHp,
+        attackTimer: Math.max(0, Number(monster.attackTimer) || 0),
+        dayBurning: !!monster.dayBurning,
+        burnTimer: Math.max(0, Number(monster.burnTimer) || 0),
+        burnDuration: Math.max(0, Number(monster.burnDuration) || 0),
+        poisonDuration: Math.max(0, Number(monster.poisonDuration) || 0),
+        poisonDps: Math.max(0, Number(monster.poisonDps) || 0),
+      })),
+      projectiles: [],
+      poisonClouds: [],
+      animals: includeAnimals
+        ? (world.animals ?? []).map((animal) => ({
+            id: animal.id,
+            type: animal.type,
+            x: animal.x,
+            y: animal.y,
+            hp: animal.hp,
+            maxHp: animal.maxHp,
+            speed: animal.speed,
+            color: animal.color,
+          }))
+        : [],
+      villagers: includeVillagers
+        ? (world.villagers ?? []).map((villager) => ({
+            id: villager.id,
+            x: villager.x,
+            y: villager.y,
+            homeX: villager.homeX,
+            homeY: villager.homeY,
+            speed: villager.speed,
+            color: villager.color,
+            wanderRadius: villager.wanderRadius,
+          }))
+        : [],
+    };
   }
 
   function hasResourceGridInconsistency(world) {
@@ -19734,6 +20468,8 @@
     state.structureGrid = new Array(world.size * world.size).fill(null);
     state.inCave = false;
     state.activeCave = null;
+    state.activeCaveLayer = 0;
+    state.caveTransition = null;
     state.returnPosition = null;
     state.nextDropId = 1;
     world.drops = world.drops || [];
@@ -19885,32 +20621,61 @@
           cave.hostileBlocked = savedCave && typeof savedCave.hostileBlocked === "boolean"
             ? !!savedCave.hostileBlocked
             : shouldBlockCaveHostilesForSurfaceTile(world, cave.tx, cave.ty);
+          if (savedCave?.linkConfig && typeof savedCave.linkConfig === "object") {
+            cave.linkConfig = {
+              toLayer2: clamp(Math.floor(savedCave.linkConfig.toLayer2 ?? cave.linkConfig?.toLayer2 ?? 2), 2, 4),
+              toLayer3: clamp(Math.floor(savedCave.linkConfig.toLayer3 ?? cave.linkConfig?.toLayer3 ?? 1), 1, 3),
+            };
+          }
           if (savedCave) {
-            applyResourceStates(cave.world, savedCave.resourceStates);
-            applyRespawnTasks(cave.world, savedCave.respawnTasks);
-            applyDrops(cave.world, savedCave.drops);
-            const savedCaveMonsters = Array.isArray(savedCave.monsters)
-              ? savedCave.monsters
-              : cave.world.monsters;
-            cave.world.monsters = buildMonstersFromSnapshot(cave.world.monsters, savedCaveMonsters, cave.world);
-            cave.world.nextMonsterId = cave.world.monsters.reduce((max, monster) => Math.max(max, (monster.id || 0) + 1), 1);
+            const layerSnapshots = Array.isArray(savedCave.layers) && savedCave.layers.length > 0
+              ? savedCave.layers
+              : [{
+                  layer: 0,
+                  world: savedCave.world && typeof savedCave.world === "object"
+                    ? savedCave.world
+                    : {
+                        resourceStates: savedCave.resourceStates ?? [],
+                        respawnTasks: savedCave.respawnTasks ?? [],
+                        drops: savedCave.drops ?? [],
+                        monsters: savedCave.monsters ?? [],
+                        projectiles: savedCave.projectiles ?? [],
+                        poisonClouds: savedCave.poisonClouds ?? [],
+                        animals: savedCave.animals ?? [],
+                        villagers: savedCave.villagers ?? [],
+                      },
+                }];
+            for (const layerSnapshot of layerSnapshots) {
+              if (!layerSnapshot || typeof layerSnapshot !== "object") continue;
+              const layer = normalizeCaveLayerIndex(layerSnapshot.layer ?? 0);
+              const layerWorld = ensureCaveLayerWorld(cave, layer, world);
+              if (!layerWorld) continue;
+              applySerializedWorldState(layerWorld, layerSnapshot.world ?? layerSnapshot, {
+                applyAnimals: true,
+                applyVillagers: true,
+              });
+            }
           } else {
-            cave.world.drops = cave.world.drops || [];
-            cave.world.respawnTasks = cave.world.respawnTasks || [];
-            cave.world.monsters = cave.world.monsters || [];
-            cave.world.nextMonsterId = cave.world.nextMonsterId || 1;
+            ensureCaveLayerWorld(cave, 0, world);
           }
-          cave.world.projectiles = [];
-          cave.world.nextProjectileId = 1;
-          cave.world.poisonClouds = [];
-          cave.world.nextPoisonCloudId = 1;
-          if (cave.hostileBlocked) {
-            cave.world.monsters = [];
-            cave.world.projectiles = [];
-            cave.world.poisonClouds = [];
+          for (const layerEntry of getGeneratedCaveLayerWorldEntries(cave)) {
+            const layerWorld = layerEntry.world;
+            layerWorld.drops = layerWorld.drops || [];
+            layerWorld.respawnTasks = layerWorld.respawnTasks || [];
+            layerWorld.monsters = layerWorld.monsters || [];
+            layerWorld.nextMonsterId = layerWorld.monsters.reduce((max, monster) => Math.max(max, (monster.id || 0) + 1), 1);
+            layerWorld.projectiles = layerWorld.projectiles || [];
+            layerWorld.nextProjectileId = layerWorld.projectiles.reduce((max, projectile) => Math.max(max, (projectile.id || 0) + 1), 1);
+            layerWorld.poisonClouds = layerWorld.poisonClouds || [];
+            layerWorld.nextPoisonCloudId = layerWorld.poisonClouds.reduce((max, cloud) => Math.max(max, (cloud.id || 0) + 1), 1);
+            layerWorld.villagers = layerWorld.villagers || [];
+            layerWorld.nextVillagerId = layerWorld.villagers.reduce((max, villager) => Math.max(max, (villager.id || 0) + 1), 1);
+            if (cave.hostileBlocked) {
+              layerWorld.monsters = [];
+              layerWorld.projectiles = [];
+              layerWorld.poisonClouds = [];
+            }
           }
-          cave.world.villagers = cave.world.villagers || [];
-          cave.world.nextVillagerId = cave.world.nextVillagerId || 1;
         }
       }
 
@@ -19981,6 +20746,7 @@
       state.activeHouse = null;
       state.housePlayer = null;
       state.sleepSequence = null;
+      state.caveTransition = null;
       state.spawnTile = spawnTile;
       state.ambientFish = [];
       state.ambientFishSpawnTimer = 0;
@@ -19997,19 +20763,23 @@
       state.surfaceGuardianSpawnTimer = SURFACE_GUARDIAN_CONFIG.spawnInterval;
       state.inCave = !!preparedSave.player?.inCave;
       state.activeCave = null;
+      state.activeCaveLayer = normalizeCaveLayerIndex(preparedSave.player?.caveLayer ?? 0);
       state.returnPosition = preparedSave.player?.returnPosition ?? null;
 
       if (state.inCave && world.caves) {
         const cave = world.caves.find((entry) => entry.id === preparedSave.player?.caveId);
         if (cave) {
-          state.world = cave.world;
+          const caveWorld = ensureCaveLayerWorld(cave, state.activeCaveLayer, world);
+          state.world = caveWorld || ensureCaveLayerWorld(cave, 0, world) || world;
           state.activeCave = cave;
         } else {
           state.inCave = false;
+          state.activeCaveLayer = 0;
           state.returnPosition = null;
         }
       } else if (state.inCave) {
         state.inCave = false;
+        state.activeCaveLayer = 0;
         state.returnPosition = null;
       }
 
@@ -20017,7 +20787,7 @@
         const playerTx = Math.floor(state.player.x / CONFIG.tileSize);
         const playerTy = Math.floor(state.player.y / CONFIG.tileSize);
         if (!inBounds(playerTx, playerTy, state.world.size) || !state.world.tiles[tileIndex(playerTx, playerTy, state.world.size)]) {
-          const entrance = state.activeCave.world.entrance;
+          const entrance = state.world.entrance;
           state.player.x = (entrance.tx + 0.5) * CONFIG.tileSize;
           state.player.y = (entrance.ty + 0.5) * CONFIG.tileSize;
         }
@@ -20947,17 +21717,132 @@
       id = 0;
       while (usedIds.has(id)) id += 1;
     }
+    const normalizeLinkConfig = (rawConfig) => {
+      const fallback = buildCaveLayerLinkConfig(seedInt, id);
+      return {
+        toLayer2: clamp(Math.floor(rawConfig?.toLayer2 ?? fallback.toLayer2), 2, 4),
+        toLayer3: clamp(Math.floor(rawConfig?.toLayer3 ?? fallback.toLayer3), 1, 3),
+      };
+    };
+    const linkConfig = normalizeLinkConfig(options?.linkConfig);
     clearResourceForStructure(world, tx, ty);
+    const layerZeroWorld = generateCaveWorld(seedInt, id, {
+      spawnHostiles: !hostileBlocked,
+      layerIndex: 0,
+      linkConfig,
+    });
     const cave = {
       id,
       tx,
       ty,
       spawnedByPlayer,
       hostileBlocked,
-      world: generateCaveWorld(seedInt, id, { spawnHostiles: !hostileBlocked }),
+      seedInt,
+      linkConfig,
+      layers: [layerZeroWorld],
+      world: layerZeroWorld,
     };
     world.caves.push(cave);
     return cave;
+  }
+
+  function getNormalizedCaveLinkConfig(cave, surfaceWorld = null) {
+    if (!cave) return { toLayer2: 2, toLayer3: 1 };
+    const fallbackSeed = cave.seedInt
+      ?? surfaceWorld?.seedInt
+      ?? seedToInt(surfaceWorld?.seed || "island");
+    const fallback = buildCaveLayerLinkConfig(fallbackSeed, cave.id);
+    const normalized = {
+      toLayer2: clamp(Math.floor(cave.linkConfig?.toLayer2 ?? fallback.toLayer2), 2, 4),
+      toLayer3: clamp(Math.floor(cave.linkConfig?.toLayer3 ?? fallback.toLayer3), 1, 3),
+    };
+    cave.linkConfig = normalized;
+    return normalized;
+  }
+
+  function ensureCaveLayerWorld(cave, layerIndex, surfaceWorld = null) {
+    if (!cave) return null;
+    const normalizedLayer = normalizeCaveLayerIndex(layerIndex);
+    if (!Array.isArray(cave.layers)) cave.layers = [];
+    if (cave.layers[normalizedLayer]) return cave.layers[normalizedLayer];
+    const worldRef = surfaceWorld || state.surfaceWorld || state.world;
+    const seedInt = cave.seedInt
+      ?? worldRef?.seedInt
+      ?? seedToInt(worldRef?.seed || "island");
+    cave.seedInt = seedInt;
+    const linkConfig = getNormalizedCaveLinkConfig(cave, worldRef);
+    const layerWorld = generateCaveWorld(seedInt, cave.id, {
+      spawnHostiles: !isCaveHostilesBlocked(worldRef, cave),
+      layerIndex: normalizedLayer,
+      linkConfig,
+    });
+    cave.layers[normalizedLayer] = layerWorld;
+    if (normalizedLayer === 0 || !cave.world) cave.world = cave.layers[0] || layerWorld;
+    if (isCaveHostilesBlocked(worldRef, cave)) {
+      layerWorld.monsters = [];
+      layerWorld.projectiles = [];
+      layerWorld.poisonClouds = [];
+    }
+    return layerWorld;
+  }
+
+  function getGeneratedCaveLayerWorldEntries(cave) {
+    if (!cave) return [];
+    if (!Array.isArray(cave.layers)) cave.layers = [];
+    if (cave.world && !cave.layers[0]) cave.layers[0] = cave.world;
+    const entries = [];
+    const seen = new Set();
+    for (let layer = 0; layer < cave.layers.length; layer += 1) {
+      const layerWorld = cave.layers[layer];
+      if (!layerWorld || seen.has(layerWorld)) continue;
+      seen.add(layerWorld);
+      entries.push({
+        layer: normalizeCaveLayerIndex(layer),
+        world: layerWorld,
+      });
+    }
+    if (entries.length === 0 && cave.world) {
+      entries.push({
+        layer: 0,
+        world: cave.world,
+      });
+    }
+    entries.sort((a, b) => a.layer - b.layer);
+    return entries;
+  }
+
+  function forEachGeneratedCaveLayerWorld(surfaceWorld, callback) {
+    if (!surfaceWorld || !Array.isArray(surfaceWorld.caves) || typeof callback !== "function") return;
+    for (const cave of surfaceWorld.caves) {
+      if (!cave) continue;
+      const entries = getGeneratedCaveLayerWorldEntries(cave);
+      for (const entry of entries) {
+        callback(entry.world, cave, entry.layer);
+      }
+    }
+  }
+
+  function collectGeneratedCaveLayerWorlds(surfaceWorld) {
+    const worlds = [];
+    const seen = new Set();
+    forEachGeneratedCaveLayerWorld(surfaceWorld, (world, cave, layer) => {
+      if (!world || seen.has(world)) return;
+      seen.add(world);
+      worlds.push({
+        world,
+        cave,
+        layer,
+      });
+    });
+    return worlds;
+  }
+
+  function startCaveLayerTransitionEffect(label = "") {
+    state.caveTransition = {
+      timer: CAVE_LAYER_TRANSITION.duration,
+      duration: CAVE_LAYER_TRANSITION.duration,
+      label: typeof label === "string" ? label : "",
+    };
   }
 
   function findNearestCave(world, player) {
@@ -20974,6 +21859,87 @@
       }
     }
     return closest;
+  }
+
+  function findNearestCaveDepthEntrance(cave, player, maxRange = CONFIG.interactRange) {
+    if (!cave || !player) return null;
+    const caveWorld = state.inCave && state.activeCave === cave
+      ? state.world
+      : ensureCaveLayerWorld(cave, 0, state.surfaceWorld || state.world);
+    if (!caveWorld || !Array.isArray(caveWorld.depthEntrances)) return null;
+    let closest = null;
+    let closestDist = Infinity;
+    for (const depthEntrance of caveWorld.depthEntrances) {
+      if (!depthEntrance || !Number.isInteger(depthEntrance.tx) || !Number.isInteger(depthEntrance.ty)) continue;
+      const x = (depthEntrance.tx + 0.5) * CONFIG.tileSize;
+      const y = (depthEntrance.ty + 0.5) * CONFIG.tileSize;
+      const dist = Math.hypot(x - player.x, y - player.y);
+      if (dist <= maxRange && dist < closestDist) {
+        closest = depthEntrance;
+        closestDist = dist;
+      }
+    }
+    if (!closest) return null;
+    return {
+      entrance: closest,
+      dist: closestDist,
+    };
+  }
+
+  function findWalkableCaveTileNear(world, startTx, startTy, maxRadius = 5) {
+    if (!world || !Number.isInteger(startTx) || !Number.isInteger(startTy)) return null;
+    for (let radius = 0; radius <= maxRadius; radius += 1) {
+      for (let dy = -radius; dy <= radius; dy += 1) {
+        for (let dx = -radius; dx <= radius; dx += 1) {
+          const tx = startTx + dx;
+          const ty = startTy + dy;
+          if (!inBounds(tx, ty, world.size)) continue;
+          if (!world.tiles[tileIndex(tx, ty, world.size)]) continue;
+          return { tx, ty };
+        }
+      }
+    }
+    return null;
+  }
+
+  function traverseCaveDepthEntrance(entrance) {
+    if (!state.inCave || !state.activeCave || !state.player || !entrance) return false;
+    const currentLayer = normalizeCaveLayerIndex(state.activeCaveLayer);
+    const targetLayer = normalizeCaveLayerIndex(entrance.targetLayer);
+    if (targetLayer === currentLayer) return false;
+    const targetWorld = ensureCaveLayerWorld(state.activeCave, targetLayer, state.surfaceWorld || state.world);
+    if (!targetWorld) return false;
+    const counterpart = (targetWorld.depthEntrances || []).find((entry) => (
+      Number(entry.direction) === -Number(entrance.direction)
+      && Number(entry.slot) === Number(entrance.slot)
+      && normalizeCaveLayerIndex(entry.targetLayer) === currentLayer
+    ));
+    const target = counterpart
+      ? findWalkableCaveTileNear(targetWorld, counterpart.tx, counterpart.ty, 6)
+      : findWalkableCaveTileNear(targetWorld, targetWorld.entrance?.tx ?? 1, targetWorld.entrance?.ty ?? 1, 6);
+    if (!target) return false;
+    state.activeCaveLayer = targetLayer;
+    state.world = targetWorld;
+    state.player.x = (target.tx + 0.5) * CONFIG.tileSize;
+    state.player.y = (target.ty + 0.5) * CONFIG.tileSize;
+    const facing = normalizeDirectionVector(
+      target.tx - (Number.isInteger(counterpart?.tx) ? counterpart.tx : target.tx),
+      target.ty - (Number.isInteger(counterpart?.ty) ? counterpart.ty : target.ty),
+      state.player.facing.x,
+      state.player.facing.y
+    );
+    state.player.facing.x = facing.x;
+    state.player.facing.y = facing.y;
+    startCaveLayerTransitionEffect(CAVE_LAYER_LABELS[targetLayer] || `Layer ${targetLayer + 1}`);
+    markDirty();
+    if (net.enabled) sendPlayerUpdate();
+    setPrompt(
+      entrance.direction > 0
+        ? `Descended to ${CAVE_LAYER_LABELS[targetLayer]}`
+        : `Ascended to ${CAVE_LAYER_LABELS[targetLayer]}`,
+      1.1
+    );
+    return true;
   }
 
   function isMapItem(itemId) {
@@ -21259,6 +22225,7 @@
         type: "dropItem",
         world: state.inCave ? "cave" : "surface",
         caveId: state.activeCave?.id ?? null,
+        caveLayer: state.inCave ? normalizeCaveLayerIndex(state.activeCaveLayer) : 0,
         itemId: dropItemId,
         qty: dropQty,
         x: dropPos.x,
@@ -21317,6 +22284,7 @@
               type: "dropPickup",
               world: state.inCave ? "cave" : "surface",
               caveId: state.activeCave?.id ?? null,
+              caveLayer: state.inCave ? normalizeCaveLayerIndex(state.activeCaveLayer) : 0,
               dropId: drop.id,
               qty: pickedQty,
               itemId: drop.itemId,
@@ -21345,15 +22313,17 @@
 
     const authoritative = !netIsClientReady();
     const worlds = [state.world];
+    const seenWorlds = new Set(worlds);
     if (authoritative && state.surfaceWorld && state.surfaceWorld !== state.world) {
       worlds.push(state.surfaceWorld);
+      seenWorlds.add(state.surfaceWorld);
     }
-    if (authoritative && Array.isArray(state.surfaceWorld?.caves)) {
-      for (const cave of state.surfaceWorld.caves) {
-        if (!cave?.world) continue;
-        if (cave.world === state.world) continue;
-        worlds.push(cave.world);
-      }
+    if (authoritative && state.surfaceWorld) {
+      forEachGeneratedCaveLayerWorld(state.surfaceWorld, (caveWorld) => {
+        if (!caveWorld || seenWorlds.has(caveWorld)) return;
+        seenWorlds.add(caveWorld);
+        worlds.push(caveWorld);
+      });
     }
 
     const canPickup = !!state.player && !state.player.inHut;
@@ -21475,6 +22445,7 @@
         type: "harvest",
         world: state.inCave ? "cave" : "surface",
         caveId: state.activeCave?.id ?? null,
+        caveLayer: state.inCave ? normalizeCaveLayerIndex(state.activeCaveLayer) : 0,
         resId: resource.id,
         damage,
         unlocks: normalizeUnlocks(state.player.unlocks),
@@ -24834,16 +25805,27 @@
   }
 
   function updateResources(dt) {
+    const surface = state.surfaceWorld || state.world;
+    if (!surface) return;
+    const worlds = [];
+    const seen = new Set();
+    const addWorld = (world) => {
+      if (!world || seen.has(world)) return;
+      seen.add(world);
+      worlds.push(world);
+    };
+    addWorld(surface);
+    addWorld(state.world);
+    forEachGeneratedCaveLayerWorld(surface, (caveWorld) => addWorld(caveWorld));
+
     if (netIsClient()) {
-      updateResourceHitTimers(state.world, dt);
-      if (state.inCave && state.surfaceWorld && state.surfaceWorld !== state.world) {
-        updateResourceHitTimers(state.surfaceWorld, dt);
+      for (const world of worlds) {
+        updateResourceHitTimers(world, dt);
       }
       return;
     }
-    updateWorldResources(state.world, dt);
-    if (state.inCave && state.surfaceWorld && state.surfaceWorld !== state.world) {
-      updateWorldResources(state.surfaceWorld, dt);
+    for (const world of worlds) {
+      updateWorldResources(world, dt);
     }
   }
 
@@ -24895,6 +25877,7 @@
         type: "deathDrop",
         world: state.inCave ? "cave" : "surface",
         caveId: state.activeCave?.id ?? null,
+        caveLayer: state.inCave ? normalizeCaveLayerIndex(state.activeCaveLayer) : 0,
         x,
         y,
         items: filled.map((slot) => ({ id: slot.id, qty: slot.qty })),
@@ -24945,6 +25928,8 @@
       }
       state.inCave = false;
       state.activeCave = null;
+      state.activeCaveLayer = 0;
+      state.caveTransition = null;
       state.world = surface;
       state.player.hp = state.player.maxHp;
       state.player.invincible = 1;
@@ -24974,6 +25959,8 @@
       state.sleepSequence = null;
       state.inCave = false;
       state.activeCave = null;
+      state.activeCaveLayer = 0;
+      state.caveTransition = null;
       state.world = state.surfaceWorld || state.world;
       const surface = state.surfaceWorld || state.world;
       const respawnPos = getSafeRespawnPosition(surface);
@@ -25001,7 +25988,7 @@
         player.inCave
           && Number.isInteger(player.caveId)
           && Number(message.caveId) === player.caveId
-          ? getCaveWorld(player.caveId)
+          ? getCaveWorld(player.caveId, player.caveLayer ?? 0)
           : null
       )
       : (player.inCave ? null : state.surfaceWorld);
@@ -26542,6 +27529,7 @@
         type: "attack",
         world: state.inCave ? "cave" : "surface",
         caveId: state.activeCave?.id ?? null,
+        caveLayer: state.inCave ? normalizeCaveLayerIndex(state.activeCaveLayer) : 0,
         damage: getAttackDamage(state.player),
         unlocks: normalizeUnlocks(state.player.unlocks),
         x: state.player.x,
@@ -26594,8 +27582,12 @@
   function getPlayersForWorld(world) {
     const players = [];
     if (state.player) {
-      const hostInWorld = (!state.inCave && world === state.surfaceWorld)
-        || (state.inCave && state.activeCave?.world === world);
+      const hostWorld = getPlayerWorldForSync(
+        state.inCave,
+        state.activeCave?.id ?? null,
+        state.activeCaveLayer ?? 0
+      );
+      const hostInWorld = hostWorld === world;
       if (hostInWorld && Number.isFinite(state.player.x) && Number.isFinite(state.player.y)) {
         players.push({
           id: net.playerId || "local",
@@ -26604,13 +27596,16 @@
           inHut: state.player.inHut,
           inCave: state.inCave,
           caveId: state.activeCave?.id ?? null,
+          caveLayer: state.inCave ? normalizeCaveLayerIndex(state.activeCaveLayer) : 0,
         });
       }
     }
     if (net.isHost) {
       for (const player of net.players.values()) {
         if (!Number.isFinite(player?.x) || !Number.isFinite(player?.y)) continue;
-        const playerWorld = player.inCave ? getCaveWorld(player.caveId) : state.surfaceWorld;
+        const playerWorld = player.inCave
+          ? getCaveWorld(player.caveId, player.caveLayer ?? 0)
+          : state.surfaceWorld;
         if (playerWorld === world) {
           players.push(player);
         }
@@ -26634,6 +27629,7 @@
     player.houseY = null;
     player.inCave = false;
     player.caveId = null;
+    player.caveLayer = 0;
     const nextSeq = Number.isFinite(player.netSeq)
       ? Math.max(0, Math.floor(player.netSeq)) + 1
       : 1;
@@ -26868,12 +27864,9 @@
     const surface = state.surfaceWorld || state.world;
     if (!surface) return;
     updateMonsterBurnEffects(surface, dt);
-    if (Array.isArray(surface.caves)) {
-      for (const cave of surface.caves) {
-        if (!cave?.world) continue;
-        updateMonsterBurnEffects(cave.world, dt);
-      }
-    }
+    forEachGeneratedCaveLayerWorld(surface, (caveWorld) => {
+      updateMonsterBurnEffects(caveWorld, dt);
+    });
   }
 
   function igniteMonsterForDay(monster) {
@@ -27581,14 +28574,11 @@
         state.surfaceWorld.monsters = [];
         state.surfaceWorld.projectiles = [];
         state.surfaceWorld.poisonClouds = [];
-        if (Array.isArray(state.surfaceWorld.caves)) {
-          for (const cave of state.surfaceWorld.caves) {
-            if (!cave?.world) continue;
-            cave.world.monsters = [];
-            cave.world.projectiles = [];
-            cave.world.poisonClouds = [];
-          }
-        }
+        forEachGeneratedCaveLayerWorld(state.surfaceWorld, (caveWorld) => {
+          caveWorld.monsters = [];
+          caveWorld.projectiles = [];
+          caveWorld.poisonClouds = [];
+        });
       }
       return;
     }
@@ -27599,21 +28589,26 @@
 
     if (Array.isArray(surface.caves)) {
       for (const cave of surface.caves) {
+        const layerEntries = getGeneratedCaveLayerWorldEntries(cave);
         if (isCaveHostilesBlocked(surface, cave)) {
-          if (Array.isArray(cave.world?.monsters) && cave.world.monsters.length > 0) {
-            cave.world.monsters = [];
-          }
-          if (Array.isArray(cave.world?.projectiles) && cave.world.projectiles.length > 0) {
-            cave.world.projectiles = [];
-          }
-          if (Array.isArray(cave.world?.poisonClouds) && cave.world.poisonClouds.length > 0) {
-            cave.world.poisonClouds = [];
+          for (const layerEntry of layerEntries) {
+            if (Array.isArray(layerEntry.world?.monsters) && layerEntry.world.monsters.length > 0) {
+              layerEntry.world.monsters = [];
+            }
+            if (Array.isArray(layerEntry.world?.projectiles) && layerEntry.world.projectiles.length > 0) {
+              layerEntry.world.projectiles = [];
+            }
+            if (Array.isArray(layerEntry.world?.poisonClouds) && layerEntry.world.poisonClouds.length > 0) {
+              layerEntry.world.poisonClouds = [];
+            }
           }
           continue;
         }
-        const cavePlayers = getPlayersForWorld(cave.world);
-        if (cavePlayers.length > 0) {
-          updateMonstersInWorld(cave.world, dt, cavePlayers, false);
+        for (const layerEntry of layerEntries) {
+          const cavePlayers = getPlayersForWorld(layerEntry.world);
+          if (cavePlayers.length > 0) {
+            updateMonstersInWorld(layerEntry.world, dt, cavePlayers, false);
+          }
         }
       }
     }
@@ -29160,18 +30155,22 @@
     if (!cave || state.inCave) return;
     state.sleepSequence = null;
     state.returnPosition = { x: state.player.x, y: state.player.y };
+    const caveWorld = ensureCaveLayerWorld(cave, 0, state.surfaceWorld || state.world);
+    if (!caveWorld) return;
     state.inCave = true;
     state.activeCave = cave;
-    state.world = cave.world;
+    state.activeCaveLayer = 0;
+    state.world = caveWorld;
     state.player.inHut = false;
     closeStationMenu();
     closeChest();
     closeShipRepairPanel();
     closeInventory();
     buildMenu.classList.add("hidden");
-    const entrance = cave.world.entrance;
+    const entrance = caveWorld.entrance;
     state.player.x = (entrance.tx + 0.5) * CONFIG.tileSize;
     state.player.y = (entrance.ty + 0.5) * CONFIG.tileSize;
+    startCaveLayerTransitionEffect(CAVE_LAYER_LABELS[0]);
     markDirty();
     if (net.enabled) sendPlayerUpdate();
   }
@@ -29182,6 +30181,7 @@
     const returnPos = state.returnPosition;
     state.inCave = false;
     state.activeCave = null;
+    state.activeCaveLayer = 0;
     state.world = state.surfaceWorld;
     state.player.inHut = false;
     if (returnPos) {
@@ -29189,6 +30189,7 @@
       state.player.y = returnPos.y;
     }
     state.returnPosition = null;
+    startCaveLayerTransitionEffect("Surface");
     closeShipRepairPanel();
     closeInventory();
     markDirty();
@@ -29438,6 +30439,14 @@
     return !!state.sleepSequence;
   }
 
+  function updateCaveLayerTransition(dt) {
+    if (!state.caveTransition) return;
+    state.caveTransition.timer = Math.max(0, state.caveTransition.timer - Math.max(0, Number(dt) || 0));
+    if (state.caveTransition.timer <= 0.0001) {
+      state.caveTransition = null;
+    }
+  }
+
   function getActiveSleepCrawlDirection(inInterior = false) {
     const sequence = state.sleepSequence;
     if (!sequence || sequence.interior !== inInterior) return null;
@@ -29627,17 +30636,38 @@
         else if (state.nearInteriorMoveTarget) setPrompt("Press Space / Tap Attack to move furniture");
         else setPrompt("Inside house");
       } else if (state.inCave) {
-        const entrance = state.activeCave?.world?.entrance;
+        const caveWorld = state.world;
+        const entrance = caveWorld?.entrance;
+        const currentLayer = normalizeCaveLayerIndex(state.activeCaveLayer ?? 0);
+        const nearbyDepthEntrance = state.activeCave
+          ? findNearestCaveDepthEntrance(state.activeCave, state.player)
+          : null;
         if (entrance) {
           const ex = (entrance.tx + 0.5) * CONFIG.tileSize;
           const ey = (entrance.ty + 0.5) * CONFIG.tileSize;
           const dist = Math.hypot(ex - state.player.x, ey - state.player.y);
-          if (dist < CONFIG.interactRange) setPrompt("Press E to leave cave");
-          else if (state.targetMonster && !swordUnlocked) setPrompt("Craft a sword first");
-          else if (state.targetMonster || state.targetAnimal) setPrompt("Press Space / Tap Attack");
-          else if (state.targetResource && !resourceGate.ok) setPrompt(resourceGate.reason);
-          else if (state.targetResource) setPrompt(`Press Space / Tap Attack to ${getResourceActionName(state.targetResource)}`);
-          else setPrompt("Wind echoes through the cave");
+          if (currentLayer === 0 && dist < CONFIG.interactRange) {
+            setPrompt("Press E to leave cave");
+          } else if (nearbyDepthEntrance?.entrance) {
+            const targetLayer = normalizeCaveLayerIndex(nearbyDepthEntrance.entrance.targetLayer);
+            const targetLabel = CAVE_LAYER_LABELS[targetLayer] || `Layer ${targetLayer + 1}`;
+            if (nearbyDepthEntrance.entrance.direction > 0) {
+              setPrompt(`Descend deeper (E) - ${targetLabel}`);
+            } else {
+              setPrompt(`Ascend (E) - ${targetLabel}`);
+            }
+          } else if (state.targetMonster && !swordUnlocked) {
+            setPrompt("Craft a sword first");
+          } else if (state.targetMonster || state.targetAnimal) {
+            setPrompt("Press Space / Tap Attack");
+          } else if (state.targetResource && !resourceGate.ok) {
+            setPrompt(resourceGate.reason);
+          } else if (state.targetResource) {
+            setPrompt(`Press Space / Tap Attack to ${getResourceActionName(state.targetResource)}`);
+          } else {
+            const label = CAVE_LAYER_LABELS[currentLayer] || `Layer ${currentLayer + 1}`;
+            setPrompt(`Wind echoes through the cave (${label})`);
+          }
         }
       } else if (state.activeShipRepair) {
         setPrompt("Repairing abandoned ship");
@@ -29703,12 +30733,21 @@
         else if (state.nearStation) openStationMenu(state.nearStation);
         else if (state.nearBed) skipNightBySleep();
       } else if (state.inCave) {
-        const entrance = state.activeCave?.world?.entrance;
+        const caveWorld = state.world;
+        const entrance = caveWorld?.entrance;
+        const currentLayer = normalizeCaveLayerIndex(state.activeCaveLayer ?? 0);
+        const nearbyDepthEntrance = state.activeCave
+          ? findNearestCaveDepthEntrance(state.activeCave, state.player)
+          : null;
         if (entrance) {
           const ex = (entrance.tx + 0.5) * CONFIG.tileSize;
           const ey = (entrance.ty + 0.5) * CONFIG.tileSize;
           const dist = Math.hypot(ex - state.player.x, ey - state.player.y);
-          if (dist < CONFIG.interactRange) leaveCave();
+          if (currentLayer === 0 && dist < CONFIG.interactRange) {
+            leaveCave();
+          } else if (nearbyDepthEntrance?.entrance) {
+            traverseCaveDepthEntrance(nearbyDepthEntrance.entrance);
+          }
         }
       } else if (state.activeShipRepair) {
         closeShipRepairPanel();
@@ -29833,6 +30872,7 @@
     updateInteraction();
     updateRemoteRender(dt);
     alignAllWorldEntityRenderPositions();
+    updateCaveLayerTransition(dt);
     updateAudio(dt);
     netTick(dt);
     runDebugSyncAudit(dt);
@@ -30041,10 +31081,12 @@
     }
     if (state.inCave) {
       const activeCaveId = state.activeCave?.id;
+      const activeLayer = normalizeCaveLayerIndex(state.activeCaveLayer ?? 0);
       return !!player.inCave
         && Number.isInteger(activeCaveId)
         && Number.isInteger(player.caveId)
-        && player.caveId === activeCaveId;
+        && player.caveId === activeCaveId
+        && normalizeCaveLayerIndex(player.caveLayer ?? 0) === activeLayer;
     }
     return !player.inCave && !player.inHut;
   }
@@ -31495,7 +32537,31 @@
   }
 
   function drawCaveDarkness(camera) {
-    void camera;
+    if (!state.inCave || !state.player) return;
+    const cameraViewWidth = getCameraViewWidth(camera);
+    const cameraViewHeight = getCameraViewHeight(camera);
+    const layer = normalizeCaveLayerIndex(state.activeCaveLayer ?? 0);
+    const ambientAlpha = clamp(0.16 + layer * 0.08, 0.14, 0.42);
+    const playerScreen = worldToScreen(state.player.x, state.player.y, camera);
+    const lightRadiusTiles = clamp(8.8 - layer * 1.9, 4.8, 9.2);
+    const lightRadius = CONFIG.tileSize * lightRadiusTiles;
+    const gradient = ctx.createRadialGradient(
+      playerScreen.x,
+      playerScreen.y,
+      lightRadius * 0.18,
+      playerScreen.x,
+      playerScreen.y,
+      lightRadius
+    );
+    gradient.addColorStop(0, "rgba(0,0,0,0)");
+    gradient.addColorStop(0.56, `rgba(2, 8, 16, ${ambientAlpha * 0.42})`);
+    gradient.addColorStop(1, `rgba(2, 8, 16, ${ambientAlpha * 1.15})`);
+    ctx.save();
+    ctx.fillStyle = `rgba(4, 10, 18, ${ambientAlpha})`;
+    ctx.fillRect(0, 0, cameraViewWidth, cameraViewHeight);
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, cameraViewWidth, cameraViewHeight);
+    ctx.restore();
   }
 
   function drawSleepTransitionOverlay() {
@@ -31507,6 +32573,33 @@
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.fillStyle = `rgba(2, 5, 10, ${alpha})`;
     ctx.fillRect(0, 0, viewWidth, viewHeight);
+    ctx.restore();
+  }
+
+  function drawCaveLayerTransitionOverlay() {
+    const transition = state.caveTransition;
+    if (!transition) return;
+    const duration = Math.max(0.001, Number(transition.duration) || CAVE_LAYER_TRANSITION.duration);
+    const timer = clamp(Number(transition.timer) || 0, 0, duration);
+    const progress = 1 - (timer / duration);
+    const alpha = Math.sin(progress * Math.PI) * CAVE_LAYER_TRANSITION.maxAlpha;
+    if (alpha <= 0.001) return;
+    ctx.save();
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const cx = viewWidth * 0.5;
+    const cy = viewHeight * 0.5;
+    const gradient = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.max(viewWidth, viewHeight) * 0.72);
+    gradient.addColorStop(0, `rgba(0, 0, 0, ${alpha * 0.36})`);
+    gradient.addColorStop(1, `rgba(2, 6, 12, ${alpha})`);
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, viewWidth, viewHeight);
+    if (transition.label) {
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.font = "600 16px Trebuchet MS";
+      ctx.fillStyle = `rgba(225, 238, 255, ${clamp(alpha * 1.35, 0, 0.9)})`;
+      ctx.fillText(transition.label, cx, cy + 2);
+    }
     ctx.restore();
   }
 
@@ -31829,6 +32922,7 @@
     drawGuidanceMapOverlay();
     drawDebugWorldMiniMapOverlay();
     drawSleepTransitionOverlay();
+    drawCaveLayerTransitionOverlay();
   }
 
   function drawGuidanceMapOverlay() {
@@ -33100,15 +34194,55 @@
           drawStructure(structure, camera);
         }
       }
-    } else if (state.activeCave?.world?.entrance) {
-      const entrance = state.activeCave.world.entrance;
-      const screenX = entrance.tx * CONFIG.tileSize - camera.x;
-      const screenY = entrance.ty * CONFIG.tileSize - camera.y;
-      ctx.strokeStyle = "rgba(255,255,255,0.6)";
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(screenX + CONFIG.tileSize / 2, screenY + CONFIG.tileSize / 2, 10, 0, Math.PI * 2);
-      ctx.stroke();
+    } else if (state.inCave && state.world?.entrance) {
+      const caveWorld = state.world;
+      const currentLayer = normalizeCaveLayerIndex(state.activeCaveLayer ?? 0);
+      const entrance = caveWorld.entrance;
+      if (currentLayer === 0) {
+        const screenX = entrance.tx * CONFIG.tileSize - camera.x;
+        const screenY = entrance.ty * CONFIG.tileSize - camera.y;
+        ctx.strokeStyle = "rgba(255,255,255,0.6)";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(screenX + CONFIG.tileSize / 2, screenY + CONFIG.tileSize / 2, 10, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      if (Array.isArray(caveWorld.depthEntrances)) {
+        for (const node of caveWorld.depthEntrances) {
+          if (!node || !Number.isInteger(node.tx) || !Number.isInteger(node.ty)) continue;
+          const markerX = node.tx * CONFIG.tileSize - camera.x + CONFIG.tileSize / 2;
+          const markerY = node.ty * CONFIG.tileSize - camera.y + CONFIG.tileSize / 2;
+          if (
+            markerX < -28 || markerY < -28
+            || markerX > cameraViewWidth + 28
+            || markerY > cameraViewHeight + 28
+          ) continue;
+          const down = Number(node.direction) > 0;
+          ctx.save();
+          ctx.globalAlpha = 0.9;
+          ctx.fillStyle = down ? "rgba(62,108,160,0.55)" : "rgba(124,171,210,0.5)";
+          ctx.strokeStyle = down ? "rgba(142,201,255,0.82)" : "rgba(214,238,255,0.85)";
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(markerX, markerY, 7.5, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+          ctx.fillStyle = "rgba(255,255,255,0.9)";
+          ctx.beginPath();
+          if (down) {
+            ctx.moveTo(markerX - 3.6, markerY - 1.8);
+            ctx.lineTo(markerX + 3.6, markerY - 1.8);
+            ctx.lineTo(markerX, markerY + 3.6);
+          } else {
+            ctx.moveTo(markerX - 3.6, markerY + 1.8);
+            ctx.lineTo(markerX + 3.6, markerY + 1.8);
+            ctx.lineTo(markerX, markerY - 3.6);
+          }
+          ctx.closePath();
+          ctx.fill();
+          ctx.restore();
+        }
+      }
     }
 
     for (const drop of state.world.drops || []) {
@@ -33287,6 +34421,7 @@
     drawGuidanceMapOverlay();
     drawDebugWorldMiniMapOverlay();
     drawSleepTransitionOverlay();
+    drawCaveLayerTransitionOverlay();
   }
 
   function gameLoop() {
@@ -33312,6 +34447,8 @@
             removePlayerFromAllShips(getLocalShipPlayerId());
             state.inCave = false;
             state.activeCave = null;
+            state.activeCaveLayer = 0;
+            state.caveTransition = null;
             state.world = surface;
             const respawnPos = getPlayerRespawnPosition(state.player, surface);
             state.player.x = respawnPos.x;
