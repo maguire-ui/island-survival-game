@@ -97,6 +97,7 @@
   const forceNightBtn = document.getElementById("forceNightBtn");
   const mosesBtn = document.getElementById("mosesBtn");
   const infiniteResourcesBtn = document.getElementById("infiniteResourcesBtn");
+  const infiniteHealthBtn = document.getElementById("infiniteHealthBtn");
   const debugWorldMapBtn = document.getElementById("debugWorldMapBtn");
   const continentalShiftBtn = document.getElementById("continentalShiftBtn");
   const mpAutotestQuickBtn = document.getElementById("mpAutotestQuickBtn");
@@ -1792,6 +1793,7 @@
     sfxVolume: 0.62,
     debugUnlocked: false,
     debugInfiniteResources: false,
+    debugInfiniteHealth: false,
     debugSpeedMultiplier: 1,
     debugWorldSpeedMultiplier: 1,
     debugFovMultiplier: 1,
@@ -1963,6 +1965,7 @@
     debugUnlocked: SETTINGS_DEFAULTS.debugUnlocked,
     debugMoses: false,
     debugInfiniteResources: SETTINGS_DEFAULTS.debugInfiniteResources,
+    debugInfiniteHealth: SETTINGS_DEFAULTS.debugInfiniteHealth,
     debugWorldMapVisible: false,
     debugShowAbandonedRobot: false,
     debugContinentalShift: false,
@@ -2355,6 +2358,7 @@
       sfxVolume: clampVolume(state.sfxVolume, SETTINGS_DEFAULTS.sfxVolume),
       debugUnlocked: !!state.debugUnlocked,
       debugInfiniteResources: !!state.debugInfiniteResources,
+      debugInfiniteHealth: !!state.debugInfiniteHealth,
       debugSpeedMultiplier: clampDebugSpeedMultiplier(state.debugSpeedMultiplier),
       debugWorldSpeedMultiplier: clampDebugWorldSpeedMultiplier(state.debugWorldSpeedMultiplier),
       debugFovMultiplier: clampDebugFovMultiplier(state.debugFovMultiplier),
@@ -2380,8 +2384,9 @@
         state.sfxVolume = clampVolume(data.sfxVolume, SETTINGS_DEFAULTS.sfxVolume);
         // Debug access is session-based: always start locked on every load/join.
         state.debugUnlocked = false;
-        // Always start sessions with infinite resources off; users can toggle it per run.
+        // Always start sessions with infinite debug cheats off; users can toggle them per run.
         state.debugInfiniteResources = false;
+        state.debugInfiniteHealth = false;
         state.debugSpeedMultiplier = clampDebugSpeedMultiplier(data.debugSpeedMultiplier);
         state.debugWorldSpeedMultiplier = clampDebugWorldSpeedMultiplier(data.debugWorldSpeedMultiplier);
         state.debugFovMultiplier = clampDebugFovMultiplier(data.debugFovMultiplier);
@@ -2392,6 +2397,7 @@
       state.sfxVolume = SETTINGS_DEFAULTS.sfxVolume;
       state.debugUnlocked = false;
       state.debugInfiniteResources = SETTINGS_DEFAULTS.debugInfiniteResources;
+      state.debugInfiniteHealth = SETTINGS_DEFAULTS.debugInfiniteHealth;
       state.debugSpeedMultiplier = SETTINGS_DEFAULTS.debugSpeedMultiplier;
       state.debugWorldSpeedMultiplier = SETTINGS_DEFAULTS.debugWorldSpeedMultiplier;
       state.debugFovMultiplier = SETTINGS_DEFAULTS.debugFovMultiplier;
@@ -2556,6 +2562,7 @@
       }
       state.debugMoses = false;
       state.debugInfiniteResources = false;
+      state.debugInfiniteHealth = false;
       state.debugWorldMapVisible = false;
       state.debugShowAbandonedRobot = false;
       state.debugContinentalShift = false;
@@ -2574,6 +2581,7 @@
     }
     updateMosesButton();
     updateInfiniteResourcesButton();
+    updateInfiniteHealthButton();
     updateDebugWorldMapButton();
     updateContinentalShiftButton();
     updateDebugPlaceBoatButton();
@@ -6103,6 +6111,24 @@
     return !!state.debugUnlocked && !!state.debugInfiniteResources;
   }
 
+  function isInfiniteHealthEnabled() {
+    return !!state.debugUnlocked && !!state.debugInfiniteHealth;
+  }
+
+  function applyInfiniteHealthGuard() {
+    if (!state.player || !isInfiniteHealthEnabled()) return false;
+    ensurePlayerStatusEffects(state.player);
+    const needsUpdate = state.player.hp < state.player.maxHp
+      || state.player.poisonTimer > 0
+      || state.player.poisonDps > 0;
+    state.player.hp = state.player.maxHp;
+    if (state.player.poisonTimer > 0 || state.player.poisonDps > 0) {
+      clearPoisonStatus(state.player);
+    }
+    if (needsUpdate) updateHealthUI();
+    return true;
+  }
+
   function updateInfiniteResourcesButton() {
     if (!infiniteResourcesBtn) return;
     const enabled = isInfiniteResourcesEnabled();
@@ -6110,6 +6136,15 @@
       ? "Infinite Resources: On"
       : "Infinite Resources: Off";
     infiniteResourcesBtn.setAttribute("aria-pressed", enabled ? "true" : "false");
+  }
+
+  function updateInfiniteHealthButton() {
+    if (!infiniteHealthBtn) return;
+    const enabled = isInfiniteHealthEnabled();
+    infiniteHealthBtn.textContent = enabled
+      ? "Infinite Health: On"
+      : "Infinite Health: Off";
+    infiniteHealthBtn.setAttribute("aria-pressed", enabled ? "true" : "false");
   }
 
   function updateDebugWorldMapButton() {
@@ -12259,6 +12294,7 @@
     if (typeof message.hp !== "number" || !state.player) return;
     const prevHp = Number(state.player.hp);
     state.player.maxHp = normalizePlayerMaxHpValue(message.maxHp, state.player.maxHp);
+    if (applyInfiniteHealthGuard()) return;
     state.player.hp = normalizePlayerHpValue(message.hp, state.player.maxHp, state.player.hp);
     if (Number(message.poisonDuration) > 0) {
       applyPoisonStatus(message.poisonDuration, Number(message.poisonDps) || POISON_STATUS.defaultDps);
@@ -13335,6 +13371,7 @@
 
   function applyPoisonStatus(duration, dps = POISON_STATUS.defaultDps) {
     if (!state.player) return false;
+    if (applyInfiniteHealthGuard()) return false;
     ensurePlayerStatusEffects(state.player);
     const clampedDuration = clamp(Number(duration) || 0, 0, POISON_STATUS.maxDuration);
     if (clampedDuration <= 0) return false;
@@ -25282,6 +25319,29 @@
     );
   }
 
+  function toggleInfiniteHealth() {
+    if (!state.debugUnlocked) {
+      setPrompt("Debug is locked. Open Settings to unlock.", 1.2);
+      return;
+    }
+    if (netIsClientReady()) {
+      setPrompt("Host only", 1);
+      return;
+    }
+    state.debugInfiniteHealth = !state.debugInfiniteHealth;
+    updateInfiniteHealthButton();
+    if (state.debugInfiniteHealth) {
+      applyInfiniteHealthGuard();
+    }
+    saveUserSettings();
+    setPrompt(
+      state.debugInfiniteHealth
+        ? "Infinite health enabled"
+        : "Infinite health disabled",
+      1.2
+    );
+  }
+
   function toggleDebugWorldMap() {
     if (!state.debugUnlocked) {
       setPrompt("Debug is locked. Open Settings to unlock.", 1.2);
@@ -25596,6 +25656,7 @@
   function updatePlayerEffects(dt) {
     if (!state.player) return;
     ensurePlayerStatusEffects(state.player);
+    if (applyInfiniteHealthGuard()) return;
     if (state.player.poisonTimer <= 0) {
       if (state.player.poisonDps !== 0) {
         state.player.poisonDps = 0;
@@ -25848,6 +25909,7 @@
 
   function damagePlayer(amount, source = null) {
     if (!state.player) return;
+    if (applyInfiniteHealthGuard()) return;
     if (state.player.invincible > 0) return;
     const appliedDamage = getReducedDamageForArmor(amount, state.player);
     state.player.hp = Math.max(0, state.player.hp - appliedDamage);
@@ -30881,6 +30943,7 @@
     updateSave(dt);
     runDebugQaSelfTests(dt);
     if (state.player.hp <= 0 && !state.respawnLock) {
+      if (applyInfiniteHealthGuard()) return;
       handlePlayerDeath();
     }
   }
@@ -34442,22 +34505,24 @@
         console.error("Frame runtime error", err);
         state.respawnLock = false;
         if (state.player && state.player.hp <= 0) {
-          const surface = state.surfaceWorld || state.world;
-          if (surface) {
-            removePlayerFromAllShips(getLocalShipPlayerId());
-            state.inCave = false;
-            state.activeCave = null;
-            state.activeCaveLayer = 0;
-            state.caveTransition = null;
-            state.world = surface;
-            const respawnPos = getPlayerRespawnPosition(state.player, surface);
-            state.player.x = respawnPos.x;
-            state.player.y = respawnPos.y;
-            state.player.hp = state.player.maxHp;
-            state.player.invincible = 1;
-            setPlayerCheckpoint(state.player, surface, state.player.x, state.player.y, true);
-            resetInputStateAfterRespawn();
-            updateHealthUI();
+          if (!applyInfiniteHealthGuard()) {
+            const surface = state.surfaceWorld || state.world;
+            if (surface) {
+              removePlayerFromAllShips(getLocalShipPlayerId());
+              state.inCave = false;
+              state.activeCave = null;
+              state.activeCaveLayer = 0;
+              state.caveTransition = null;
+              state.world = surface;
+              const respawnPos = getPlayerRespawnPosition(state.player, surface);
+              state.player.x = respawnPos.x;
+              state.player.y = respawnPos.y;
+              state.player.hp = state.player.maxHp;
+              state.player.invincible = 1;
+              setPlayerCheckpoint(state.player, surface, state.player.x, state.player.y, true);
+              resetInputStateAfterRespawn();
+              updateHealthUI();
+            }
           }
         }
       }
@@ -34923,6 +34988,7 @@
     updateDebugFovUI();
     updateMosesButton();
     updateInfiniteResourcesButton();
+    updateInfiniteHealthButton();
     if (settingsPanel) settingsPanel.classList.add("hidden");
 
     window.addEventListener("resize", requestResize);
@@ -35168,6 +35234,7 @@
     if (forceNightBtn) forceNightBtn.addEventListener("click", forceDebugNight);
     if (mosesBtn) mosesBtn.addEventListener("click", toggleDebugMoses);
     if (infiniteResourcesBtn) infiniteResourcesBtn.addEventListener("click", toggleInfiniteResources);
+    if (infiniteHealthBtn) infiniteHealthBtn.addEventListener("click", toggleInfiniteHealth);
     if (debugWorldMapBtn) debugWorldMapBtn.addEventListener("click", toggleDebugWorldMap);
     if (continentalShiftBtn) continentalShiftBtn.addEventListener("click", toggleContinentalShift);
     if (debugPlaceBoatBtn) debugPlaceBoatBtn.addEventListener("click", toggleDebugPlaceRepairedBoat);
