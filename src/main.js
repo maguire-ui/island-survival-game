@@ -181,13 +181,13 @@
     defaultDps: 1.25,
   });
   const MARSH_STALKER_DAY_SPAWN = Object.freeze({
-    defaultChance: 0.24,
-    minChance: 0.12,
-    maxChance: 0.42,
-    secondaryChance: 0.022,
-    maxTotal: 4,
+    defaultChance: 0.08,
+    minChance: 0.03,
+    maxChance: 0.18,
+    secondaryChance: 0.006,
+    maxTotal: 2,
     maxPerIsland: 1,
-    spawnBudget: 2,
+    spawnBudget: 1,
     attempts: 42,
     minPlayerDistanceTiles: 2.6,
   });
@@ -2679,6 +2679,30 @@
     }
   }
 
+  function qaCheckEntityListIntegrity(list, label, issues) {
+    if (!Array.isArray(list)) {
+      qaPushIssue(issues, `[${label}] Expected array`);
+      return;
+    }
+    const seenRefs = new Set();
+    for (let i = 0; i < list.length; i += 1) {
+      const entry = list[i];
+      if (entry == null) {
+        qaPushIssue(issues, `[${label}] Null entry at index ${i}`);
+        continue;
+      }
+      if (typeof entry !== "object") {
+        qaPushIssue(issues, `[${label}] Non-object entry at index ${i}`);
+        continue;
+      }
+      if (seenRefs.has(entry)) {
+        qaPushIssue(issues, `[${label}] Duplicate object reference at index ${i}`);
+        break;
+      }
+      seenRefs.add(entry);
+    }
+  }
+
   function qaCheckFiniteEntityPosition(entry, label, issues, allowVelocity = false) {
     if (!entry) return;
     if (!Number.isFinite(entry.x) || !Number.isFinite(entry.y)) {
@@ -2704,6 +2728,43 @@
     }
   }
 
+  function qaCheckCaveDepthEntrances(world, label, issues) {
+    if (!isCaveWorldInstance(world)) return;
+    if (!Array.isArray(world.depthEntrances)) {
+      qaPushIssue(issues, `[${label}] Missing cave depthEntrances array`);
+      return;
+    }
+    const seenKeys = new Set();
+    for (const node of world.depthEntrances) {
+      if (!node) {
+        qaPushIssue(issues, `[${label}.depthEntrances] Null entry`);
+        continue;
+      }
+      if (!Number.isInteger(node.tx) || !Number.isInteger(node.ty)) {
+        qaPushIssue(issues, `[${label}.depthEntrances] Missing integer tile coords`);
+        continue;
+      }
+      if (!inBounds(node.tx, node.ty, world.size)) {
+        qaPushIssue(issues, `[${label}.depthEntrances] Out-of-bounds tile coords`);
+        continue;
+      }
+      const idx = tileIndex(node.tx, node.ty, world.size);
+      if (world.tiles[idx] !== 1) {
+        qaPushIssue(issues, `[${label}.depthEntrances] Entrance on non-walkable tile`);
+        break;
+      }
+      const kind = node.kind === "surface_link" ? "surface_link" : "layer";
+      const direction = Number(node.direction) || 0;
+      const slot = Number.isInteger(node.slot) ? node.slot : 0;
+      const key = `${kind}:${direction}:${slot}:${node.tx}:${node.ty}`;
+      if (seenKeys.has(key)) {
+        qaPushIssue(issues, `[${label}.depthEntrances] Duplicate entrance key ${key}`);
+        break;
+      }
+      seenKeys.add(key);
+    }
+  }
+
   function qaCheckWorldState(worldCtx, issues) {
     const { world, label, isSurface } = worldCtx;
     if (!world || typeof world !== "object") {
@@ -2725,6 +2786,14 @@
     if (!Array.isArray(world.poisonClouds)) qaPushIssue(issues, `[${label}] Missing poisonClouds array`);
     if (!Array.isArray(world.drops)) qaPushIssue(issues, `[${label}] Missing drops array`);
 
+    qaCheckEntityListIntegrity(world.resources, `${label}.resources`, issues);
+    qaCheckEntityListIntegrity(world.monsters, `${label}.monsters`, issues);
+    qaCheckEntityListIntegrity(world.animals, `${label}.animals`, issues);
+    qaCheckEntityListIntegrity(world.villagers, `${label}.villagers`, issues);
+    qaCheckEntityListIntegrity(world.projectiles, `${label}.projectiles`, issues);
+    qaCheckEntityListIntegrity(world.poisonClouds, `${label}.poisonClouds`, issues);
+    qaCheckEntityListIntegrity(world.drops, `${label}.drops`, issues);
+
     qaCheckUniqueNumericIds(world.resources, `${label}.resources`, issues);
     qaCheckUniqueNumericIds(world.monsters, `${label}.monsters`, issues);
     qaCheckUniqueNumericIds(world.animals, `${label}.animals`, issues);
@@ -2732,9 +2801,25 @@
     qaCheckUniqueNumericIds(world.projectiles, `${label}.projectiles`, issues);
     qaCheckUniqueNumericIds(world.poisonClouds, `${label}.poisonClouds`, issues);
     qaCheckUniqueNumericIds(world.drops, `${label}.drops`, issues);
+    qaCheckCaveDepthEntrances(world, label, issues);
 
     for (const resource of world.resources || []) {
       qaCheckFiniteEntityPosition(resource, `${label}.resource`, issues, false);
+      if (!resource || !Number.isInteger(resource.tx) || !Number.isInteger(resource.ty)) {
+        qaPushIssue(issues, `[${label}.resource] Missing integer tile coords`);
+        continue;
+      }
+      if (!inBounds(resource.tx, resource.ty, world.size)) {
+        qaPushIssue(issues, `[${label}.resource] Out-of-bounds tile coords`);
+        continue;
+      }
+      if (!resource.removed) {
+        const idx = tileIndex(resource.tx, resource.ty, world.size);
+        if (world.tiles[idx] !== 1) {
+          qaPushIssue(issues, `[${label}.resource] Active resource on non-walkable tile`);
+          break;
+        }
+      }
     }
     for (const monster of world.monsters || []) {
       qaCheckFiniteEntityPosition(monster, `${label}.monster`, issues, false);
@@ -2753,8 +2838,18 @@
     }
     for (const drop of world.drops || []) {
       qaCheckFiniteEntityPosition(drop, `${label}.drop`, issues, false);
-      if (!Number.isFinite(Number(drop.qty)) || drop.qty < 0) {
+      if (!Number.isFinite(Number(drop.qty)) || drop.qty <= 0) {
         qaPushIssue(issues, `[${label}.drop] Invalid quantity`);
+      }
+      const dropTx = Math.floor(Number(drop?.x) / CONFIG.tileSize);
+      const dropTy = Math.floor(Number(drop?.y) / CONFIG.tileSize);
+      if (!inBounds(dropTx, dropTy, world.size)) {
+        qaPushIssue(issues, `[${label}.drop] Out-of-bounds position`);
+        break;
+      }
+      if (isCaveWorldInstance(world) && world.tiles[tileIndex(dropTx, dropTy, world.size)] !== 1) {
+        qaPushIssue(issues, `[${label}.drop] Cave drop on non-walkable tile`);
+        break;
       }
     }
     if (netIsClientReady()) {
@@ -3128,6 +3223,94 @@
     return JSON.stringify(normalized);
   }
 
+  function qaSummarizePersistedWorldForCaveSignature(worldPayload) {
+    const resourceStates = Array.isArray(worldPayload?.resourceStates) ? worldPayload.resourceStates : [];
+    const drops = Array.isArray(worldPayload?.drops) ? worldPayload.drops : [];
+    const monsters = Array.isArray(worldPayload?.monsters) ? worldPayload.monsters : [];
+    const animals = Array.isArray(worldPayload?.animals) ? worldPayload.animals : [];
+    const villagers = Array.isArray(worldPayload?.villagers) ? worldPayload.villagers : [];
+    let removedResources = 0;
+    let activeOreResources = 0;
+    for (const res of resourceStates) {
+      if (!res) continue;
+      if (res.removed) removedResources += 1;
+      if ((res.type === "ore" || res.type === "coal") && !res.removed) activeOreResources += 1;
+    }
+    return {
+      resourceCount: resourceStates.length,
+      removedResources,
+      activeOreResources,
+      dropCount: drops.length,
+      monsterCount: monsters.length,
+      animalCount: animals.length,
+      villagerCount: villagers.length,
+    };
+  }
+
+  function qaBuildRuntimeCavePersistenceSignature(surfaceWorld) {
+    const caves = Array.isArray(surfaceWorld?.caves) ? surfaceWorld.caves : [];
+    const normalized = caves.map((cave) => {
+      const generatedEntries = getGeneratedCaveLayerWorldEntries(cave);
+      const layerPayloads = generatedEntries.map((entry) => ({
+        layer: normalizeCaveLayerIndex(entry.layer),
+        world: serializePersistedWorldState(entry.world, {
+          includeAnimals: true,
+          includeVillagers: true,
+        }),
+      }));
+      const fallbackLayerZero = ensureCaveLayerWorld(cave, 0, surfaceWorld);
+      const layerZeroState = layerPayloads.find((entry) => entry.layer === 0)?.world
+        || serializePersistedWorldState(fallbackLayerZero, {
+          includeAnimals: true,
+          includeVillagers: true,
+        });
+      const layerEntries = layerPayloads.length > 0
+        ? layerPayloads
+        : [{ layer: 0, world: layerZeroState }];
+      const layers = layerEntries
+        .map((entry) => ({
+          layer: normalizeCaveLayerIndex(entry.layer),
+          summary: qaSummarizePersistedWorldForCaveSignature(entry.world),
+        }))
+        .sort((a, b) => a.layer - b.layer);
+      if (!layers.some((entry) => entry.layer === 0)) {
+        layers.unshift({
+          layer: 0,
+          summary: qaSummarizePersistedWorldForCaveSignature(layerZeroState),
+        });
+      }
+      return {
+        id: Number.isInteger(cave?.id) ? cave.id : -1,
+        tx: Math.floor(Number(cave?.tx) || 0),
+        ty: Math.floor(Number(cave?.ty) || 0),
+        layers,
+      };
+    }).sort((a, b) => (a.id - b.id) || (a.tx - b.tx) || (a.ty - b.ty));
+    return JSON.stringify(normalized);
+  }
+
+  function qaBuildSavedCavePersistenceSignature(savedCaves) {
+    const normalized = (Array.isArray(savedCaves) ? savedCaves : []).map((cave) => {
+      const fallbackWorld = cave?.world && typeof cave.world === "object" ? cave.world : cave;
+      const layerEntries = Array.isArray(cave?.layers) && cave.layers.length > 0
+        ? cave.layers
+        : [{ layer: 0, world: fallbackWorld }];
+      const layers = layerEntries
+        .map((entry) => ({
+          layer: normalizeCaveLayerIndex(entry?.layer ?? 0),
+          summary: qaSummarizePersistedWorldForCaveSignature(entry?.world),
+        }))
+        .sort((a, b) => a.layer - b.layer);
+      return {
+        id: Number.isInteger(cave?.id) ? cave.id : -1,
+        tx: Math.floor(Number(cave?.tx) || 0),
+        ty: Math.floor(Number(cave?.ty) || 0),
+        layers,
+      };
+    }).sort((a, b) => (a.id - b.id) || (a.tx - b.tx) || (a.ty - b.ty));
+    return JSON.stringify(normalized);
+  }
+
   function qaValidateSaveRoundTrip(issues) {
     if (netIsClientReady()) return;
     const world = state.surfaceWorld || state.world;
@@ -3142,6 +3325,7 @@
       animalCount: Array.isArray(world.animals) ? world.animals.length : 0,
       monsterCount: Array.isArray(world.monsters) ? world.monsters.length : 0,
       caveCount: Array.isArray(world.caves) ? world.caves.length : 0,
+      caveSignature: qaBuildRuntimeCavePersistenceSignature(world),
       toolTier: Number(state.player.toolTier) || 1,
     };
     const prevDirty = state.dirty;
@@ -3180,6 +3364,10 @@
     }
     if ((Array.isArray(loaded.caves) ? loaded.caves.length : 0) !== before.caveCount) {
       qaPushIssue(issues, "[save/load] Cave count mismatch after reload");
+    }
+    const loadedCaveSignature = qaBuildSavedCavePersistenceSignature(loaded.caves);
+    if (loadedCaveSignature !== before.caveSignature) {
+      qaPushIssue(issues, "[save/load] Cave resource/drop state mismatch after reload");
     }
     if ((Number(loaded.player?.toolTier) || 1) !== before.toolTier) {
       qaPushIssue(issues, "[save/load] Player tool tier mismatch after reload");
@@ -17766,6 +17954,9 @@
         ttl: Number.isFinite(drop.ttl) ? drop.ttl : DROP_DESPAWN.lifetime,
       };
     });
+    if (isCaveWorldInstance(world)) {
+      normalizeCaveDropPositions(world);
+    }
   }
 
   function getBiomeStoneRespawnDelay() {
@@ -17902,6 +18093,7 @@
       if (!res || res.removed) return true;
       if (!Number.isInteger(res.tx) || !Number.isInteger(res.ty)) return true;
       if (!inBounds(res.tx, res.ty, world.size)) return true;
+      if (world.tiles[idx] !== 1 || world.beachGrid?.[idx]) return true;
       if (tileIndex(res.tx, res.ty, world.size) !== idx) return true;
     }
     for (const res of world.resources) {
@@ -17910,10 +18102,51 @@
       if (!inBounds(res.tx, res.ty, world.size)) return true;
       const idx = tileIndex(res.tx, res.ty, world.size);
       const shouldMap = !res.removed || (res.type === "tree" && res.stage && res.stage !== "alive");
+      if (shouldMap && (world.tiles[idx] !== 1 || world.beachGrid?.[idx])) return true;
       if (shouldMap && world.resourceGrid[idx] !== res.id) return true;
       if (!shouldMap && world.resourceGrid[idx] === res.id) return true;
     }
     return false;
+  }
+
+  function isCaveWorldInstance(world) {
+    return !!(
+      world
+      && Number.isInteger(world.layerIndex)
+      && world.entrance
+      && Number.isInteger(world.entrance.tx)
+      && Number.isInteger(world.entrance.ty)
+      && Array.isArray(world.depthEntrances)
+      && !Array.isArray(world.biomeGrid)
+    );
+  }
+
+  function normalizeCaveDropPositions(world) {
+    if (!isCaveWorldInstance(world) || !Array.isArray(world.drops)) return false;
+    let changed = false;
+    const nextDrops = [];
+    for (const drop of world.drops) {
+      if (!drop || !Number.isFinite(drop.x) || !Number.isFinite(drop.y)) {
+        changed = true;
+        continue;
+      }
+      const clamped = clampEntityPositionToWalkable(world, drop.x, drop.y, 10);
+      if (!clamped) {
+        changed = true;
+        continue;
+      }
+      if (drop.x !== clamped.x || drop.y !== clamped.y) {
+        drop.x = clamped.x;
+        drop.y = clamped.y;
+        changed = true;
+      }
+      nextDrops.push(drop);
+    }
+    if (nextDrops.length !== world.drops.length) {
+      world.drops = nextDrops;
+      changed = true;
+    }
+    return changed;
   }
 
   function rebuildWorldResourceGrid(world) {
@@ -22286,6 +22519,7 @@
     let changed = false;
     if (hasResourceGridInconsistency(caveWorld) && rebuildWorldResourceGrid(caveWorld)) changed = true;
     if (ensureCaveOreFallback(cave, caveWorld, layerIndex, surfaceWorld)) changed = true;
+    if (normalizeCaveDropPositions(caveWorld)) changed = true;
     if (Array.isArray(caveWorld.landmarks) && caveWorld.landmarks.length > 0) {
       const nextLandmarks = [];
       for (const landmark of caveWorld.landmarks) {
@@ -22666,8 +22900,11 @@
     const worldRef = surfaceWorld || state.surfaceWorld || state.world;
     if (cave.layers[normalizedLayer]) {
       const existingLayer = cave.layers[normalizedLayer];
-      repairCaveDepthEntrances(cave, existingLayer, normalizedLayer, worldRef);
-      normalizeCaveWorldArtifacts(cave, existingLayer, normalizedLayer, worldRef);
+      const depthChanged = repairCaveDepthEntrances(cave, existingLayer, normalizedLayer, worldRef);
+      const artifactChanged = normalizeCaveWorldArtifacts(cave, existingLayer, normalizedLayer, worldRef);
+      if ((depthChanged || artifactChanged) && !netIsClientReady()) {
+        markDirty();
+      }
       if (normalizedLayer === 0 || !cave.world) cave.world = cave.layers[0] || existingLayer;
       return existingLayer;
     }
@@ -22688,8 +22925,11 @@
       layerWorld.projectiles = [];
       layerWorld.poisonClouds = [];
     }
-    repairCaveDepthEntrances(cave, layerWorld, normalizedLayer, worldRef);
-    normalizeCaveWorldArtifacts(cave, layerWorld, normalizedLayer, worldRef);
+    const depthChanged = repairCaveDepthEntrances(cave, layerWorld, normalizedLayer, worldRef);
+    const artifactChanged = normalizeCaveWorldArtifacts(cave, layerWorld, normalizedLayer, worldRef);
+    if ((depthChanged || artifactChanged) && !netIsClientReady()) {
+      markDirty();
+    }
     return layerWorld;
   }
 
@@ -23072,12 +23312,22 @@
 
   function spawnDrop(itemId, qty, x, y, world = state.world, ttl = DROP_DESPAWN.lifetime) {
     if (qty <= 0 || !world || !ITEMS[itemId]) return;
+    if (!Array.isArray(world.drops)) world.drops = [];
+    let dropX = Number(x);
+    let dropY = Number(y);
+    if (!Number.isFinite(dropX) || !Number.isFinite(dropY)) return;
+    if (isCaveWorldInstance(world)) {
+      const clamped = clampEntityPositionToWalkable(world, dropX, dropY, 10);
+      if (!clamped) return;
+      dropX = clamped.x;
+      dropY = clamped.y;
+    }
     world.drops.push({
       id: state.nextDropId++,
       itemId,
       qty,
-      x,
-      y,
+      x: dropX,
+      y: dropY,
       ttl: clamp(Number(ttl) || DROP_DESPAWN.lifetime, 0, DROP_DESPAWN.lifetime),
     });
     markDirty();
@@ -28075,14 +28325,7 @@
       return !isPoisonMonsterPrimaryBiome(biome);
     });
 
-    // Guarantee at least one poison thrower appears when players are active on jungle islands.
     let spawned = 0;
-    if (countSurfaceMarshStalkers(world) <= 0 && activePrimaryIslands.length > 0) {
-      const emptyPrimary = activePrimaryIslands.find((island) => countMarshStalkersOnIsland(world, island) <= 0);
-      if (emptyPrimary && spawnDayMarshStalkerOnIsland(world, emptyPrimary, players, { force: true })) {
-        spawned += 1;
-      }
-    }
 
     const trySpawnFromIslands = (islands, budget) => {
       if (!Array.isArray(islands) || islands.length === 0 || budget <= 0) return 0;
