@@ -603,15 +603,15 @@
     "#6f8e92",
   ];
 
-  const CAVE_SIZE = 44;
+  const CAVE_SIZE = 28;
   const CAVE_LAYER_COUNT = 3;
   const CAVE_LAYER_LABELS = Object.freeze(["Layer 1", "Layer 2", "Layer 3"]);
   const CAVE_DEEP_ENTRANCE_CONFIG = Object.freeze({
     firstPairChance: 0.72,
     secondPairChance: 0.44,
-    minPortalDistanceTiles: 8.5,
-    minFromMainEntranceTiles: 6.2,
-    minPortalSeparationTiles: 4.4,
+    minPortalDistanceTiles: 6.8,
+    minFromMainEntranceTiles: 5.4,
+    minPortalSeparationTiles: 3.2,
   });
   const CAVE_LAYER_TRANSITION = Object.freeze({
     duration: 0.55,
@@ -14648,59 +14648,59 @@
     const styleRoll = rng();
     const caveStyle = styleRoll < 0.33
       ? {
-          roomCountMin: 13,
-          roomCountMax: 19,
-          roomRadiusMin: 1.45,
-          roomRadiusMax: 2.5,
-          roomStretchMin: 0.9,
-          roomStretchMax: 1.45,
-          tunnelRadiusMin: 0.56,
-          tunnelRadiusMax: 0.82,
-          branchChance: 0.9,
-          branchLengthMin: 6,
-          branchLengthMax: 13,
-          loopLinksMin: 5,
-          loopLinksMax: 9,
-          roomLobeChance: 0.32,
-          openTrimChance: 0.41,
-          mazeCutChance: 0.12,
+          roomCountMin: 8,
+          roomCountMax: 12,
+          roomRadiusMin: 1.2,
+          roomRadiusMax: 2.05,
+          roomStretchMin: 0.85,
+          roomStretchMax: 1.28,
+          tunnelRadiusMin: 0.5,
+          tunnelRadiusMax: 0.72,
+          branchChance: 0.94,
+          branchLengthMin: 5,
+          branchLengthMax: 10,
+          loopLinksMin: 4,
+          loopLinksMax: 6,
+          roomLobeChance: 0.2,
+          openTrimChance: 0.48,
+          mazeCutChance: 0.18,
         }
       : styleRoll < 0.66
         ? {
-            roomCountMin: 12,
-            roomCountMax: 18,
-            roomRadiusMin: 1.55,
-            roomRadiusMax: 2.75,
-            roomStretchMin: 0.88,
-            roomStretchMax: 1.5,
-            tunnelRadiusMin: 0.6,
-            tunnelRadiusMax: 0.86,
-            branchChance: 0.85,
-            branchLengthMin: 7,
-            branchLengthMax: 14,
-            loopLinksMin: 6,
-            loopLinksMax: 10,
-            roomLobeChance: 0.36,
-            openTrimChance: 0.36,
-            mazeCutChance: 0.1,
+            roomCountMin: 7,
+            roomCountMax: 11,
+            roomRadiusMin: 1.25,
+            roomRadiusMax: 2.15,
+            roomStretchMin: 0.84,
+            roomStretchMax: 1.3,
+            tunnelRadiusMin: 0.5,
+            tunnelRadiusMax: 0.74,
+            branchChance: 0.9,
+            branchLengthMin: 6,
+            branchLengthMax: 11,
+            loopLinksMin: 4,
+            loopLinksMax: 7,
+            roomLobeChance: 0.24,
+            openTrimChance: 0.45,
+            mazeCutChance: 0.16,
           }
         : {
-            roomCountMin: 14,
-            roomCountMax: 21,
-            roomRadiusMin: 1.35,
-            roomRadiusMax: 2.35,
-            roomStretchMin: 0.85,
-            roomStretchMax: 1.42,
-            tunnelRadiusMin: 0.52,
-            tunnelRadiusMax: 0.78,
-            branchChance: 0.95,
-            branchLengthMin: 8,
-            branchLengthMax: 15,
-            loopLinksMin: 7,
-            loopLinksMax: 11,
-            roomLobeChance: 0.26,
-            openTrimChance: 0.46,
-            mazeCutChance: 0.15,
+            roomCountMin: 9,
+            roomCountMax: 13,
+            roomRadiusMin: 1.15,
+            roomRadiusMax: 1.95,
+            roomStretchMin: 0.82,
+            roomStretchMax: 1.26,
+            tunnelRadiusMin: 0.46,
+            tunnelRadiusMax: 0.68,
+            branchChance: 0.97,
+            branchLengthMin: 6,
+            branchLengthMax: 12,
+            loopLinksMin: 5,
+            loopLinksMax: 8,
+            roomLobeChance: 0.16,
+            openTrimChance: 0.54,
+            mazeCutChance: 0.22,
           };
     caveStyle.tunnelRadiusMin = Math.max(0.46, caveStyle.tunnelRadiusMin - layerIndex * 0.04);
     caveStyle.tunnelRadiusMax = Math.max(
@@ -14747,9 +14747,9 @@
         const cx = lerp(a.x, b.x, t);
         const cy = lerp(a.y, b.y, t);
         const jitter = (rand2d(step + Math.floor(a.x * 11), Math.floor(b.y * 13) + 19, caveSeed + 2401) - 0.5) * 0.16;
-        carveCircle(cx, cy, Math.max(0.64, baseRadius + jitter));
-        if (rand2d(step * 7 + 11, Math.floor(cx * 5) + 37, caveSeed + 2741) < 0.04) {
-          carveCircle(cx, cy, Math.max(0.8, baseRadius + 0.4));
+        carveCircle(cx, cy, Math.max(0.52, baseRadius + jitter));
+        if (rand2d(step * 7 + 11, Math.floor(cx * 5) + 37, caveSeed + 2741) < 0.025) {
+          carveCircle(cx, cy, Math.max(0.72, baseRadius + 0.24));
         }
       }
     }
@@ -15115,7 +15115,7 @@
         if (!a || !b) continue;
         if (a.tx === b.tx && a.ty === b.ty) continue;
         const dist = Math.hypot(a.tx - b.tx, a.ty - b.ty);
-        if (dist < 5 || dist > size * 0.5) continue;
+        if (dist < 4 || dist > size * 0.58) continue;
         carveTunnel({ x: a.tx, y: a.ty }, { x: b.tx, y: b.ty }, Math.max(0.52, caveStyle.tunnelRadiusMin * 0.95));
         return true;
       }
@@ -15195,6 +15195,13 @@
         ? Math.max(0, Number(options.minFromEntrance))
         : 0;
       const reserved = options?.reserved instanceof Set ? options.reserved : null;
+      const preferBranch = options?.preferBranch !== false;
+      const minOpen = Number.isFinite(options?.minOpen)
+        ? clamp(Math.floor(options.minOpen), 1, 4)
+        : 2;
+      const maxOpen = Number.isFinite(options?.maxOpen)
+        ? clamp(Math.floor(options.maxOpen), minOpen, 4)
+        : (preferBranch ? 3 : 4);
       let best = null;
       let bestScore = Infinity;
       for (let radius = 0; radius <= maxRadius; radius += 1) {
@@ -15206,13 +15213,10 @@
             if (!tiles[tileIndex(tx, ty, size)]) continue;
             if (Math.hypot(tx - entrance.tx, ty - entrance.ty) < minFromEntrance) continue;
             if (reserved?.has(`${tx},${ty}`)) continue;
-            let cardinalOpen = 0;
-            if (tiles[tileIndex(tx + 1, ty, size)]) cardinalOpen += 1;
-            if (tiles[tileIndex(tx - 1, ty, size)]) cardinalOpen += 1;
-            if (tiles[tileIndex(tx, ty + 1, size)]) cardinalOpen += 1;
-            if (tiles[tileIndex(tx, ty - 1, size)]) cardinalOpen += 1;
-            if (cardinalOpen < 2) continue;
-            const score = Math.hypot(tx - originX, ty - originY);
+            const cardinalOpen = getCardinalOpenCount(tx, ty);
+            if (cardinalOpen < minOpen || cardinalOpen > maxOpen) continue;
+            const branchPenalty = preferBranch ? Math.abs(cardinalOpen - 2) * 0.75 : 0;
+            const score = Math.hypot(tx - originX, ty - originY) + branchPenalty;
             if (score < bestScore) {
               bestScore = score;
               best = { tx, ty };
@@ -15223,7 +15227,17 @@
       return best;
     }
 
-    function findDeterministicDepthFallbackTile(minFromEntrance = 0, reserved = null, salt = 0) {
+    function findDeterministicDepthFallbackTile(minFromEntrance = 0, reserved = null, salt = 0, options = null) {
+      const preferBranch = options?.preferBranch !== false;
+      const minReservedRadius = Number.isFinite(options?.minReservedRadius)
+        ? clamp(Math.floor(options.minReservedRadius), 1, 5)
+        : 2;
+      const minOpen = Number.isFinite(options?.minOpen)
+        ? clamp(Math.floor(options.minOpen), 1, 4)
+        : 2;
+      const maxOpen = Number.isFinite(options?.maxOpen)
+        ? clamp(Math.floor(options.maxOpen), minOpen, 4)
+        : (preferBranch ? 3 : 4);
       const startOffset = Math.floor(rand2d(17 + salt, 31 + salt, caveSeed + 7817) * (size - 2));
       const total = (size - 2) * (size - 2);
       for (let step = 0; step < total; step += 1) {
@@ -15233,13 +15247,9 @@
         if (!tiles[tileIndex(tx, ty, size)]) continue;
         if (Math.hypot(tx - entrance.tx, ty - entrance.ty) < minFromEntrance) continue;
         if (reserved?.has(`${tx},${ty}`)) continue;
-        if (hasReservedDepthNear(tx, ty, 2)) continue;
-        let cardinalOpen = 0;
-        if (tiles[tileIndex(tx + 1, ty, size)]) cardinalOpen += 1;
-        if (tiles[tileIndex(tx - 1, ty, size)]) cardinalOpen += 1;
-        if (tiles[tileIndex(tx, ty + 1, size)]) cardinalOpen += 1;
-        if (tiles[tileIndex(tx, ty - 1, size)]) cardinalOpen += 1;
-        if (cardinalOpen < 2) continue;
+        if (hasReservedDepthNear(tx, ty, minReservedRadius)) continue;
+        const cardinalOpen = getCardinalOpenCount(tx, ty);
+        if (cardinalOpen < minOpen || cardinalOpen > maxOpen) continue;
         return { tx, ty };
       }
       return null;
@@ -15266,15 +15276,15 @@
         dist: Math.hypot(room.x - entrance.tx, room.y - entrance.ty),
       }))
       .sort((a, b) => b.dist - a.dist);
-    const farRooms = roomDepths.filter((entry) => entry.dist >= size * 0.26);
+    const farRooms = roomDepths.filter((entry) => entry.dist >= size * 0.28);
     const midRooms = roomDepths.filter(
       (entry) => (
         entry.dist >= CAVE_DEEP_ENTRANCE_CONFIG.minFromMainEntranceTiles
-        && entry.dist <= size * 0.72
+        && entry.dist <= size * 0.7
       )
     );
     const portalRequests = getCaveLayerPortalRequests(layerIndex, linkConfig);
-      for (const request of portalRequests) {
+    for (const request of portalRequests) {
       const requestSalt = (
         (request.direction === "down" ? 37 : 97)
         + (request.targetLayer * 131)
@@ -15283,39 +15293,89 @@
       const preferredRooms = request.direction === "down"
         ? (farRooms.length > 0 ? farRooms : roomDepths)
         : (midRooms.length > 0 ? midRooms : roomDepths);
-        const fallbackRooms = roomDepths;
-        let placed = null;
-        const minFromEntrance = request.direction === "down"
-          ? (CAVE_DEEP_ENTRANCE_CONFIG.minFromMainEntranceTiles + layerIndex * 0.6)
-          : Math.max(4.4, CAVE_DEEP_ENTRANCE_CONFIG.minFromMainEntranceTiles - 1.1);
-        for (let attempt = 0; attempt < 56; attempt += 1) {
-          const useFallback = attempt >= 36 || preferredRooms.length === 0;
-          const roomPool = useFallback ? fallbackRooms : preferredRooms;
-          if (!roomPool.length) break;
+      const fallbackRooms = roomDepths;
+      let placed = null;
+      const minFromEntrance = request.direction === "down"
+        ? (CAVE_DEEP_ENTRANCE_CONFIG.minFromMainEntranceTiles + layerIndex * 0.4)
+        : Math.max(3.6, CAVE_DEEP_ENTRANCE_CONFIG.minFromMainEntranceTiles - 1.6);
+      for (let attempt = 0; attempt < 56; attempt += 1) {
+        const useFallback = attempt >= 34 || preferredRooms.length === 0;
+        const roomPool = useFallback ? fallbackRooms : preferredRooms;
+        if (!roomPool.length) break;
         const pick = Math.floor(
           rand2d(requestSalt + attempt * 17, layerIndex * 41 + request.targetLayer * 19, caveSeed + 5431) * roomPool.length
-          );
-          const room = roomPool[pick];
-          if (!room) continue;
-          const candidate = findNearestWalkableTile(room.x, room.y, 8, {
-            minFromEntrance,
-            reserved: reservedDepthTiles,
-          });
+        );
+        const room = roomPool[pick];
+        if (!room) continue;
+        const candidate = findNearestWalkableTile(room.x, room.y, 8, {
+          minFromEntrance,
+          reserved: reservedDepthTiles,
+          preferBranch: true,
+          minOpen: 2,
+          maxOpen: 3,
+        }) || (
+          useFallback
+            ? findNearestWalkableTile(room.x, room.y, 9, {
+              minFromEntrance,
+              reserved: reservedDepthTiles,
+              preferBranch: false,
+              minOpen: 2,
+              maxOpen: 4,
+            })
+            : null
+        );
         if (!candidate) continue;
         if (hasReservedDepthNear(candidate.tx, candidate.ty, 3)) continue;
-          placed = candidate;
-          break;
-        }
-        if (!placed) {
-          placed = findDeterministicDepthFallbackTile(
-            minFromEntrance,
-            reservedDepthTiles,
-            requestSalt + request.slot * 97
-          );
-        }
-        if (!placed) continue;
-        reserveDepthTile(placed.tx, placed.ty);
-        depthEntrances.push({
+        placed = candidate;
+        break;
+      }
+      if (!placed) {
+        placed = findDeterministicDepthFallbackTile(
+          minFromEntrance,
+          reservedDepthTiles,
+          requestSalt + request.slot * 97,
+          {
+            preferBranch: true,
+            minOpen: 2,
+            maxOpen: 3,
+            minReservedRadius: 3,
+          }
+        );
+      }
+      if (!placed) {
+        placed = findDeterministicDepthFallbackTile(
+          Math.max(2.6, minFromEntrance - 1.8),
+          reservedDepthTiles,
+          requestSalt + request.slot * 131 + 53,
+          {
+            preferBranch: false,
+            minOpen: 2,
+            maxOpen: 4,
+            minReservedRadius: 2,
+          }
+        );
+      }
+      if (!placed) {
+        const emergencyOrigin = request.direction === "down"
+          ? {
+              x: entrance.tx + (rand2d(requestSalt + 3, layerIndex + 41, caveSeed + 6133) - 0.5) * 8,
+              y: entrance.ty - (4.6 + layerIndex * 1.8),
+            }
+          : {
+              x: entrance.tx + (rand2d(requestSalt + 7, layerIndex + 67, caveSeed + 7219) - 0.5) * 7,
+              y: entrance.ty - (3.2 + layerIndex * 1.3),
+            };
+        placed = findNearestWalkableTile(emergencyOrigin.x, emergencyOrigin.y, 12, {
+          minFromEntrance: Math.max(1.8, minFromEntrance - 2.4),
+          reserved: reservedDepthTiles,
+          preferBranch: false,
+          minOpen: 2,
+          maxOpen: 4,
+        });
+      }
+      if (!placed || hasReservedDepthNear(placed.tx, placed.ty, 2)) continue;
+      reserveDepthTile(placed.tx, placed.ty);
+      depthEntrances.push({
         tx: placed.tx,
         ty: placed.ty,
         direction: request.direction === "down" ? 1 : -1,
@@ -30714,9 +30774,9 @@
             const targetLayer = normalizeCaveLayerIndex(nearbyDepthEntrance.entrance.targetLayer);
             const targetLabel = CAVE_LAYER_LABELS[targetLayer] || `Layer ${targetLayer + 1}`;
             if (nearbyDepthEntrance.entrance.direction > 0) {
-              setPrompt(`Descend deeper (E) - ${targetLabel}`);
+              setPrompt(`Go deeper (E) - ${targetLabel}`);
             } else {
-              setPrompt(`Ascend (E) - ${targetLabel}`);
+              setPrompt(`Go up (E) - ${targetLabel}`);
             }
           } else if (state.targetMonster && !swordUnlocked) {
             setPrompt("Craft a sword first");
@@ -34282,24 +34342,32 @@
           ) continue;
           const down = Number(node.direction) > 0;
           ctx.save();
-          ctx.globalAlpha = 0.9;
-          ctx.fillStyle = down ? "rgba(62,108,160,0.55)" : "rgba(124,171,210,0.5)";
-          ctx.strokeStyle = down ? "rgba(142,201,255,0.82)" : "rgba(214,238,255,0.85)";
-          ctx.lineWidth = 2;
+          ctx.globalAlpha = 0.95;
+          ctx.fillStyle = down ? "rgba(8, 14, 20, 0.92)" : "rgba(10, 16, 24, 0.88)";
+          ctx.strokeStyle = down ? "rgba(120, 198, 255, 0.72)" : "rgba(198, 228, 255, 0.76)";
+          ctx.lineWidth = 1.6;
           ctx.beginPath();
-          ctx.arc(markerX, markerY, 7.5, 0, Math.PI * 2);
+          ctx.ellipse(markerX, markerY + 1, 8.5, 6.4, 0, 0, Math.PI * 2);
           ctx.fill();
           ctx.stroke();
-          ctx.fillStyle = "rgba(255,255,255,0.9)";
+          ctx.strokeStyle = down ? "rgba(96, 176, 235, 0.42)" : "rgba(186, 216, 242, 0.42)";
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(markerX - 4.8, markerY - 1.2);
+          ctx.lineTo(markerX + 4.9, markerY + 1.5);
+          ctx.moveTo(markerX - 3.2, markerY + 2.9);
+          ctx.lineTo(markerX + 3.5, markerY - 2.5);
+          ctx.stroke();
+          ctx.fillStyle = "rgba(225, 244, 255, 0.9)";
           ctx.beginPath();
           if (down) {
-            ctx.moveTo(markerX - 3.6, markerY - 1.8);
-            ctx.lineTo(markerX + 3.6, markerY - 1.8);
-            ctx.lineTo(markerX, markerY + 3.6);
+            ctx.moveTo(markerX - 3.1, markerY - 2.4);
+            ctx.lineTo(markerX + 3.1, markerY - 2.4);
+            ctx.lineTo(markerX, markerY + 2.8);
           } else {
-            ctx.moveTo(markerX - 3.6, markerY + 1.8);
-            ctx.lineTo(markerX + 3.6, markerY + 1.8);
-            ctx.lineTo(markerX, markerY - 3.6);
+            ctx.moveTo(markerX - 3.1, markerY + 2.4);
+            ctx.lineTo(markerX + 3.1, markerY + 2.4);
+            ctx.lineTo(markerX, markerY - 2.8);
           }
           ctx.closePath();
           ctx.fill();
