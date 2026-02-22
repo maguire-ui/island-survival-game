@@ -532,6 +532,14 @@
     villagers: CONFIG.tileSize * 6.4,
   });
   const MP_AUTOTEST_MOB_STALL_LIMIT = 22;
+  const MP_AUTOTEST_HARD_TIMEOUT_BUFFER = Object.freeze({
+    quick: 30,
+    stress: 80,
+  });
+  const MP_AUTOTEST_NO_PROGRESS_TIMEOUT = Object.freeze({
+    quick: 18,
+    stress: 36,
+  });
   const MP_AUTOTEST_MODES = Object.freeze({
     quick: Object.freeze({
       id: "quick",
@@ -1747,9 +1755,12 @@
   const SAMPLE_FADE_OUT_SECONDS = 0.018;
   const CHASE_LOOP_ZERO_CROSS_WINDOW_SECONDS = 0.02;
   const CHASE_LOOP_EDGE_FADE_SECONDS = 0.016;
-  const MONSTER_CHASE_RELEASE_HOLD_SECONDS = 0.34;
-  const MONSTER_CHASE_RESTART_GUARD_SECONDS = 0.12;
+  const MONSTER_CHASE_RELEASE_HOLD_SECONDS = 0.42;
+  const MONSTER_CHASE_RESTART_GUARD_SECONDS = 0.18;
   const MONSTER_CHASE_DUCK_GAIN_MULT = 0.44;
+  const MONSTER_CHASE_STOP_FADE_SECONDS = 0.14;
+  const MONSTER_CHASE_SWAP_FADE_SECONDS = 0.075;
+  const MONSTER_CHASE_START_FADE_SECONDS = 0.11;
   const LION_AGGRO_SFX_SRC = "assets/lion-aggro.mp3";
   const LION_AGGRO_SFX_TRIM_THRESHOLD = 0.008;
   const LION_AGGRO_SFX_MAX_SCAN_SECONDS = 2.2;
@@ -1909,6 +1920,9 @@
     runningStatus: "idle",
     savedSeed: null,
     diagnostics: null,
+    wallStartMs: 0,
+    lastObservedStep: 0,
+    lastProgressWallElapsed: 0,
   };
 
   const state = {
@@ -5746,6 +5760,33 @@
     mpAutotestStop({ restoreSeed: true, status: "fail", keepLog: true });
   }
 
+  function mpAutotestAbortInternal(reason, err = null) {
+    if (!mpAutotest.active) return;
+    const detailText = err && typeof err === "object"
+      ? `${err.name || "Error"}: ${err.message || String(err)}`
+      : String(reason || "Unknown autotest runtime error");
+    console.error("[MP AUTOTEST]", reason, err);
+    try {
+      mpAutotestFail(reason || "Autotest runtime error", {
+        subsystem: "runtime",
+        error: detailText,
+      });
+    } catch (failErr) {
+      console.error("[MP AUTOTEST] Failed to build failure report", failErr);
+      try {
+        mpAutotestLogLine(`FAIL: ${reason || "Autotest runtime error"}`);
+        mpAutotestLogLine(`Runtime error: ${detailText}`);
+      } catch (_logErr) {
+        // ignore secondary logging failures
+      }
+      try {
+        mpAutotestStop({ restoreSeed: true, status: "fail", keepLog: true });
+      } catch (_stopErr) {
+        mpAutotest.active = false;
+      }
+    }
+  }
+
   function mpAutotestPass() {
     if (!mpAutotest.active) return;
     mpAutotest.failReason = "";
@@ -5945,6 +5986,9 @@
     mpAutotest.replayBundle = null;
     mpAutotest.savedSeed = null;
     mpAutotestResetDiagnostics();
+    mpAutotest.wallStartMs = 0;
+    mpAutotest.lastObservedStep = 0;
+    mpAutotest.lastProgressWallElapsed = 0;
     if (!keepLog) {
       mpAutotest.logLines = ["Multiplayer autotest idle."];
       if (mpAutotestLogEl) mpAutotestLogEl.textContent = mpAutotest.logLines[0];
@@ -5954,34 +5998,90 @@
 
   function runMultiplayerAutotest(dt = 0) {
     if (!mpAutotest.active) return;
-    const step = Math.max(0, Number(dt) || 0);
-    mpAutotest.elapsed += step;
-    mpAutotestFlushMessageQueue(false);
-    mpAutotest.periodicCheckTimer -= step;
-    if (mpAutotest.periodicCheckTimer <= 0) {
-      mpAutotest.periodicCheckTimer = mpAutotest.mode?.stress ? 0.2 : 0.34;
-      mpAutotestEnsureChecks({ ledgerRule: "allowAny", kind: "periodic" });
-    }
-    if (!mpAutotest.active) return;
-    mpAutotest.actionTimer -= step;
-    if (mpAutotest.actionTimer <= 0) {
+    try {
+      const step = Math.max(0, Number(dt) || 0);
       const mode = mpAutotest.mode || MP_AUTOTEST_MODES.quick;
-      const actionsPerTick = mode.stress ? 2 : 1;
-      for (let i = 0; i < actionsPerTick; i += 1) {
-        if (!mpAutotest.active) break;
-        mpAutotestRunActionStep();
+      const targetDuration = Number(mode.duration) || 45;
+      const nowMs = (typeof performance !== "undefined" && typeof performance.now === "function")
+        ? performance.now()
+        : Date.now();
+      if (!(mpAutotest.wallStartMs > 0)) {
+        mpAutotest.wallStartMs = nowMs;
+        mpAutotest.lastObservedStep = mpAutotest.step;
+        mpAutotest.lastProgressWallElapsed = 0;
       }
-      if (mpAutotest.active) {
-        const min = Number(mode.actionIntervalMin) || 0.2;
-        const max = Number(mode.actionIntervalMax) || min;
-        const span = Math.max(0, max - min);
-        mpAutotest.actionTimer = min + mpAutotest.rng() * span;
+      let wallElapsed = Math.max(0, (nowMs - mpAutotest.wallStartMs) / 1000);
+      if (mpAutotest.step !== mpAutotest.lastObservedStep) {
+        mpAutotest.lastObservedStep = mpAutotest.step;
+        mpAutotest.lastProgressWallElapsed = wallElapsed;
       }
-    }
-    if (!mpAutotest.active) return;
-    const targetDuration = Number(mpAutotest.mode?.duration) || 45;
-    if (mpAutotest.elapsed >= targetDuration) {
-      mpAutotestPass();
+
+      mpAutotest.elapsed += step;
+      mpAutotestFlushMessageQueue(false);
+      mpAutotest.periodicCheckTimer -= step;
+      if (mpAutotest.periodicCheckTimer <= 0) {
+        mpAutotest.periodicCheckTimer = mode.stress ? 0.2 : 0.34;
+        mpAutotestEnsureChecks({ ledgerRule: "allowAny", kind: "periodic" });
+      }
+      if (!mpAutotest.active) return;
+      mpAutotest.actionTimer -= step;
+      if (mpAutotest.actionTimer <= 0) {
+        const actionsPerTick = mode.stress ? 2 : 1;
+        for (let i = 0; i < actionsPerTick; i += 1) {
+          if (!mpAutotest.active) break;
+          mpAutotestRunActionStep();
+        }
+        if (mpAutotest.active) {
+          const min = Number(mode.actionIntervalMin) || 0.2;
+          const max = Number(mode.actionIntervalMax) || min;
+          const span = Math.max(0, max - min);
+          mpAutotest.actionTimer = min + mpAutotest.rng() * span;
+        }
+      }
+      if (!mpAutotest.active) return;
+
+      // Refresh elapsed after action processing so stall checks can observe progress
+      // that occurred during this tick.
+      wallElapsed = Math.max(0, (((typeof performance !== "undefined" && typeof performance.now === "function")
+        ? performance.now()
+        : Date.now()) - mpAutotest.wallStartMs) / 1000);
+      if (mpAutotest.step !== mpAutotest.lastObservedStep) {
+        mpAutotest.lastObservedStep = mpAutotest.step;
+        mpAutotest.lastProgressWallElapsed = wallElapsed;
+      }
+
+      const hardTimeoutBuffer = mode.stress
+        ? MP_AUTOTEST_HARD_TIMEOUT_BUFFER.stress
+        : MP_AUTOTEST_HARD_TIMEOUT_BUFFER.quick;
+      const noProgressTimeout = mode.stress
+        ? MP_AUTOTEST_NO_PROGRESS_TIMEOUT.stress
+        : MP_AUTOTEST_NO_PROGRESS_TIMEOUT.quick;
+
+      if (wallElapsed >= targetDuration + hardTimeoutBuffer) {
+        mpAutotestFail("Autotest timeout (did not finish in expected time window)", {
+          subsystem: "runner",
+          wallElapsed: Number(wallElapsed.toFixed(3)),
+          targetDuration,
+          step: mpAutotest.step,
+        });
+        return;
+      }
+      if (wallElapsed > 4 && wallElapsed - (mpAutotest.lastProgressWallElapsed || 0) >= noProgressTimeout) {
+        mpAutotestFail("Autotest stalled (no progress)", {
+          subsystem: "runner",
+          wallElapsed: Number(wallElapsed.toFixed(3)),
+          idleSeconds: Number((wallElapsed - (mpAutotest.lastProgressWallElapsed || 0)).toFixed(3)),
+          step: mpAutotest.step,
+          lastAction: mpAutotest.lastAction,
+        });
+        return;
+      }
+
+      if (mpAutotest.elapsed >= targetDuration) {
+        mpAutotestPass();
+      }
+    } catch (err) {
+      mpAutotestAbortInternal("Autotest runner crashed", err);
     }
   }
 
@@ -6026,6 +6126,9 @@
     mpAutotest.seed = seed;
     mpAutotest.elapsed = 0;
     mpAutotest.step = 0;
+    mpAutotest.wallStartMs = 0;
+    mpAutotest.lastObservedStep = 0;
+    mpAutotest.lastProgressWallElapsed = 0;
     mpAutotest.nextSeq = 1;
     mpAutotest.actionTimer = 0.06;
     mpAutotest.periodicCheckTimer = 0.24;
@@ -7174,7 +7277,7 @@
     return audio.monsterChaseVoiceStopTimes;
   }
 
-  function stopMonsterChaseVoiceByKey(key, fadeSeconds = 0.09) {
+  function stopMonsterChaseVoiceByKey(key, fadeSeconds = MONSTER_CHASE_STOP_FADE_SECONDS) {
     const map = ensureMonsterChaseVoicesMap();
     const entry = map.get(key);
     if (!entry) return;
@@ -7190,13 +7293,17 @@
         }
       }
     }
-    const fade = clamp(Number(fadeSeconds) || 0.09, 0.01, 0.35);
+    const fade = clamp(Number(fadeSeconds) || MONSTER_CHASE_STOP_FADE_SECONDS, 0.02, 0.42);
     if (entry.gain?.gain) {
       try {
-        const current = Math.max(0.0001, Number(entry.gain.gain.value) || 0.0001);
-        entry.gain.gain.cancelScheduledValues(now);
-        entry.gain.gain.setValueAtTime(current, now);
-        entry.gain.gain.linearRampToValueAtTime(0.0001, now + fade);
+        // Avoid hard value resets here; abrupt cancel+set can click when the
+        // current rendered gain differs from the stale .value property.
+        if (typeof entry.gain.gain.cancelAndHoldAtTime === "function") {
+          entry.gain.gain.cancelAndHoldAtTime(now);
+          entry.gain.gain.linearRampToValueAtTime(0.0001, now + fade);
+        } else {
+          entry.gain.gain.setTargetAtTime(0.0001, now, Math.max(0.012, fade * 0.28));
+        }
       } catch (err) {
         // ignore envelope errors
       }
@@ -7232,11 +7339,11 @@
         cleanup();
       };
       try {
-        source.stop(now + fade + 0.02);
+        source.stop(now + fade + 0.05);
       } catch (err) {
         // ignore stop errors
       }
-      window.setTimeout(cleanup, Math.ceil((fade + 0.12) * 1000));
+      window.setTimeout(cleanup, Math.ceil((fade + 0.18) * 1000));
     }
   }
 
@@ -7262,7 +7369,7 @@
           0.9
         );
         try {
-          existing.gain.gain.setTargetAtTime(duckGain, now, 0.09);
+          existing.gain.gain.setTargetAtTime(duckGain, now, 0.12);
         } catch (err) {
           // ignore gain update errors
         }
@@ -7288,7 +7395,7 @@
       return;
     }
     if (existing) {
-      stopMonsterChaseVoiceByKey(key, 0.04);
+      stopMonsterChaseVoiceByKey(key, MONSTER_CHASE_SWAP_FADE_SECONDS);
     }
     const loopBuffer = profile.loopBuffer || profile.buffer;
     if (!loopBuffer) {
@@ -7319,7 +7426,7 @@
     );
 
     gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.linearRampToValueAtTime(targetGain, now + 0.08);
+    gain.gain.linearRampToValueAtTime(targetGain, now + MONSTER_CHASE_START_FADE_SECONDS);
     source.connect(gain);
     gain.connect(audio.sfxBus);
     source.onended = () => {
@@ -9847,8 +9954,21 @@
   }
 
   function serializeWorldState(world) {
+    if (!world || typeof world !== "object") {
+      return {
+        resourceStates: [],
+        respawnTasks: [],
+        drops: [],
+        monsters: [],
+        projectiles: [],
+        poisonClouds: [],
+        animals: [],
+        villagers: [],
+      };
+    }
+    const resources = Array.isArray(world.resources) ? world.resources : [];
     return {
-      resourceStates: world.resources.map((res) => serializeResource(res)),
+      resourceStates: resources.map((res) => serializeResource(res)),
       respawnTasks: world.respawnTasks ?? [],
       drops: (world.drops ?? []).map((drop) => ({
         id: drop.id,
@@ -10562,7 +10682,14 @@
         const cave = state.surfaceWorld.caves.find((entry) => entry.id === caveMotion.id);
         if (!cave) continue;
         const layer = normalizeCaveLayerIndex(caveMotion.layer ?? 0);
-        const caveWorld = ensureCaveLayerWorld(cave, layer, state.surfaceWorld);
+        let caveWorld = Array.isArray(cave.layers) ? cave.layers[layer] : null;
+        if (!caveWorld && layer === 0 && cave.world) {
+          caveWorld = cave.world;
+          if (Array.isArray(cave.layers)) cave.layers[0] = caveWorld;
+        }
+        if (!caveWorld) {
+          caveWorld = ensureCaveLayerWorld(cave, layer, state.surfaceWorld);
+        }
         if (!caveWorld) continue;
         applyMotionWorld(caveWorld, caveMotion.world);
       }
@@ -10820,6 +10947,8 @@
 
   function ensureSurfaceCaves(world, caveEntries) {
     if (!world || !Array.isArray(caveEntries)) return;
+    if (!Array.isArray(world.caves)) world.caves = [];
+    let caveTopologyChanged = false;
     for (const entry of caveEntries) {
       if (!entry || typeof entry.id !== "number") continue;
       const existingById = world.caves.find((cave) => cave.id === entry.id);
@@ -10827,8 +10956,8 @@
         if (entry.spawnedByPlayer) existingById.spawnedByPlayer = true;
         if (entry.linkConfig && typeof entry.linkConfig === "object") {
           existingById.linkConfig = {
-            toLayer2: clamp(Math.floor(entry.linkConfig.toLayer2 ?? existingById.linkConfig?.toLayer2 ?? 2), 2, 4),
-            toLayer3: clamp(Math.floor(entry.linkConfig.toLayer3 ?? existingById.linkConfig?.toLayer3 ?? 1), 1, 3),
+            toLayer2: 1,
+            toLayer3: 1,
           };
         }
         if (typeof entry.hostileBlocked === "boolean") {
@@ -10860,6 +10989,10 @@
           ? entry.hostileBlocked
           : shouldBlockCaveHostilesForSurfaceTile(world, tx, ty),
       });
+      caveTopologyChanged = true;
+    }
+    if (caveTopologyChanged) {
+      assignSurfaceCaveTunnelLinks(world);
     }
   }
 
@@ -10980,8 +11113,8 @@
         if (!caveSnapshot) continue;
         if (caveSnapshot.linkConfig && typeof caveSnapshot.linkConfig === "object") {
           cave.linkConfig = {
-            toLayer2: clamp(Math.floor(caveSnapshot.linkConfig.toLayer2 ?? cave.linkConfig?.toLayer2 ?? 2), 2, 4),
-            toLayer3: clamp(Math.floor(caveSnapshot.linkConfig.toLayer3 ?? cave.linkConfig?.toLayer3 ?? 1), 1, 3),
+            toLayer2: 1,
+            toLayer3: 1,
           };
         }
         cave.hostileBlocked = typeof caveSnapshot.hostileBlocked === "boolean"
@@ -10993,13 +11126,19 @@
         for (const layerSnapshot of layerSnapshots) {
           if (!layerSnapshot || typeof layerSnapshot !== "object") continue;
           const layer = normalizeCaveLayerIndex(layerSnapshot.layer ?? 0);
-          const caveWorld = ensureCaveLayerWorld(cave, layer, world);
+          let caveWorld = Array.isArray(cave.layers) ? cave.layers[layer] : null;
+          if (!caveWorld && layer === 0 && cave.world) {
+            caveWorld = cave.world;
+            if (Array.isArray(cave.layers)) cave.layers[0] = caveWorld;
+          }
+          if (!caveWorld) {
+            caveWorld = ensureCaveLayerWorld(cave, layer, world);
+          }
           if (!caveWorld) continue;
           applySerializedWorldState(caveWorld, layerSnapshot.world ?? layerSnapshot, {
             applyAnimals: true,
             applyVillagers: true,
           });
-          repairCaveDepthEntrances(cave, caveWorld, layer, world);
           if (isCaveHostilesBlocked(world, cave)) {
             caveWorld.monsters = [];
             caveWorld.projectiles = [];
@@ -14394,6 +14533,7 @@
       rebuildSurfaceStructureGrid(world);
     }
     normalizeSurfaceCavesAfterIslandLayout(world, shiftSession);
+    assignSurfaceCaveTunnelLinks(world);
     reindexSurfaceResourcesAfterIslandLayout(world);
 
     if (shiftSession && Array.isArray(state.structures)) {
@@ -14598,18 +14738,18 @@
   }
 
   function buildCaveLayerLinkConfig(seed, caveId) {
-    const rng = makeRng((seed ^ ((caveId + 1) * 1931) ^ 0x6e7d1) >>> 0);
     return {
-      toLayer2: 2 + Math.floor(rng() * 3),
-      toLayer3: 1 + Math.floor(rng() * 3),
+      // Single route between layers for cleaner navigation and less portal clutter.
+      toLayer2: 1,
+      toLayer3: 1,
     };
   }
 
   function getCaveLayerPortalRequests(layerIndex, linkConfig) {
     const layer = normalizeCaveLayerIndex(layerIndex);
     const requests = [];
-    const toLayer2 = clamp(Math.floor(linkConfig?.toLayer2 ?? 2), 2, 4);
-    const toLayer3 = clamp(Math.floor(linkConfig?.toLayer3 ?? 1), 1, 3);
+    const toLayer2 = 1;
+    const toLayer3 = 1;
     if (layer === 0) {
       for (let slot = 0; slot < toLayer2; slot += 1) {
         requests.push({
@@ -15841,8 +15981,8 @@
       entrance,
       depthEntrances,
       linkConfig: {
-        toLayer2: clamp(Math.floor(linkConfig?.toLayer2 ?? 2), 2, 4),
-        toLayer3: clamp(Math.floor(linkConfig?.toLayer3 ?? 1), 1, 3),
+        toLayer2: 1,
+        toLayer3: 1,
       },
       caves: [],
       monsters,
@@ -16565,7 +16705,7 @@
       }
     }
 
-    return {
+    const generatedWorld = {
       seed: seedStr,
       seedInt: seed,
       size,
@@ -16592,6 +16732,8 @@
       villagers: [],
       nextVillagerId: 1,
     };
+    assignSurfaceCaveTunnelLinks(generatedWorld);
+    return generatedWorld;
   }
 
   function isSpawnableTile(world, tx, ty) {
@@ -20870,8 +21012,8 @@
             : shouldBlockCaveHostilesForSurfaceTile(world, cave.tx, cave.ty);
           if (savedCave?.linkConfig && typeof savedCave.linkConfig === "object") {
             cave.linkConfig = {
-              toLayer2: clamp(Math.floor(savedCave.linkConfig.toLayer2 ?? cave.linkConfig?.toLayer2 ?? 2), 2, 4),
-              toLayer3: clamp(Math.floor(savedCave.linkConfig.toLayer3 ?? cave.linkConfig?.toLayer3 ?? 1), 1, 3),
+              toLayer2: 1,
+              toLayer3: 1,
             };
           }
           if (savedCave) {
@@ -20902,6 +21044,7 @@
                 applyVillagers: true,
               });
               repairCaveDepthEntrances(cave, layerWorld, layer, world);
+              normalizeCaveWorldArtifacts(cave, layerWorld, layer, world);
             }
           } else {
             ensureCaveLayerWorld(cave, 0, world);
@@ -21951,6 +22094,232 @@
     return cave.hostileBlocked;
   }
 
+  function getSurfaceIslandIndexForTile(world, tx, ty) {
+    if (!world || !Array.isArray(world.islands)) return -1;
+    let bestIndex = -1;
+    let bestScore = Infinity;
+    for (let i = 0; i < world.islands.length; i += 1) {
+      const island = world.islands[i];
+      if (!island) continue;
+      const dist = Math.hypot((Number(island.x) || 0) - tx, (Number(island.y) || 0) - ty);
+      const insideScore = dist - (Number(island.radius) || 0);
+      if (insideScore <= 0 && insideScore < bestScore) {
+        bestScore = insideScore;
+        bestIndex = i;
+      }
+    }
+    return bestIndex;
+  }
+
+  function assignSurfaceCaveTunnelLinks(world) {
+    if (!world || !Array.isArray(world.caves)) return false;
+    const caves = world.caves.filter((cave) => cave && Number.isInteger(cave.id));
+    let changed = false;
+    for (const cave of caves) {
+      if (cave.surfaceLinkTargetCaveId != null) {
+        cave.surfaceLinkTargetCaveId = null;
+        changed = true;
+      }
+    }
+    if (caves.length < 2) return changed;
+    const seedInt = world.seedInt ?? seedToInt(world.seed || "island");
+    const caveMeta = caves.map((cave) => ({
+      cave,
+      islandIndex: getSurfaceIslandIndexForTile(world, cave.tx, cave.ty),
+    }));
+    const used = new Set();
+    const sorted = caveMeta
+      .slice()
+      .sort((a, b) => {
+        const ra = rand2d((a.cave.id + 1) * 17, 73, seedInt + 9719);
+        const rb = rand2d((b.cave.id + 1) * 17, 73, seedInt + 9719);
+        if (ra !== rb) return ra - rb;
+        return a.cave.id - b.cave.id;
+      });
+    for (const sourceMeta of sorted) {
+      const source = sourceMeta.cave;
+      if (!source || used.has(source.id)) continue;
+      const enableRoll = rand2d((source.id + 1) * 31, 149, seedInt + 21713);
+      if (enableRoll > 0.5) continue;
+      let best = null;
+      let bestScore = -Infinity;
+      for (const targetMeta of sorted) {
+        const target = targetMeta.cave;
+        if (!target || target.id === source.id || used.has(target.id)) continue;
+        if (sourceMeta.islandIndex >= 0 && targetMeta.islandIndex >= 0 && sourceMeta.islandIndex === targetMeta.islandIndex) {
+          continue;
+        }
+        const dist = Math.hypot(source.tx - target.tx, source.ty - target.ty);
+        if (dist < Math.max(12, world.size * 0.08)) continue;
+        const score = dist + rand2d(source.id * 53 + target.id * 71, 211, seedInt + 12617) * 6;
+        if (score > bestScore) {
+          bestScore = score;
+          best = target;
+        }
+      }
+      if (!best) continue;
+      source.surfaceLinkTargetCaveId = best.id;
+      best.surfaceLinkTargetCaveId = source.id;
+      used.add(source.id);
+      used.add(best.id);
+      changed = true;
+    }
+    const linkedCount = caves.reduce((sum, cave) => sum + Number(Number.isInteger(cave.surfaceLinkTargetCaveId)), 0);
+    if (linkedCount === 0 && sorted.length >= 2) {
+      let bestPair = null;
+      let bestScore = -Infinity;
+      for (let i = 0; i < sorted.length; i += 1) {
+        for (let j = i + 1; j < sorted.length; j += 1) {
+          const a = sorted[i];
+          const b = sorted[j];
+          if (!a?.cave || !b?.cave) continue;
+          if (a.islandIndex >= 0 && b.islandIndex >= 0 && a.islandIndex === b.islandIndex) continue;
+          const dist = Math.hypot(a.cave.tx - b.cave.tx, a.cave.ty - b.cave.ty);
+          const score = dist + rand2d(a.cave.id * 41 + b.cave.id * 59, 17, seedInt + 19001) * 4;
+          if (score > bestScore) {
+            bestScore = score;
+            bestPair = [a.cave, b.cave];
+          }
+        }
+      }
+      if (bestPair) {
+        bestPair[0].surfaceLinkTargetCaveId = bestPair[1].id;
+        bestPair[1].surfaceLinkTargetCaveId = bestPair[0].id;
+        changed = true;
+      }
+    }
+    return changed;
+  }
+
+  function getCaveSurfaceLinkTarget(surfaceWorld, cave) {
+    if (!surfaceWorld || !cave || !Array.isArray(surfaceWorld.caves)) return null;
+    const targetId = Number.isInteger(cave.surfaceLinkTargetCaveId) ? cave.surfaceLinkTargetCaveId : null;
+    if (targetId == null || targetId === cave.id) return null;
+    return surfaceWorld.caves.find((entry) => entry && entry.id === targetId) || null;
+  }
+
+  function getCaveOreHpForKind(oreKind) {
+    if (oreKind === "coal") return 4;
+    if (oreKind === "iron_ore") return 5;
+    if (oreKind === "gold_ore") return 5;
+    if (oreKind === "emerald") return 6;
+    if (oreKind === "diamond") return 7;
+    return 5;
+  }
+
+  function getFallbackCaveOreKindsForLayer(layerIndex) {
+    const layer = normalizeCaveLayerIndex(layerIndex);
+    if (layer >= 2) return ["gold_ore", "emerald", "diamond", "iron_ore", "coal"];
+    if (layer >= 1) return ["iron_ore", "gold_ore", "coal", "emerald"];
+    return ["coal", "iron_ore", "gold_ore"];
+  }
+
+  function isNearCaveTransitionNode(world, tx, ty, minDistance = 2.6) {
+    if (!world || !Number.isInteger(tx) || !Number.isInteger(ty)) return false;
+    if (world.entrance && Number.isInteger(world.entrance.tx) && Number.isInteger(world.entrance.ty)) {
+      if (Math.hypot(tx - world.entrance.tx, ty - world.entrance.ty) < minDistance) return true;
+    }
+    if (Array.isArray(world.depthEntrances)) {
+      for (const node of world.depthEntrances) {
+        if (!node || !Number.isInteger(node.tx) || !Number.isInteger(node.ty)) continue;
+        if (Math.hypot(tx - node.tx, ty - node.ty) < minDistance) return true;
+      }
+    }
+    return false;
+  }
+
+  function ensureCaveOreFallback(cave, caveWorld, layerIndex, surfaceWorld = null) {
+    if (!cave || !caveWorld || !Array.isArray(caveWorld.tiles)) return false;
+    caveWorld.resources = Array.isArray(caveWorld.resources) ? caveWorld.resources : [];
+    caveWorld.resourceGrid = Array.isArray(caveWorld.resourceGrid) ? caveWorld.resourceGrid : createResourceGrid(caveWorld.size);
+    const oreDefs = caveWorld.resources.filter((res) => res && res.type === "ore");
+    const aliveOre = oreDefs.filter((res) => !res.removed);
+    const hasOreRespawnTask = Array.isArray(caveWorld.respawnTasks)
+      && caveWorld.respawnTasks.some((task) => task?.type === "ore");
+    if (aliveOre.length > 0) return false;
+    if (oreDefs.length > 0 && hasOreRespawnTask) return false;
+
+    const size = caveWorld.size;
+    const seedInt = cave.seedInt
+      ?? surfaceWorld?.seedInt
+      ?? seedToInt(surfaceWorld?.seed || "island");
+    const oreKinds = getFallbackCaveOreKindsForLayer(layerIndex);
+    const desiredCount = 3 + normalizeCaveLayerIndex(layerIndex);
+    let added = 0;
+    const total = Math.max(1, (size - 2) * (size - 2));
+    const start = Math.floor(rand2d((cave.id + 1) * 41, normalizeCaveLayerIndex(layerIndex) * 67 + 9, seedInt + 24691) * total);
+    for (let step = 0; step < total * 2 && added < desiredCount; step += 1) {
+      const flat = (start + step) % total;
+      const tx = 1 + (flat % (size - 2));
+      const ty = 1 + Math.floor(flat / (size - 2));
+      const idx = tileIndex(tx, ty, size);
+      if (!caveWorld.tiles[idx]) continue;
+      if (caveWorld.resourceGrid[idx] !== -1 && caveWorld.resourceGrid[idx] != null) continue;
+      if (isNearCaveTransitionNode(caveWorld, tx, ty, 2.6)) continue;
+      if (getWorldCardinalOpenCount(caveWorld, tx, ty) <= 0) continue;
+      const oreKind = oreKinds[(added + step) % oreKinds.length];
+      const id = caveWorld.resources.length;
+      const hp = getCaveOreHpForKind(oreKind);
+      caveWorld.resources.push({
+        id,
+        type: "ore",
+        oreKind,
+        x: (tx + 0.5) * CONFIG.tileSize,
+        y: (ty + 0.5) * CONFIG.tileSize,
+        tx,
+        ty,
+        hp,
+        maxHp: hp,
+        removed: false,
+        hitTimer: 0,
+        stage: "alive",
+        respawnTimer: 0,
+      });
+      caveWorld.resourceGrid[idx] = id;
+      added += 1;
+    }
+    return added > 0;
+  }
+
+  function normalizeCaveWorldArtifacts(cave, caveWorld, layerIndex, surfaceWorld = null) {
+    if (!caveWorld) return false;
+    let changed = false;
+    if (hasResourceGridInconsistency(caveWorld) && rebuildWorldResourceGrid(caveWorld)) changed = true;
+    if (ensureCaveOreFallback(cave, caveWorld, layerIndex, surfaceWorld)) changed = true;
+    if (Array.isArray(caveWorld.landmarks) && caveWorld.landmarks.length > 0) {
+      const nextLandmarks = [];
+      for (const landmark of caveWorld.landmarks) {
+        if (!landmark || !Number.isFinite(landmark.x) || !Number.isFinite(landmark.y)) {
+          changed = true;
+          continue;
+        }
+        const clamped = clampEntityPositionToWalkable(caveWorld, landmark.x, landmark.y, 10);
+        if (!clamped) {
+          changed = true;
+          continue;
+        }
+        const tileDistToEntrance = caveWorld.entrance
+          ? Math.hypot(clamped.tx - caveWorld.entrance.tx, clamped.ty - caveWorld.entrance.ty)
+          : Infinity;
+        if (tileDistToEntrance < 2.4) {
+          changed = true;
+          continue;
+        }
+        if (landmark.x !== clamped.x || landmark.y !== clamped.y) {
+          landmark.x = clamped.x;
+          landmark.y = clamped.y;
+          changed = true;
+        }
+        nextLandmarks.push(landmark);
+      }
+      if (nextLandmarks.length !== caveWorld.landmarks.length) {
+        caveWorld.landmarks = nextLandmarks;
+        changed = true;
+      }
+    }
+    return changed;
+  }
+
   function addSurfaceCave(world, tx, ty, preferredId = null, options = null) {
     if (!world) return null;
     if (!Array.isArray(world.caves)) world.caves = [];
@@ -21968,8 +22337,8 @@
     const normalizeLinkConfig = (rawConfig) => {
       const fallback = buildCaveLayerLinkConfig(seedInt, id);
       return {
-        toLayer2: clamp(Math.floor(rawConfig?.toLayer2 ?? fallback.toLayer2), 2, 4),
-        toLayer3: clamp(Math.floor(rawConfig?.toLayer3 ?? fallback.toLayer3), 1, 3),
+        toLayer2: 1,
+        toLayer3: 1,
       };
     };
     const linkConfig = normalizeLinkConfig(options?.linkConfig);
@@ -21991,18 +22360,19 @@
       world: layerZeroWorld,
     };
     world.caves.push(cave);
+    assignSurfaceCaveTunnelLinks(world);
     return cave;
   }
 
   function getNormalizedCaveLinkConfig(cave, surfaceWorld = null) {
-    if (!cave) return { toLayer2: 2, toLayer3: 1 };
+    if (!cave) return { toLayer2: 1, toLayer3: 1 };
     const fallbackSeed = cave.seedInt
       ?? surfaceWorld?.seedInt
       ?? seedToInt(surfaceWorld?.seed || "island");
     const fallback = buildCaveLayerLinkConfig(fallbackSeed, cave.id);
     const normalized = {
-      toLayer2: clamp(Math.floor(cave.linkConfig?.toLayer2 ?? fallback.toLayer2), 2, 4),
-      toLayer3: clamp(Math.floor(cave.linkConfig?.toLayer3 ?? fallback.toLayer3), 1, 3),
+      toLayer2: 1,
+      toLayer3: 1,
     };
     cave.linkConfig = normalized;
     return normalized;
@@ -22112,10 +22482,29 @@
     const normalizedLayer = normalizeCaveLayerIndex(layerIndex);
     const worldRef = surfaceWorld || state.surfaceWorld || state.world;
     const linkConfig = getNormalizedCaveLinkConfig(cave, worldRef);
-    const expectedRequests = getCaveLayerPortalRequests(normalizedLayer, linkConfig);
-    const expectedKeys = new Set(
-      expectedRequests.map((req) => `${req.direction}:${normalizeCaveLayerIndex(req.targetLayer)}:${req.slot}`)
-    );
+    const expectedRequests = getCaveLayerPortalRequests(normalizedLayer, linkConfig).map((req) => ({
+      kind: "layer",
+      ...req,
+    }));
+    const surfaceLinkTarget = normalizedLayer === (CAVE_LAYER_COUNT - 1)
+      ? getCaveSurfaceLinkTarget(worldRef, cave)
+      : null;
+    if (surfaceLinkTarget) {
+      expectedRequests.push({
+        kind: "surface_link",
+        direction: "surface",
+        targetLayer: normalizedLayer,
+        slot: 0,
+        targetCaveId: surfaceLinkTarget.id,
+      });
+    }
+    const getExpectedKey = (req) => {
+      if (req?.kind === "surface_link") {
+        return `surface:${Number.isInteger(req.targetCaveId) ? req.targetCaveId : -1}`;
+      }
+      return `${req.direction}:${normalizeCaveLayerIndex(req.targetLayer)}:${req.slot}`;
+    };
+    const expectedKeys = new Set(expectedRequests.map(getExpectedKey));
     const reserved = new Set();
     const nextEntries = [];
     const existing = Array.isArray(layerWorld.depthEntrances) ? layerWorld.depthEntrances : [];
@@ -22126,11 +22515,25 @@
         changed = true;
         continue;
       }
-      const direction = Number(entry.direction) > 0 ? 1 : -1;
-      const requestDirection = direction > 0 ? "down" : "up";
-      const slot = Math.max(0, Math.floor(Number(entry.slot) || 0));
-      const targetLayer = normalizeCaveLayerIndex(entry.targetLayer);
-      const key = `${requestDirection}:${targetLayer}:${slot}`;
+      const kind = entry.kind === "surface_link" ? "surface_link" : "layer";
+      const direction = kind === "surface_link"
+        ? 0
+        : (Number(entry.direction) > 0 ? 1 : -1);
+      const requestDirection = kind === "surface_link"
+        ? "surface"
+        : (direction > 0 ? "down" : "up");
+      const slot = kind === "surface_link"
+        ? 0
+        : Math.max(0, Math.floor(Number(entry.slot) || 0));
+      const targetLayer = kind === "surface_link"
+        ? normalizedLayer
+        : normalizeCaveLayerIndex(entry.targetLayer);
+      const targetCaveId = kind === "surface_link"
+        ? (Number.isInteger(entry.targetCaveId) ? entry.targetCaveId : -1)
+        : null;
+      const key = kind === "surface_link"
+        ? `surface:${targetCaveId}`
+        : `${requestDirection}:${targetLayer}:${slot}`;
       if (!expectedKeys.has(key)) {
         changed = true;
         continue;
@@ -22152,14 +22555,56 @@
         changed = true;
       }
       reserved.add(`${tx},${ty}`);
-      nextEntries.push({ tx, ty, direction, slot, targetLayer });
+      if (kind === "surface_link") {
+        nextEntries.push({ tx, ty, kind: "surface_link", direction: 0, slot: 0, targetLayer, targetCaveId });
+      } else {
+        nextEntries.push({ tx, ty, direction, slot, targetLayer });
+      }
     }
 
     let referenceWorld = null;
-    const existingKeys = new Set(nextEntries.map((entry) => `${entry.direction > 0 ? "down" : "up"}:${entry.targetLayer}:${entry.slot}`));
+    const existingKeys = new Set(nextEntries.map((entry) => (
+      entry?.kind === "surface_link"
+        ? `surface:${Number.isInteger(entry.targetCaveId) ? entry.targetCaveId : -1}`
+        : `${entry.direction > 0 ? "down" : "up"}:${entry.targetLayer}:${entry.slot}`
+    )));
     for (const request of expectedRequests) {
-      const key = `${request.direction}:${normalizeCaveLayerIndex(request.targetLayer)}:${request.slot}`;
+      const key = getExpectedKey(request);
       if (existingKeys.has(key)) continue;
+      if (request.kind === "surface_link") {
+        const surfaceOriginSeed = (
+          ((cave.id + 1) * 67)
+          ^ ((Number(request.targetCaveId) + 1) * 131)
+          ^ ((normalizedLayer + 1) * 17)
+        ) >>> 0;
+        const entranceRef = layerWorld.entrance || { tx: Math.floor(layerWorld.size / 2), ty: Math.floor(layerWorld.size / 2) };
+        const origin = {
+          x: entranceRef.tx + (rand2d(surfaceOriginSeed + 11, 19, (cave.seedInt || 0) + 40231) - 0.5) * 10,
+          y: entranceRef.ty - (5.2 + rand2d(surfaceOriginSeed + 23, 31, (cave.seedInt || 0) + 40231) * 6.8),
+        };
+        let placed = findNearestWalkableCaveDepthTile(layerWorld, origin.x, origin.y, reserved, {
+          maxRadius: 12,
+          minFromEntrance: Math.max(4.6, CAVE_DEEP_ENTRANCE_CONFIG.minFromMainEntranceTiles - 0.4),
+          preferBranch: true,
+        });
+        if (!placed) {
+          placed = findDeterministicCaveDepthFallbackTile(layerWorld, cave, normalizedLayer, request, reserved);
+        }
+        if (!placed) continue;
+        reserved.add(`${placed.tx},${placed.ty}`);
+        nextEntries.push({
+          tx: placed.tx,
+          ty: placed.ty,
+          kind: "surface_link",
+          direction: 0,
+          slot: 0,
+          targetLayer: normalizedLayer,
+          targetCaveId: Number(request.targetCaveId),
+        });
+        existingKeys.add(key);
+        changed = true;
+        continue;
+      }
       if (!referenceWorld) {
         const seedInt = cave.seedInt
           ?? worldRef?.seedInt
@@ -22200,7 +22645,8 @@
     }
 
     nextEntries.sort((a, b) => (
-      (a.direction - b.direction)
+      (((a.kind === "surface_link") ? 1 : 0) - ((b.kind === "surface_link") ? 1 : 0))
+      || (a.direction - b.direction)
       || (a.targetLayer - b.targetLayer)
       || (a.slot - b.slot)
       || (a.ty - b.ty)
@@ -22217,8 +22663,14 @@
     if (!cave) return null;
     const normalizedLayer = normalizeCaveLayerIndex(layerIndex);
     if (!Array.isArray(cave.layers)) cave.layers = [];
-    if (cave.layers[normalizedLayer]) return cave.layers[normalizedLayer];
     const worldRef = surfaceWorld || state.surfaceWorld || state.world;
+    if (cave.layers[normalizedLayer]) {
+      const existingLayer = cave.layers[normalizedLayer];
+      repairCaveDepthEntrances(cave, existingLayer, normalizedLayer, worldRef);
+      normalizeCaveWorldArtifacts(cave, existingLayer, normalizedLayer, worldRef);
+      if (normalizedLayer === 0 || !cave.world) cave.world = cave.layers[0] || existingLayer;
+      return existingLayer;
+    }
     const seedInt = cave.seedInt
       ?? worldRef?.seedInt
       ?? seedToInt(worldRef?.seed || "island");
@@ -22237,6 +22689,7 @@
       layerWorld.poisonClouds = [];
     }
     repairCaveDepthEntrances(cave, layerWorld, normalizedLayer, worldRef);
+    normalizeCaveWorldArtifacts(cave, layerWorld, normalizedLayer, worldRef);
     return layerWorld;
   }
 
@@ -22363,6 +22816,32 @@
 
   function traverseCaveDepthEntrance(entrance) {
     if (!state.inCave || !state.activeCave || !state.player || !entrance) return false;
+    if (entrance.kind === "surface_link") {
+      const surface = state.surfaceWorld || state.world;
+      const targetCave = getCaveSurfaceLinkTarget(surface, {
+        ...state.activeCave,
+        surfaceLinkTargetCaveId: Number.isInteger(entrance.targetCaveId)
+          ? entrance.targetCaveId
+          : state.activeCave.surfaceLinkTargetCaveId,
+      });
+      if (!surface || !targetCave) return false;
+      const targetX = (targetCave.tx + 0.5) * CONFIG.tileSize;
+      const targetY = (targetCave.ty + 0.5) * CONFIG.tileSize;
+      const surfacePos = clampEntityPositionToWalkable(surface, targetX, targetY, 18) || { x: targetX, y: targetY };
+      state.inCave = false;
+      state.activeCave = null;
+      state.activeCaveLayer = 0;
+      state.world = surface;
+      state.player.inHut = false;
+      state.returnPosition = null;
+      state.player.x = surfacePos.x;
+      state.player.y = surfacePos.y;
+      startCaveLayerTransitionEffect("Tunnel Exit");
+      markDirty();
+      if (net.enabled) sendPlayerUpdate();
+      setPrompt("You surfaced through a cave tunnel on another island.", 1.6);
+      return true;
+    }
     const currentLayer = normalizeCaveLayerIndex(state.activeCaveLayer);
     const targetLayer = normalizeCaveLayerIndex(entrance.targetLayer);
     if (targetLayer === currentLayer) return false;
@@ -31143,7 +31622,9 @@
           } else if (nearbyDepthEntrance?.entrance) {
             const targetLayer = normalizeCaveLayerIndex(nearbyDepthEntrance.entrance.targetLayer);
             const targetLabel = CAVE_LAYER_LABELS[targetLayer] || `Layer ${targetLayer + 1}`;
-            if (nearbyDepthEntrance.entrance.direction > 0) {
+            if (nearbyDepthEntrance.entrance.kind === "surface_link") {
+              setPrompt("Tunnel exit (E) - Surface");
+            } else if (nearbyDepthEntrance.entrance.direction > 0) {
               setPrompt(`Go deeper (E) - ${targetLabel}`);
             } else {
               setPrompt(`Go up (E) - ${targetLabel}`);
@@ -34716,23 +35197,32 @@
             || markerX > cameraViewWidth + 28
             || markerY > cameraViewHeight + 28
           ) continue;
-          const down = Number(node.direction) > 0;
+          const isSurfaceTunnelExit = node.kind === "surface_link";
+          const down = !isSurfaceTunnelExit && Number(node.direction) > 0;
           const pulse = 0.5 + 0.5 * Math.sin((performance.now() * 0.007) + ((node.slot || 0) * 1.17) + ((node.targetLayer || 0) * 0.93));
           const glowAlpha = 0.12 + pulse * 0.14;
           ctx.save();
           ctx.globalAlpha = 0.95;
-          ctx.fillStyle = down ? `rgba(92, 178, 240, ${glowAlpha})` : `rgba(202, 231, 255, ${glowAlpha})`;
+          ctx.fillStyle = isSurfaceTunnelExit
+            ? `rgba(240, 196, 96, ${glowAlpha})`
+            : (down ? `rgba(92, 178, 240, ${glowAlpha})` : `rgba(202, 231, 255, ${glowAlpha})`);
           ctx.beginPath();
           ctx.arc(markerX, markerY, 13 + pulse * 2.2, 0, Math.PI * 2);
           ctx.fill();
-          ctx.fillStyle = down ? "rgba(8, 14, 20, 0.92)" : "rgba(10, 16, 24, 0.88)";
-          ctx.strokeStyle = down ? "rgba(140, 212, 255, 0.82)" : "rgba(214, 239, 255, 0.86)";
+          ctx.fillStyle = isSurfaceTunnelExit
+            ? "rgba(26, 18, 10, 0.92)"
+            : (down ? "rgba(8, 14, 20, 0.92)" : "rgba(10, 16, 24, 0.88)");
+          ctx.strokeStyle = isSurfaceTunnelExit
+            ? "rgba(255, 220, 142, 0.9)"
+            : (down ? "rgba(140, 212, 255, 0.82)" : "rgba(214, 239, 255, 0.86)");
           ctx.lineWidth = 1.9;
           ctx.beginPath();
           ctx.ellipse(markerX, markerY + 1, 9.5, 7.2, 0, 0, Math.PI * 2);
           ctx.fill();
           ctx.stroke();
-          ctx.strokeStyle = down ? "rgba(96, 176, 235, 0.42)" : "rgba(186, 216, 242, 0.42)";
+          ctx.strokeStyle = isSurfaceTunnelExit
+            ? "rgba(230, 176, 96, 0.46)"
+            : (down ? "rgba(96, 176, 235, 0.42)" : "rgba(186, 216, 242, 0.42)");
           ctx.lineWidth = 1;
           ctx.beginPath();
           ctx.moveTo(markerX - 4.8, markerY - 1.2);
@@ -34740,9 +35230,17 @@
           ctx.moveTo(markerX - 3.2, markerY + 2.9);
           ctx.lineTo(markerX + 3.5, markerY - 2.5);
           ctx.stroke();
-          ctx.fillStyle = "rgba(225, 244, 255, 0.9)";
+          ctx.fillStyle = isSurfaceTunnelExit ? "rgba(255, 234, 182, 0.95)" : "rgba(225, 244, 255, 0.9)";
           ctx.beginPath();
-          if (down) {
+          if (isSurfaceTunnelExit) {
+            ctx.moveTo(markerX - 3.2, markerY - 1.8);
+            ctx.lineTo(markerX + 2.8, markerY - 1.8);
+            ctx.lineTo(markerX + 2.8, markerY - 4.2);
+            ctx.lineTo(markerX + 5.8, markerY + 0.3);
+            ctx.lineTo(markerX + 2.8, markerY + 4.4);
+            ctx.lineTo(markerX + 2.8, markerY + 2.1);
+            ctx.lineTo(markerX - 3.2, markerY + 2.1);
+          } else if (down) {
             ctx.moveTo(markerX - 3.1, markerY - 2.4);
             ctx.lineTo(markerX + 3.1, markerY - 2.4);
             ctx.lineTo(markerX, markerY + 2.8);
@@ -34953,6 +35451,9 @@
         render();
       } catch (err) {
         console.error("Frame runtime error", err);
+        if (mpAutotest.active) {
+          mpAutotestAbortInternal("Frame runtime error during MP autotest", err);
+        }
         state.respawnLock = false;
         if (state.player && state.player.hp <= 0) {
           if (!applyInfiniteHealthGuard()) {
