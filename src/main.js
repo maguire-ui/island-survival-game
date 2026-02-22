@@ -105,6 +105,9 @@
   const mpAutotestClientsInput = document.getElementById("mpAutotestClients");
   const mpAutotestSeedInput = document.getElementById("mpAutotestSeed");
   const mpAutotestReplayBtn = document.getElementById("mpAutotestReplayBtn");
+  const mpAutotestProgressWrap = document.getElementById("mpAutotestProgressWrap");
+  const mpAutotestProgressFill = document.getElementById("mpAutotestProgressFill");
+  const mpAutotestProgressText = document.getElementById("mpAutotestProgressText");
   const mpAutotestLogEl = document.getElementById("mpAutotestLog");
   const mpAutotestCopyReportBtn = document.getElementById("mpAutotestCopyReportBtn");
 
@@ -539,6 +542,15 @@
   const MP_AUTOTEST_NO_PROGRESS_TIMEOUT = Object.freeze({
     quick: 18,
     stress: 36,
+  });
+  const MP_AUTOTEST_PROGRESS_UI_INTERVAL = 0.12;
+  const MP_AUTOTEST_STEP_CAP_MULTIPLIER = Object.freeze({
+    quick: 4.5,
+    stress: 4.0,
+  });
+  const MP_AUTOTEST_STEP_CAP_MIN = Object.freeze({
+    quick: 120,
+    stress: 500,
   });
   const MP_AUTOTEST_MODES = Object.freeze({
     quick: Object.freeze({
@@ -1923,6 +1935,9 @@
     wallStartMs: 0,
     lastObservedStep: 0,
     lastProgressWallElapsed: 0,
+    progressPercent: 0,
+    expectedSteps: 0,
+    maxSteps: 0,
   };
 
   const state = {
@@ -3656,6 +3671,7 @@
   function mpAutotestSetStatus(status) {
     mpAutotest.runningStatus = status;
     updateMpAutotestControls();
+    mpAutotestUpdateProgressUI(true);
   }
 
   function updateMpAutotestControls() {
@@ -3669,6 +3685,75 @@
     if (mpAutotestCopyReportBtn) {
       mpAutotestCopyReportBtn.disabled = !unlocked || !mpAutotest.failReport;
     }
+  }
+
+  function mpAutotestEstimateStepBudget(mode) {
+    const activeMode = mode || MP_AUTOTEST_MODES.quick;
+    const duration = Math.max(1, Number(activeMode.duration) || 45);
+    const minInterval = Math.max(0.01, Number(activeMode.actionIntervalMin) || 0.2);
+    const maxInterval = Math.max(minInterval, Number(activeMode.actionIntervalMax) || minInterval);
+    const avgInterval = (minInterval + maxInterval) * 0.5;
+    const actionsPerTick = activeMode.stress ? 2 : 1;
+    const expected = Math.max(
+      activeMode.stress ? 260 : 90,
+      Math.ceil((duration / avgInterval) * actionsPerTick * 0.92)
+    );
+    const capMultiplier = activeMode.stress
+      ? MP_AUTOTEST_STEP_CAP_MULTIPLIER.stress
+      : MP_AUTOTEST_STEP_CAP_MULTIPLIER.quick;
+    const minCap = activeMode.stress
+      ? MP_AUTOTEST_STEP_CAP_MIN.stress
+      : MP_AUTOTEST_STEP_CAP_MIN.quick;
+    const hardCap = Math.max(minCap, Math.ceil(expected * capMultiplier + 24));
+    return { expected, hardCap };
+  }
+
+  function mpAutotestGetProgressSnapshot() {
+    const status = mpAutotest.runningStatus || "idle";
+    const mode = mpAutotest.mode || MP_AUTOTEST_MODES.quick;
+    if (!mpAutotest.active) {
+      if (status === "pass") return { percent: 100, text: "Autotest passed", status };
+      if (status === "fail") return { percent: 100, text: "Autotest failed (see log)", status };
+      return { percent: 0, text: "Idle", status: "idle" };
+    }
+    const nowMs = (typeof performance !== "undefined" && typeof performance.now === "function")
+      ? performance.now()
+      : Date.now();
+    const wallElapsed = mpAutotest.wallStartMs > 0
+      ? Math.max(0, (nowMs - mpAutotest.wallStartMs) / 1000)
+      : 0;
+    const targetDuration = Math.max(1, Number(mode.duration) || 45);
+    const hardTimeoutBuffer = mode.stress
+      ? MP_AUTOTEST_HARD_TIMEOUT_BUFFER.stress
+      : MP_AUTOTEST_HARD_TIMEOUT_BUFFER.quick;
+    const expectedSteps = Math.max(1, Math.floor(Number(mpAutotest.expectedSteps) || 0) || 1);
+    const maxSteps = Math.max(expectedSteps, Math.floor(Number(mpAutotest.maxSteps) || 0) || expectedSteps);
+    const elapsedProgress = clamp((Number(mpAutotest.elapsed) || 0) / targetDuration, 0, 1);
+    const wallProgress = clamp(wallElapsed / Math.max(1, targetDuration + hardTimeoutBuffer), 0, 1);
+    const stepProgress = clamp((Number(mpAutotest.step) || 0) / expectedSteps, 0, 1);
+    let percent = Math.round(Math.max(elapsedProgress, Math.min(0.99, wallProgress * 0.9), Math.min(0.99, stepProgress * 0.96)) * 100);
+    if (percent < 1 && (mpAutotest.elapsed > 0 || mpAutotest.step > 0 || wallElapsed > 0.5)) percent = 1;
+    if (percent > 99 && mpAutotest.active) percent = 99;
+    const remaining = Math.max(0, targetDuration - (Number(mpAutotest.elapsed) || 0));
+    const etaText = remaining > 0.5 ? `${Math.ceil(remaining)}s left` : "finalizing";
+    const text = `${mode.label} ${percent}% • step ${mpAutotest.step}/${expectedSteps} (cap ${maxSteps}) • ${etaText}`;
+    return { percent, text, status: mode.id };
+  }
+
+  function mpAutotestUpdateProgressUI(force = false) {
+    if (!mpAutotestProgressWrap || !mpAutotestProgressFill || !mpAutotestProgressText) return;
+    if (!force && mpAutotest.active) {
+      const now = Number(mpAutotest.elapsed) || 0;
+      if (Math.abs(now - (mpAutotest._lastProgressUiAt || 0)) < MP_AUTOTEST_PROGRESS_UI_INTERVAL) return;
+      mpAutotest._lastProgressUiAt = now;
+    }
+    const snapshot = mpAutotestGetProgressSnapshot();
+    const percent = clamp(Number(snapshot.percent) || 0, 0, 100);
+    mpAutotest.progressPercent = percent;
+    mpAutotestProgressWrap.dataset.status = snapshot.status || "idle";
+    mpAutotestProgressWrap.setAttribute("aria-hidden", "false");
+    mpAutotestProgressFill.style.width = `${percent}%`;
+    mpAutotestProgressText.textContent = snapshot.text || "Idle";
   }
 
   function createMpAutotestDiagnosticsState() {
@@ -6177,6 +6262,10 @@
     mpAutotest.wallStartMs = 0;
     mpAutotest.lastObservedStep = 0;
     mpAutotest.lastProgressWallElapsed = 0;
+    mpAutotest.progressPercent = 0;
+    mpAutotest.expectedSteps = 0;
+    mpAutotest.maxSteps = 0;
+    mpAutotest._lastProgressUiAt = -999;
     if (!keepLog) {
       mpAutotest.logLines = ["Multiplayer autotest idle."];
       if (mpAutotestLogEl) mpAutotestLogEl.textContent = mpAutotest.logLines[0];
@@ -6227,6 +6316,16 @@
         }
       }
       if (!mpAutotest.active) return;
+      if (mpAutotest.maxSteps > 0 && mpAutotest.step >= mpAutotest.maxSteps) {
+        mpAutotestFail("Autotest step cap reached (runner failed to converge)", {
+          subsystem: "runner",
+          step: mpAutotest.step,
+          expectedSteps: mpAutotest.expectedSteps,
+          maxSteps: mpAutotest.maxSteps,
+          mode: mode.id,
+        });
+        return;
+      }
 
       // Refresh elapsed after action processing so stall checks can observe progress
       // that occurred during this tick.
@@ -6264,6 +6363,8 @@
         });
         return;
       }
+
+      mpAutotestUpdateProgressUI(false);
 
       if (mpAutotest.elapsed >= targetDuration) {
         mpAutotestPass();
@@ -6317,6 +6418,8 @@
     mpAutotest.wallStartMs = 0;
     mpAutotest.lastObservedStep = 0;
     mpAutotest.lastProgressWallElapsed = 0;
+    mpAutotest.progressPercent = 0;
+    mpAutotest._lastProgressUiAt = -999;
     mpAutotest.nextSeq = 1;
     mpAutotest.actionTimer = 0.06;
     mpAutotest.periodicCheckTimer = 0.24;
@@ -6341,6 +6444,9 @@
       : null;
     mpAutotest.logLines = [];
     mpAutotestResetDiagnostics();
+    const stepBudget = mpAutotestEstimateStepBudget(mode);
+    mpAutotest.expectedSteps = stepBudget.expected;
+    mpAutotest.maxSteps = stepBudget.hardCap;
     mpAutotestLogLine(`MP Autotest ${mode.label} started.`);
     mpAutotestLogLine(`Seed: ${seed}`);
     mpAutotestLogLine(`Clients: ${requestedClients}`);
@@ -6359,6 +6465,7 @@
     mpAutotest.inventoryLedger.totals = mpAutotestCollectHostItemTotals();
     mpAutotest.inventoryLedger.fingerprint = mpAutotestStableStringify(mpAutotest.inventoryLedger.totals);
     mpAutotestSetStatus(mode.id);
+    mpAutotestUpdateProgressUI(true);
     setPrompt(`MP Autotest running (${mode.label})`, 1.4);
   }
 

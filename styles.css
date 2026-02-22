@@ -654,6 +654,51 @@ html, body {
   outline-offset: 1px;
 }
 
+.mp-autotest-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  border-radius: var(--ui-radius-control);
+  border: 1px solid rgba(138, 164, 190, 0.28);
+  background: rgba(8, 14, 22, 0.6);
+}
+
+.mp-autotest-progress-track {
+  position: relative;
+  height: 8px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(117, 144, 170, 0.18);
+  border: 1px solid rgba(138, 164, 190, 0.18);
+}
+
+.mp-autotest-progress-fill {
+  width: 0%;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(98, 166, 219, 0.92), rgba(121, 211, 189, 0.95));
+  box-shadow: 0 0 10px rgba(110, 190, 233, 0.25);
+  transition: width 120ms linear;
+}
+
+.mp-autotest-progress[data-status="fail"] .mp-autotest-progress-fill {
+  background: linear-gradient(90deg, rgba(204, 93, 93, 0.92), rgba(232, 137, 92, 0.95));
+  box-shadow: 0 0 10px rgba(223, 102, 102, 0.2);
+}
+
+.mp-autotest-progress[data-status="pass"] .mp-autotest-progress-fill {
+  background: linear-gradient(90deg, rgba(92, 188, 122, 0.94), rgba(88, 214, 170, 0.95));
+  box-shadow: 0 0 10px rgba(88, 214, 170, 0.22);
+}
+
+.mp-autotest-progress-text {
+  font-size: 11px;
+  color: #bfd4e7;
+  line-height: 1.2;
+  letter-spacing: 0.2px;
+}
+
 .mp-autotest-log {
   margin: 0;
   min-height: 120px;

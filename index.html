@@ -248,6 +248,12 @@
           <input id="mpAutotestSeed" class="mp-autotest-input" type="text" placeholder="blank = random" />
         </label>
         <button id="mpAutotestReplayBtn" class="action-btn secondary-btn" type="button">Replay Last Failure</button>
+        <div id="mpAutotestProgressWrap" class="mp-autotest-progress" data-status="idle" aria-hidden="true">
+          <div class="mp-autotest-progress-track">
+            <div id="mpAutotestProgressFill" class="mp-autotest-progress-fill"></div>
+          </div>
+          <div id="mpAutotestProgressText" class="mp-autotest-progress-text">Idle</div>
+        </div>
         <pre id="mpAutotestLog" class="mp-autotest-log">Multiplayer autotest idle.</pre>
         <button id="mpAutotestCopyReportBtn" class="action-btn secondary-btn" type="button">Copy Failure Report</button>
       </div>
