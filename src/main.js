@@ -97,7 +97,7 @@
   const forceNightBtn = document.getElementById("forceNightBtn");
   const mosesBtn = document.getElementById("mosesBtn");
   const infiniteResourcesBtn = document.getElementById("infiniteResourcesBtn");
-  const infiniteHealthBtn = document.getElementById("infiniteHealthBtn");
+  let infiniteHealthBtn = document.getElementById("infiniteHealthBtn");
   const debugWorldMapBtn = document.getElementById("debugWorldMapBtn");
   const continentalShiftBtn = document.getElementById("continentalShiftBtn");
   const mpAutotestQuickBtn = document.getElementById("mpAutotestQuickBtn");
@@ -6138,6 +6138,31 @@
     infiniteResourcesBtn.setAttribute("aria-pressed", enabled ? "true" : "false");
   }
 
+  function ensureInfiniteHealthDebugButton() {
+    if (infiniteHealthBtn || !debugPanel) return infiniteHealthBtn;
+    const btn = document.createElement("button");
+    btn.id = "infiniteHealthBtn";
+    btn.type = "button";
+    btn.className = "action-btn";
+    btn.textContent = "Infinite Health: Off";
+    btn.setAttribute("aria-pressed", "false");
+
+    const insertBeforeTarget = debugWorldMapBtn || continentalShiftBtn || null;
+    if (insertBeforeTarget && insertBeforeTarget.parentElement === debugPanel) {
+      debugPanel.insertBefore(btn, insertBeforeTarget);
+    } else if (infiniteResourcesBtn && infiniteResourcesBtn.parentElement === debugPanel) {
+      if (infiniteResourcesBtn.nextSibling) {
+        debugPanel.insertBefore(btn, infiniteResourcesBtn.nextSibling);
+      } else {
+        debugPanel.appendChild(btn);
+      }
+    } else {
+      debugPanel.appendChild(btn);
+    }
+    infiniteHealthBtn = btn;
+    return infiniteHealthBtn;
+  }
+
   function updateInfiniteHealthButton() {
     if (!infiniteHealthBtn) return;
     const enabled = isInfiniteHealthEnabled();
@@ -10974,6 +10999,7 @@
             applyAnimals: true,
             applyVillagers: true,
           });
+          repairCaveDepthEntrances(cave, caveWorld, layer, world);
           if (isCaveHostilesBlocked(world, cave)) {
             caveWorld.monsters = [];
             caveWorld.projectiles = [];
@@ -14626,6 +14652,126 @@
     return seed + caveId * 7919 + layer * 3571;
   }
 
+  function getCaveLayoutTransformKey(caveSeed, caveId, layerIndex) {
+    const layer = normalizeCaveLayerIndex(layerIndex);
+    return Math.floor(rand2d(73 + caveId * 11, 211 + layer * 37, caveSeed + 40417) * 8);
+  }
+
+  function transformSquareTileCoord(x, y, size, transformKey = 0) {
+    let tx = x;
+    let ty = y;
+    const key = Math.floor(transformKey) & 7;
+    const mirrorX = (key & 4) !== 0;
+    const rotations = key & 3;
+    if (mirrorX) tx = (size - 1) - tx;
+    for (let i = 0; i < rotations; i += 1) {
+      const nextX = (size - 1) - ty;
+      const nextY = tx;
+      tx = nextX;
+      ty = nextY;
+    }
+    return { x: tx, y: ty };
+  }
+
+  function applyCaveLayoutTransformToWorld(world, transformKey = 0) {
+    if (!world || !Number.isInteger(world.size) || world.size <= 0) return;
+    const key = Math.floor(transformKey) & 7;
+    if (key === 0) return;
+    const size = world.size;
+    const mapTile = (tx, ty) => transformSquareTileCoord(tx, ty, size, key);
+    const mapWorld = (x, y) => {
+      const tx = clamp(Math.floor(Number(x) / CONFIG.tileSize), 0, size - 1);
+      const ty = clamp(Math.floor(Number(y) / CONFIG.tileSize), 0, size - 1);
+      const mapped = mapTile(tx, ty);
+      return {
+        x: (mapped.x + 0.5) * CONFIG.tileSize,
+        y: (mapped.y + 0.5) * CONFIG.tileSize,
+        tx: mapped.x,
+        ty: mapped.y,
+      };
+    };
+
+    const transformArray = (arr) => {
+      if (!Array.isArray(arr) || arr.length !== size * size) return arr;
+      const next = new Array(arr.length);
+      for (let y = 0; y < size; y += 1) {
+        for (let x = 0; x < size; x += 1) {
+          const fromIdx = tileIndex(x, y, size);
+          const mapped = mapTile(x, y);
+          const toIdx = tileIndex(mapped.x, mapped.y, size);
+          next[toIdx] = arr[fromIdx];
+        }
+      }
+      return next;
+    };
+
+    world.tiles = transformArray(world.tiles);
+    world.shades = transformArray(world.shades);
+    world.resourceGrid = transformArray(world.resourceGrid);
+
+    if (world.entrance && Number.isInteger(world.entrance.tx) && Number.isInteger(world.entrance.ty)) {
+      const mapped = mapTile(world.entrance.tx, world.entrance.ty);
+      world.entrance.tx = mapped.x;
+      world.entrance.ty = mapped.y;
+    }
+
+    if (Array.isArray(world.depthEntrances)) {
+      for (const node of world.depthEntrances) {
+        if (!node || !Number.isInteger(node.tx) || !Number.isInteger(node.ty)) continue;
+        const mapped = mapTile(node.tx, node.ty);
+        node.tx = mapped.x;
+        node.ty = mapped.y;
+      }
+    }
+
+    if (Array.isArray(world.resources)) {
+      for (const res of world.resources) {
+        if (!res) continue;
+        let mapped;
+        if (Number.isInteger(res.tx) && Number.isInteger(res.ty)) {
+          mapped = mapTile(res.tx, res.ty);
+        } else if (Number.isFinite(res.x) && Number.isFinite(res.y)) {
+          mapped = mapWorld(res.x, res.y);
+        }
+        if (!mapped) continue;
+        res.tx = mapped.tx;
+        res.ty = mapped.ty;
+        res.x = mapped.x;
+        res.y = mapped.y;
+      }
+    }
+
+    const worldPositionLists = [
+      world.monsters,
+      world.animals,
+      world.villagers,
+      world.projectiles,
+      world.poisonClouds,
+      world.drops,
+      world.monsterBurnFx,
+    ];
+    for (const list of worldPositionLists) {
+      if (!Array.isArray(list)) continue;
+      for (const entry of list) {
+        if (!entry || !Number.isFinite(entry.x) || !Number.isFinite(entry.y)) continue;
+        const mapped = mapWorld(entry.x, entry.y);
+        entry.x = mapped.x;
+        entry.y = mapped.y;
+        if ("tx" in entry && Number.isFinite(entry.tx)) entry.tx = mapped.tx;
+        if ("ty" in entry && Number.isFinite(entry.ty)) entry.ty = mapped.ty;
+      }
+    }
+
+    if (Array.isArray(world.landmarks)) {
+      for (const landmark of world.landmarks) {
+        if (!landmark || !Number.isFinite(landmark.x) || !Number.isFinite(landmark.y)) continue;
+        const mapped = mapWorld(landmark.x, landmark.y);
+        landmark.x = mapped.x;
+        landmark.y = mapped.y;
+      }
+    }
+  }
+
   function generateCaveWorld(seed, caveId, options = null) {
     const size = CAVE_SIZE;
     const layerIndex = normalizeCaveLayerIndex(options?.layerIndex ?? 0);
@@ -15681,7 +15827,7 @@
       }
     }
 
-    return {
+    const caveWorld = {
       id: caveId,
       seed: caveSeed,
       layerIndex,
@@ -15711,6 +15857,10 @@
       landmarks,
       ambience: "wind-echo",
     };
+    const layoutTransformKey = getCaveLayoutTransformKey(caveSeed, caveId, layerIndex);
+    applyCaveLayoutTransformToWorld(caveWorld, layoutTransformKey);
+    caveWorld.layoutTransformKey = layoutTransformKey;
+    return caveWorld;
   }
 
   function generateWorld(seedStr) {
@@ -20751,6 +20901,7 @@
                 applyAnimals: true,
                 applyVillagers: true,
               });
+              repairCaveDepthEntrances(cave, layerWorld, layer, world);
             }
           } else {
             ensureCaveLayerWorld(cave, 0, world);
@@ -21857,6 +22008,211 @@
     return normalized;
   }
 
+  function getWorldCardinalOpenCount(world, tx, ty) {
+    if (!world || !Array.isArray(world.tiles)) return 0;
+    let count = 0;
+    const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+    for (const [dx, dy] of dirs) {
+      const nx = tx + dx;
+      const ny = ty + dy;
+      if (!inBounds(nx, ny, world.size)) continue;
+      if (world.tiles[tileIndex(nx, ny, world.size)]) count += 1;
+    }
+    return count;
+  }
+
+  function findNearestWalkableCaveDepthTile(world, originTx, originTy, reserved = null, options = null) {
+    if (!world || !Array.isArray(world.tiles)) return null;
+    const size = Number.isInteger(world.size) ? world.size : 0;
+    if (size <= 2) return null;
+    const originX = clamp(Math.floor(originTx), 1, size - 2);
+    const originY = clamp(Math.floor(originTy), 1, size - 2);
+    const maxRadius = clamp(Math.floor(options?.maxRadius ?? 12), 0, Math.max(0, size));
+    const entrance = world.entrance && Number.isInteger(world.entrance.tx) && Number.isInteger(world.entrance.ty)
+      ? world.entrance
+      : null;
+    const minFromEntrance = Number.isFinite(options?.minFromEntrance)
+      ? Math.max(0, Number(options.minFromEntrance))
+      : 0;
+    const preferBranch = options?.preferBranch !== false;
+    let best = null;
+    let bestScore = Infinity;
+    for (let radius = 0; radius <= maxRadius; radius += 1) {
+      for (let dy = -radius; dy <= radius; dy += 1) {
+        for (let dx = -radius; dx <= radius; dx += 1) {
+          const tx = originX + dx;
+          const ty = originY + dy;
+          if (!inBounds(tx, ty, size)) continue;
+          if (!world.tiles[tileIndex(tx, ty, size)]) continue;
+          if (reserved?.has(`${tx},${ty}`)) continue;
+          if (entrance && Math.hypot(tx - entrance.tx, ty - entrance.ty) < minFromEntrance) continue;
+          const openCount = getWorldCardinalOpenCount(world, tx, ty);
+          if (openCount <= 0) continue;
+          const branchPenalty = preferBranch ? Math.abs(openCount - 2) * 0.7 : 0;
+          const score = Math.hypot(tx - originTx, ty - originTy) + branchPenalty;
+          if (score < bestScore) {
+            bestScore = score;
+            best = { tx, ty };
+          }
+        }
+      }
+    }
+    return best;
+  }
+
+  function findDeterministicCaveDepthFallbackTile(world, cave, layerIndex, request, reserved = null) {
+    if (!world || !Array.isArray(world.tiles)) return null;
+    const size = Number.isInteger(world.size) ? world.size : 0;
+    if (size <= 2) return null;
+    const seedInt = cave?.seedInt
+      ?? state.surfaceWorld?.seedInt
+      ?? state.world?.seedInt
+      ?? seedToInt(state.surfaceWorld?.seed || state.world?.seed || "island");
+    const entrance = world.entrance && Number.isInteger(world.entrance.tx) && Number.isInteger(world.entrance.ty)
+      ? world.entrance
+      : { tx: Math.floor(size / 2), ty: Math.floor(size / 2) };
+    const minFromEntrance = request?.direction === "down"
+      ? CAVE_DEEP_ENTRANCE_CONFIG.minFromMainEntranceTiles
+      : Math.max(3.2, CAVE_DEEP_ENTRANCE_CONFIG.minFromMainEntranceTiles - 1.6);
+    const total = (size - 2) * (size - 2);
+    const salt = (
+      ((cave?.id || 0) * 1931)
+      ^ ((normalizeCaveLayerIndex(layerIndex) + 1) * 911)
+      ^ ((Number(request?.slot) || 0) * 131)
+      ^ ((normalizeCaveLayerIndex(request?.targetLayer ?? 0) + 1) * 37)
+      ^ (String(request?.direction || "down") === "down" ? 0x41 : 0x97)
+    ) >>> 0;
+    const start = salt % Math.max(1, total);
+    let best = null;
+    let bestScore = Infinity;
+    for (let step = 0; step < total; step += 1) {
+      const flat = (start + step) % total;
+      const tx = 1 + (flat % (size - 2));
+      const ty = 1 + Math.floor(flat / (size - 2));
+      if (!world.tiles[tileIndex(tx, ty, size)]) continue;
+      if (reserved?.has(`${tx},${ty}`)) continue;
+      const distFromEntrance = Math.hypot(tx - entrance.tx, ty - entrance.ty);
+      if (distFromEntrance < minFromEntrance) continue;
+      const openCount = getWorldCardinalOpenCount(world, tx, ty);
+      if (openCount <= 0) continue;
+      const bias =
+        Math.abs(openCount - 2) * 0.5
+        + Math.abs(rand2d(tx + salt, ty + seedInt, seedInt + 28711) - 0.5) * 0.08;
+      if (bias < bestScore) {
+        bestScore = bias;
+        best = { tx, ty };
+        if (openCount === 2 && distFromEntrance >= minFromEntrance + 2) break;
+      }
+    }
+    return best;
+  }
+
+  function repairCaveDepthEntrances(cave, layerWorld, layerIndex, surfaceWorld = null) {
+    if (!cave || !layerWorld) return false;
+    const normalizedLayer = normalizeCaveLayerIndex(layerIndex);
+    const worldRef = surfaceWorld || state.surfaceWorld || state.world;
+    const linkConfig = getNormalizedCaveLinkConfig(cave, worldRef);
+    const expectedRequests = getCaveLayerPortalRequests(normalizedLayer, linkConfig);
+    const expectedKeys = new Set(
+      expectedRequests.map((req) => `${req.direction}:${normalizeCaveLayerIndex(req.targetLayer)}:${req.slot}`)
+    );
+    const reserved = new Set();
+    const nextEntries = [];
+    const existing = Array.isArray(layerWorld.depthEntrances) ? layerWorld.depthEntrances : [];
+    let changed = !Array.isArray(layerWorld.depthEntrances);
+
+    for (const entry of existing) {
+      if (!entry || !Number.isInteger(entry.tx) || !Number.isInteger(entry.ty)) {
+        changed = true;
+        continue;
+      }
+      const direction = Number(entry.direction) > 0 ? 1 : -1;
+      const requestDirection = direction > 0 ? "down" : "up";
+      const slot = Math.max(0, Math.floor(Number(entry.slot) || 0));
+      const targetLayer = normalizeCaveLayerIndex(entry.targetLayer);
+      const key = `${requestDirection}:${targetLayer}:${slot}`;
+      if (!expectedKeys.has(key)) {
+        changed = true;
+        continue;
+      }
+      let tx = Math.floor(entry.tx);
+      let ty = Math.floor(entry.ty);
+      if (!inBounds(tx, ty, layerWorld.size) || !layerWorld.tiles[tileIndex(tx, ty, layerWorld.size)] || reserved.has(`${tx},${ty}`)) {
+        const repaired = findNearestWalkableCaveDepthTile(layerWorld, tx, ty, reserved, {
+          maxRadius: 10,
+          minFromEntrance: direction > 0 ? CAVE_DEEP_ENTRANCE_CONFIG.minFromMainEntranceTiles : 3.2,
+          preferBranch: true,
+        });
+        if (!repaired) {
+          changed = true;
+          continue;
+        }
+        tx = repaired.tx;
+        ty = repaired.ty;
+        changed = true;
+      }
+      reserved.add(`${tx},${ty}`);
+      nextEntries.push({ tx, ty, direction, slot, targetLayer });
+    }
+
+    let referenceWorld = null;
+    const existingKeys = new Set(nextEntries.map((entry) => `${entry.direction > 0 ? "down" : "up"}:${entry.targetLayer}:${entry.slot}`));
+    for (const request of expectedRequests) {
+      const key = `${request.direction}:${normalizeCaveLayerIndex(request.targetLayer)}:${request.slot}`;
+      if (existingKeys.has(key)) continue;
+      if (!referenceWorld) {
+        const seedInt = cave.seedInt
+          ?? worldRef?.seedInt
+          ?? seedToInt(worldRef?.seed || "island");
+        referenceWorld = generateCaveWorld(seedInt, cave.id, {
+          spawnHostiles: false,
+          layerIndex: normalizedLayer,
+          linkConfig,
+        });
+      }
+      const reference = (referenceWorld?.depthEntrances || []).find((entry) => (
+        (Number(entry.direction) > 0 ? "down" : "up") === request.direction
+        && normalizeCaveLayerIndex(entry.targetLayer) === normalizeCaveLayerIndex(request.targetLayer)
+        && Math.floor(Number(entry.slot) || 0) === request.slot
+      ));
+      let placed = null;
+      if (reference) {
+        placed = findNearestWalkableCaveDepthTile(layerWorld, reference.tx, reference.ty, reserved, {
+          maxRadius: 12,
+          minFromEntrance: request.direction === "down" ? CAVE_DEEP_ENTRANCE_CONFIG.minFromMainEntranceTiles : 3.2,
+          preferBranch: true,
+        });
+      }
+      if (!placed) {
+        placed = findDeterministicCaveDepthFallbackTile(layerWorld, cave, normalizedLayer, request, reserved);
+      }
+      if (!placed) continue;
+      reserved.add(`${placed.tx},${placed.ty}`);
+      nextEntries.push({
+        tx: placed.tx,
+        ty: placed.ty,
+        direction: request.direction === "down" ? 1 : -1,
+        slot: request.slot,
+        targetLayer: normalizeCaveLayerIndex(request.targetLayer),
+      });
+      existingKeys.add(key);
+      changed = true;
+    }
+
+    nextEntries.sort((a, b) => (
+      (a.direction - b.direction)
+      || (a.targetLayer - b.targetLayer)
+      || (a.slot - b.slot)
+      || (a.ty - b.ty)
+      || (a.tx - b.tx)
+    ));
+    if (changed || nextEntries.length !== existing.length) {
+      layerWorld.depthEntrances = nextEntries;
+      return true;
+    }
+    return false;
+  }
+
   function ensureCaveLayerWorld(cave, layerIndex, surfaceWorld = null) {
     if (!cave) return null;
     const normalizedLayer = normalizeCaveLayerIndex(layerIndex);
@@ -21880,6 +22236,7 @@
       layerWorld.projectiles = [];
       layerWorld.poisonClouds = [];
     }
+    repairCaveDepthEntrances(cave, layerWorld, normalizedLayer, worldRef);
     return layerWorld;
   }
 
@@ -21963,7 +22320,12 @@
     const caveWorld = state.inCave && state.activeCave === cave
       ? state.world
       : ensureCaveLayerWorld(cave, 0, state.surfaceWorld || state.world);
-    if (!caveWorld || !Array.isArray(caveWorld.depthEntrances)) return null;
+    if (!caveWorld) return null;
+    const activeLayer = state.inCave && state.activeCave === cave
+      ? normalizeCaveLayerIndex(state.activeCaveLayer ?? 0)
+      : 0;
+    repairCaveDepthEntrances(cave, caveWorld, activeLayer, state.surfaceWorld || state.world);
+    if (!Array.isArray(caveWorld.depthEntrances)) return null;
     let closest = null;
     let closestDist = Infinity;
     for (const depthEntrance of caveWorld.depthEntrances) {
@@ -22030,11 +22392,16 @@
     startCaveLayerTransitionEffect(CAVE_LAYER_LABELS[targetLayer] || `Layer ${targetLayer + 1}`);
     markDirty();
     if (net.enabled) sendPlayerUpdate();
+    const movedDown = entrance.direction > 0;
+    const layerLabel = CAVE_LAYER_LABELS[targetLayer] || `Layer ${targetLayer + 1}`;
+    const hasMoreDepthOptions = (targetWorld.depthEntrances || []).some((node) => Number(node?.direction) > 0);
     setPrompt(
-      entrance.direction > 0
-        ? `Descended to ${CAVE_LAYER_LABELS[targetLayer]}`
-        : `Ascended to ${CAVE_LAYER_LABELS[targetLayer]}`,
-      1.1
+      movedDown && hasMoreDepthOptions
+        ? `Descended to ${layerLabel}. Look for another shaft to go deeper.`
+        : movedDown
+          ? `Descended to ${layerLabel}`
+          : `Ascended to ${layerLabel}`,
+      1.3
     );
     return true;
   }
@@ -30295,6 +30662,9 @@
     startCaveLayerTransitionEffect(CAVE_LAYER_LABELS[0]);
     markDirty();
     if (net.enabled) sendPlayerUpdate();
+    if (Array.isArray(caveWorld.depthEntrances) && caveWorld.depthEntrances.length > 0) {
+      setPrompt("Look for dark shaft markers with arrows. Press E to go deeper.", 2.2);
+    }
   }
 
   function leaveCave() {
@@ -30788,7 +31158,13 @@
             setPrompt(`Press Space / Tap Attack to ${getResourceActionName(state.targetResource)}`);
           } else {
             const label = CAVE_LAYER_LABELS[currentLayer] || `Layer ${currentLayer + 1}`;
-            setPrompt(`Wind echoes through the cave (${label})`);
+            const canGoDeeper = Array.isArray(caveWorld?.depthEntrances)
+              && caveWorld.depthEntrances.some((node) => Number(node?.direction) > 0);
+            setPrompt(
+              canGoDeeper
+                ? `Explore branches and look for dark shaft markers (${label})`
+                : `Wind echoes through the cave (${label})`
+            );
           }
         }
       } else if (state.activeShipRepair) {
@@ -34341,13 +34717,19 @@
             || markerY > cameraViewHeight + 28
           ) continue;
           const down = Number(node.direction) > 0;
+          const pulse = 0.5 + 0.5 * Math.sin((performance.now() * 0.007) + ((node.slot || 0) * 1.17) + ((node.targetLayer || 0) * 0.93));
+          const glowAlpha = 0.12 + pulse * 0.14;
           ctx.save();
           ctx.globalAlpha = 0.95;
-          ctx.fillStyle = down ? "rgba(8, 14, 20, 0.92)" : "rgba(10, 16, 24, 0.88)";
-          ctx.strokeStyle = down ? "rgba(120, 198, 255, 0.72)" : "rgba(198, 228, 255, 0.76)";
-          ctx.lineWidth = 1.6;
+          ctx.fillStyle = down ? `rgba(92, 178, 240, ${glowAlpha})` : `rgba(202, 231, 255, ${glowAlpha})`;
           ctx.beginPath();
-          ctx.ellipse(markerX, markerY + 1, 8.5, 6.4, 0, 0, Math.PI * 2);
+          ctx.arc(markerX, markerY, 13 + pulse * 2.2, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillStyle = down ? "rgba(8, 14, 20, 0.92)" : "rgba(10, 16, 24, 0.88)";
+          ctx.strokeStyle = down ? "rgba(140, 212, 255, 0.82)" : "rgba(214, 239, 255, 0.86)";
+          ctx.lineWidth = 1.9;
+          ctx.beginPath();
+          ctx.ellipse(markerX, markerY + 1, 9.5, 7.2, 0, 0, Math.PI * 2);
           ctx.fill();
           ctx.stroke();
           ctx.strokeStyle = down ? "rgba(96, 176, 235, 0.42)" : "rgba(186, 216, 242, 0.42)";
@@ -35050,6 +35432,7 @@
     setSettingsTab("settings");
     updateVolumeUI();
     updatePlayerNameUI();
+    ensureInfiniteHealthDebugButton();
     setDebugUnlocked(state.debugUnlocked, false);
     updateDebugSpeedUI();
     updateDebugWorldSpeedUI();
