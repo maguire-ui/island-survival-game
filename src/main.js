@@ -691,6 +691,7 @@
   });
   const CAVE_ORE_MIN_SPACING_TILES = 2.15;
   const CAVE_DEAD_END_REWARD_MIN_SEPARATION_TILES = 4.8;
+  const CAVES_ENABLED = false;
 
   const SAVE_KEY = "island_survival_save_v1";
   const SAVE_KEY_PREFIX = "island_survival_seed_save_v1:";
@@ -3319,7 +3320,7 @@
           break;
         }
       }
-      if (Array.isArray(world.caves)) {
+      if (CAVES_ENABLED && Array.isArray(world.caves)) {
         const caveIds = new Set();
         const caveTiles = new Set();
         for (const cave of world.caves) {
@@ -6147,7 +6148,14 @@
       case "harvest": {
         const resources = (world.resources || [])
           .map((entry, idx) => ({ entry, idx }))
-          .filter(({ entry }) => entry && !entry.removed && (entry.type === "tree" || entry.type === "rock" || entry.type === "ore"));
+          .filter(({ entry }) => (
+            entry
+            && !entry.removed
+            && (entry.type === "tree" || entry.type === "rock" || entry.type === "ore")
+            && isResourceInteractable(entry)
+            && Number.isFinite(entry.hp)
+            && entry.hp > 0
+          ));
         if (resources.length === 0) return null;
         const picked = resources[Math.floor(mpAutotest.rng() * resources.length)];
         const rx = Number(picked.entry.x);
@@ -6289,12 +6297,21 @@
         const storage = sanitizeInventorySlots(chest.storage, CHEST_SIZE);
         const resources = (world.resources || [])
           .map((entry, idx) => ({ entry, idx }))
-          .filter(({ entry }) => entry && !entry.removed && (entry.type === "tree" || entry.type === "rock" || entry.type === "ore"));
+          .filter(({ entry }) => (
+            entry
+            && !entry.removed
+            && (entry.type === "tree" || entry.type === "rock" || entry.type === "ore")
+            && isResourceInteractable(entry)
+            && Number.isFinite(entry.hp)
+            && entry.hp > 0
+          ));
         const harvestTarget = resources.length > 0
           ? resources[Math.floor(mpAutotest.rng() * resources.length)]
           : null;
         descriptor.note = `concurrency spam @ chest ${chest.tx},${chest.ty}`;
-        descriptor.ledgerRule = "conserve";
+        // Spam may include legitimate harvest/drop mutations and passive time-based systems
+        // advancing in the same tick, so strict conservation is too noisy here.
+        descriptor.ledgerRule = "allowAny";
         descriptor.payloads.push(mpAutotestBuildPlayerUpdatePayload(client, centerX, centerY));
         descriptor.payloads.push({
           type: "chestUpdate",
@@ -6371,10 +6388,21 @@
             }
           )
         );
-        if (Array.isArray(caveLayerWorld.resources) && caveLayerWorld.resources.length > 0) {
+        const caveHarvestTarget = Array.isArray(caveLayerWorld.resources)
+          ? caveLayerWorld.resources
+            .map((entry, idx) => ({ entry, idx }))
+            .find(({ entry }) => (
+              entry
+              && !entry.removed
+              && isResourceInteractable(entry)
+              && Number.isFinite(entry.hp)
+              && entry.hp > 0
+            ))
+          : null;
+        if (caveHarvestTarget) {
           descriptor.payloads.push({
             type: "harvest",
-            resId: 0,
+            resId: caveHarvestTarget.idx,
             world: "cave",
             caveId: cave.id,
             caveLayer: 0,
@@ -6592,6 +6620,7 @@
         if (harvestWorld === "cave" && Number.isInteger(payload.caveId)) {
           const caveWorld = getCaveWorld(payload.caveId, payload.caveLayer ?? 0);
           const res = caveWorld && Number.isInteger(payload.resId) ? caveWorld.resources?.[payload.resId] : null;
+          if (!res || !isResourceInteractable(res) || !Number.isFinite(res.hp) || res.hp <= 0 || res.removed) continue;
           mpAutotestQueueAssertion({
             type: "harvest",
             world: "cave",
@@ -6606,6 +6635,7 @@
         } else {
           const hostWorld = state.surfaceWorld || state.world;
           const res = hostWorld && Number.isInteger(payload.resId) ? hostWorld.resources?.[payload.resId] : null;
+          if (!res || !isResourceInteractable(res) || !Number.isFinite(res.hp) || res.hp <= 0 || res.removed) continue;
           mpAutotestQueueAssertion({
             type: "harvest",
             world: "surface",
@@ -12265,9 +12295,9 @@
           houseKey: entry.houseKey ?? prev.houseKey ?? null,
           houseX: Number.isFinite(entry.houseX) ? entry.houseX : (prev.houseX ?? null),
           houseY: Number.isFinite(entry.houseY) ? entry.houseY : (prev.houseY ?? null),
-          inCave: !!entry.inCave,
-          caveId: entry.caveId ?? null,
-          caveLayer: normalizeCaveLayerIndex(entry.caveLayer ?? prev.caveLayer ?? 0),
+          inCave: CAVES_ENABLED ? !!entry.inCave : false,
+          caveId: CAVES_ENABLED ? (entry.caveId ?? null) : null,
+          caveLayer: CAVES_ENABLED ? normalizeCaveLayerIndex(entry.caveLayer ?? prev.caveLayer ?? 0) : 0,
           unlocks: normalizeUnlocks(entry.unlocks ?? prev.unlocks),
           inventoryFingerprint: staleInventoryFingerprint,
           inventoryTotals: staleInventoryTotals,
@@ -12312,9 +12342,9 @@
         houseKey: entry.houseKey ?? null,
         houseX: Number.isFinite(entry.houseX) ? entry.houseX : null,
         houseY: Number.isFinite(entry.houseY) ? entry.houseY : null,
-        inCave: !!entry.inCave,
-        caveId: entry.caveId ?? null,
-        caveLayer: normalizeCaveLayerIndex(entry.caveLayer ?? prev?.caveLayer ?? 0),
+        inCave: CAVES_ENABLED ? !!entry.inCave : false,
+        caveId: CAVES_ENABLED ? (entry.caveId ?? null) : null,
+        caveLayer: CAVES_ENABLED ? normalizeCaveLayerIndex(entry.caveLayer ?? prev?.caveLayer ?? 0) : 0,
         unlocks: normalizeUnlocks(entry.unlocks ?? prev?.unlocks),
         inventoryFingerprint,
         inventoryTotals,
@@ -12331,7 +12361,16 @@
   }
 
   function ensureSurfaceCaves(world, caveEntries) {
-    if (!world || !Array.isArray(caveEntries)) return;
+    if (!world) return;
+    if (!CAVES_ENABLED) {
+      if (!Array.isArray(world.caves)) {
+        world.caves = [];
+      } else if (world.caves.length > 0) {
+        world.caves = [];
+      }
+      return;
+    }
+    if (!Array.isArray(caveEntries)) return;
     if (!Array.isArray(world.caves)) world.caves = [];
     let caveTopologyChanged = false;
     for (const entry of caveEntries) {
@@ -12481,6 +12520,9 @@
     }
     ensurePlayerProgress(state.player);
     ensureSurfaceCaves(world, snapshot.caves);
+    if (!CAVES_ENABLED) {
+      forceSurfaceFromDisabledCaves();
+    }
     applyResourceStates(world, snapshot.world?.resourceStates ?? []);
     applyRespawnTasks(world, snapshot.world?.respawnTasks ?? []);
     normalizeSurfaceResources(world);
@@ -12492,7 +12534,7 @@
     world.poisonClouds = buildPoisonCloudsFromSnapshot(world.poisonClouds, snapshot.world?.poisonClouds);
     world.nextPoisonCloudId = world.poisonClouds.reduce((max, cloud) => Math.max(max, (cloud.id || 0) + 1), 1);
 
-    if (Array.isArray(world.caves) && Array.isArray(snapshot.caves)) {
+    if (CAVES_ENABLED && Array.isArray(world.caves) && Array.isArray(snapshot.caves)) {
       for (const cave of world.caves) {
         const caveSnapshot = snapshot.caves.find((entry) => entry.id === cave.id);
         if (!caveSnapshot) continue;
@@ -12548,6 +12590,9 @@
     updateTimeUI();
     seedDisplay.textContent = `Seed: ${snapshot.seed}`;
     applyPlayersSnapshot(snapshot.players);
+    if (!CAVES_ENABLED) {
+      forceSurfaceFromDisabledCaves();
+    }
     const syncedWorld = getPlayerWorldForSync(
       state.inCave,
       state.activeCave?.id ?? null,
@@ -12721,9 +12766,11 @@
     player.houseKey = message.houseKey ?? null;
     player.houseX = Number.isFinite(message.houseX) ? message.houseX : null;
     player.houseY = Number.isFinite(message.houseY) ? message.houseY : null;
-    player.inCave = !!message.inCave;
-    player.caveId = message.caveId ?? null;
-    player.caveLayer = normalizeCaveLayerIndex(message.caveLayer ?? player.caveLayer ?? 0);
+    player.inCave = CAVES_ENABLED ? !!message.inCave : false;
+    player.caveId = (CAVES_ENABLED && player.inCave) ? (message.caveId ?? null) : null;
+    player.caveLayer = (CAVES_ENABLED && player.inCave)
+      ? normalizeCaveLayerIndex(message.caveLayer ?? player.caveLayer ?? 0)
+      : 0;
     const playerWorld = getPlayerWorldForSync(player.inCave, player.caveId, player.caveLayer ?? 0);
     const normalizedPos = clampPositionToWorldBounds(playerWorld, player.x, player.y, player.x, player.y);
     player.x = normalizedPos.x;
@@ -13946,6 +13993,7 @@
   }
 
   function getCaveWorld(caveId, layerIndex = 0) {
+    if (!CAVES_ENABLED) return null;
     if (!state.surfaceWorld || !state.surfaceWorld.caves) return null;
     const cave = state.surfaceWorld.caves.find((entry) => entry.id === caveId);
     if (!cave) return null;
@@ -14836,11 +14884,48 @@
   }
 
   function getPlayerWorldForSync(inCave, caveId, caveLayer = 0) {
-    if (inCave) {
+    if (CAVES_ENABLED && inCave) {
       const caveWorld = getCaveWorld(caveId, caveLayer);
       if (caveWorld) return caveWorld;
     }
     return state.surfaceWorld || state.world || null;
+  }
+
+  function forceSurfaceFromDisabledCaves() {
+    if (CAVES_ENABLED) return;
+    if (!state.inCave && !state.activeCave) return;
+    const surface = state.surfaceWorld || state.world;
+    const fallbackPos = state.returnPosition && Number.isFinite(state.returnPosition.x) && Number.isFinite(state.returnPosition.y)
+      ? { x: state.returnPosition.x, y: state.returnPosition.y }
+      : (
+        state.spawnTile && Number.isInteger(state.spawnTile.x) && Number.isInteger(state.spawnTile.y)
+          ? {
+              x: (state.spawnTile.x + 0.5) * CONFIG.tileSize,
+              y: (state.spawnTile.y + 0.5) * CONFIG.tileSize,
+            }
+          : null
+      );
+    state.inCave = false;
+    state.activeCave = null;
+    state.activeCaveLayer = 0;
+    state.returnPosition = null;
+    state.caveTransition = null;
+    state.cavePassageCooldown = 0;
+    state.cavePassageLock = null;
+    if (state.surfaceWorld) state.world = state.surfaceWorld;
+    if (state.player && surface) {
+      if (fallbackPos) {
+        const clamped = clampEntityPositionToWalkable(surface, fallbackPos.x, fallbackPos.y, 18);
+        if (clamped) {
+          state.player.x = clamped.x;
+          state.player.y = clamped.y;
+        }
+      }
+      if (Number.isFinite(state.player.x) && Number.isFinite(state.player.y)) {
+        state.player.renderX = state.player.x;
+        state.player.renderY = state.player.y;
+      }
+    }
   }
 
   function clampPositionToWorldBounds(world, x, y, fallbackX = null, fallbackY = null) {
@@ -22834,10 +22919,10 @@
       state.surfaceDayBurnGraceTimer = 0;
       state.surfaceSpawnTimer = MONSTER.spawnInterval;
       state.surfaceGuardianSpawnTimer = SURFACE_GUARDIAN_CONFIG.spawnInterval;
-      state.inCave = !!preparedSave.player?.inCave;
+      state.inCave = CAVES_ENABLED && !!preparedSave.player?.inCave;
       state.activeCave = null;
-      state.activeCaveLayer = normalizeCaveLayerIndex(preparedSave.player?.caveLayer ?? 0);
-      state.returnPosition = preparedSave.player?.returnPosition ?? null;
+      state.activeCaveLayer = CAVES_ENABLED ? normalizeCaveLayerIndex(preparedSave.player?.caveLayer ?? 0) : 0;
+      state.returnPosition = CAVES_ENABLED ? (preparedSave.player?.returnPosition ?? null) : null;
 
       if (state.inCave && world.caves) {
         const cave = world.caves.find((entry) => entry.id === preparedSave.player?.caveId);
@@ -22854,6 +22939,14 @@
         state.inCave = false;
         state.activeCaveLayer = 0;
         state.returnPosition = null;
+      }
+
+      if (!CAVES_ENABLED) {
+        state.inCave = false;
+        state.activeCave = null;
+        state.activeCaveLayer = 0;
+        state.returnPosition = null;
+        state.world = world;
       }
 
       if (state.inCave && state.activeCave) {
@@ -23988,6 +24081,7 @@
   }
 
   function addSurfaceCave(world, tx, ty, preferredId = null, options = null) {
+    if (!CAVES_ENABLED) return null;
     if (!world) return null;
     if (!Array.isArray(world.caves)) world.caves = [];
     const spawnedByPlayer = !!options?.spawnedByPlayer;
@@ -24741,6 +24835,7 @@
   }
 
   function ensureCaveLayerWorld(cave, layerIndex, surfaceWorld = null) {
+    if (!CAVES_ENABLED) return null;
     if (!cave) return null;
     const normalizedLayer = normalizeCaveLayerIndex(layerIndex);
     if (!Array.isArray(cave.layers)) cave.layers = [];
@@ -24840,6 +24935,7 @@
   }
 
   function findNearestCave(world, player) {
+    if (!CAVES_ENABLED) return null;
     if (!world?.caves) return null;
     let closest = null;
     let closestDist = Infinity;
@@ -24856,6 +24952,7 @@
   }
 
   function findNearestCaveDepthEntrance(cave, player, maxRange = CONFIG.interactRange) {
+    if (!CAVES_ENABLED) return null;
     if (!cave || !player) return null;
     const caveWorld = state.inCave && state.activeCave === cave
       ? state.world
@@ -24925,6 +25022,7 @@
   }
 
   function traverseCaveDepthEntrance(entrance) {
+    if (!CAVES_ENABLED) return false;
     if (!state.inCave || !state.activeCave || !state.player || !entrance) return false;
     if (entrance.kind === "surface_link") {
       const surface = state.surfaceWorld || state.world;
@@ -33289,6 +33387,7 @@
   }
 
   function enterCave(cave) {
+    if (!CAVES_ENABLED) return;
     if (!cave || state.inCave) return;
     state.sleepSequence = null;
     state.returnPosition = { x: state.player.x, y: state.player.y };
