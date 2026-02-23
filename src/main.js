@@ -624,8 +624,13 @@
   ];
 
   const CAVE_SIZE = 28;
-  const CAVE_LAYER_COUNT = 3;
-  const CAVE_LAYER_LABELS = Object.freeze(["Layer 1", "Layer 2", "Layer 3"]);
+  // Internally still called "layers" for save/sync compatibility, but these now
+  // represent cave rooms in a connected room graph (Zelda-style screen rooms).
+  const CAVE_LAYER_COUNT = 9;
+  const CAVE_LAYER_LABELS = Object.freeze([
+    "Cave Room 1", "Cave Room 2", "Cave Room 3", "Cave Room 4", "Cave Room 5",
+    "Cave Room 6", "Cave Room 7", "Cave Room 8", "Cave Room 9",
+  ]);
   const CAVE_DEEP_ENTRANCE_CONFIG = Object.freeze({
     firstPairChance: 0.72,
     secondPairChance: 0.44,
@@ -1926,6 +1931,8 @@
     },
     inventoryLedger: {
       totals: Object.create(null),
+      dropTotals: Object.create(null),
+      nonDropTotals: Object.create(null),
       fingerprint: "",
     },
     hostHash: "",
@@ -2778,12 +2785,75 @@
       const kind = node.kind === "surface_link" ? "surface_link" : "layer";
       const direction = Number(node.direction) || 0;
       const slot = Number.isInteger(node.slot) ? node.slot : 0;
+      if (node.travelMode !== "edge") {
+        qaPushIssue(issues, `[${label}.depthEntrances] Non-edge cave passage node`);
+        break;
+      }
+      if (!normalizeCaveEdgeSide(node.edgeSide)) {
+        qaPushIssue(issues, `[${label}.depthEntrances] Missing/invalid edgeSide`);
+        break;
+      }
+      if (kind !== "surface_link" && !normalizeCaveEdgeSide(node.targetEdgeSide)) {
+        qaPushIssue(issues, `[${label}.depthEntrances] Missing/invalid targetEdgeSide`);
+        break;
+      }
       const key = `${kind}:${direction}:${slot}:${node.tx}:${node.ty}`;
       if (seenKeys.has(key)) {
         qaPushIssue(issues, `[${label}.depthEntrances] Duplicate entrance key ${key}`);
         break;
       }
       seenKeys.add(key);
+    }
+  }
+
+  function qaValidateCaveLinkGraphConfig(linkConfig, label, issues) {
+    if (!linkConfig || typeof linkConfig !== "object") {
+      qaPushIssue(issues, `[${label}] Missing cave linkConfig`);
+      return;
+    }
+    if (linkConfig.mode !== "room_graph_v1") {
+      qaPushIssue(issues, `[${label}] Unexpected cave link mode (${String(linkConfig.mode || "none")})`);
+      return;
+    }
+    const roomCount = Number(linkConfig.roomCount);
+    if (!Number.isInteger(roomCount) || roomCount < 1 || roomCount > CAVE_LAYER_COUNT) {
+      qaPushIssue(issues, `[${label}] Invalid cave roomCount`);
+      return;
+    }
+    if (!Array.isArray(linkConfig.edges)) {
+      qaPushIssue(issues, `[${label}] Cave graph missing edges array`);
+      return;
+    }
+    if (!Array.isArray(linkConfig.roomDepths)) {
+      qaPushIssue(issues, `[${label}] Cave graph missing roomDepths array`);
+    }
+    const seenEdges = new Set();
+    for (const edge of linkConfig.edges) {
+      if (!edge) {
+        qaPushIssue(issues, `[${label}] Null cave graph edge`);
+        continue;
+      }
+      if (!Number.isInteger(edge.id) || !Number.isInteger(edge.a) || !Number.isInteger(edge.b)) {
+        qaPushIssue(issues, `[${label}] Cave graph edge missing integer ids`);
+        continue;
+      }
+      if (edge.a < 0 || edge.a >= roomCount || edge.b < 0 || edge.b >= roomCount || edge.a === edge.b) {
+        qaPushIssue(issues, `[${label}] Cave graph edge has invalid room endpoints`);
+        continue;
+      }
+      if (!normalizeCaveEdgeSide(edge.sideA) || !normalizeCaveEdgeSide(edge.sideB)) {
+        qaPushIssue(issues, `[${label}] Cave graph edge missing valid sides`);
+        continue;
+      }
+      const key = `${Math.min(edge.a, edge.b)}:${Math.max(edge.a, edge.b)}`;
+      if (seenEdges.has(key)) {
+        qaPushIssue(issues, `[${label}] Duplicate cave graph edge ${key}`);
+        continue;
+      }
+      seenEdges.add(key);
+    }
+    if (roomCount > 1 && seenEdges.size <= 0) {
+      qaPushIssue(issues, `[${label}] Cave graph has multiple rooms but no edges`);
     }
   }
 
@@ -2965,6 +3035,35 @@
           break;
         }
       }
+      if (Array.isArray(world.caves)) {
+        const caveIds = new Set();
+        const caveTiles = new Set();
+        for (const cave of world.caves) {
+          if (!cave || !Number.isInteger(cave.id)) {
+            qaPushIssue(issues, "[surface] Cave missing numeric id");
+            continue;
+          }
+          if (caveIds.has(cave.id)) {
+            qaPushIssue(issues, `[surface] Duplicate cave id ${cave.id}`);
+            break;
+          }
+          caveIds.add(cave.id);
+          if (!Number.isInteger(cave.tx) || !Number.isInteger(cave.ty)) {
+            qaPushIssue(issues, `[surface] Cave ${cave.id} missing integer tile`);
+            continue;
+          }
+          const tileKey = `${cave.tx},${cave.ty}`;
+          if (caveTiles.has(tileKey)) {
+            qaPushIssue(issues, `[surface] Duplicate cave tile ${tileKey}`);
+            break;
+          }
+          caveTiles.add(tileKey);
+          if (!inBounds(cave.tx, cave.ty, world.size) || world.tiles[tileIndex(cave.tx, cave.ty, world.size)] !== 1) {
+            qaPushIssue(issues, `[surface] Cave ${cave.id} placed off land`);
+          }
+          qaValidateCaveLinkGraphConfig(cave.linkConfig, `[surface.cave:${cave.id}].linkConfig`, issues);
+        }
+      }
     }
   }
 
@@ -3062,6 +3161,7 @@
       if (!Number.isInteger(cave.tx) || !Number.isInteger(cave.ty)) {
         qaPushIssue(issues, `[snapshot] cave ${cave.id} missing integer surface tile`);
       }
+      qaValidateCaveLinkGraphConfig(cave.linkConfig, `[snapshot] cave ${cave.id} linkConfig`, issues);
       const layerEntries = Array.isArray(cave.layers) && cave.layers.length > 0
         ? cave.layers
         : [{ layer: 0, world: cave.world && typeof cave.world === "object" ? cave.world : cave }];
@@ -4219,7 +4319,13 @@
   }
 
   function mpAutotestCollectHostItemTotals() {
+    return mpAutotestCollectHostItemTotalsBreakdown().totals;
+  }
+
+  function mpAutotestCollectHostItemTotalsBreakdown() {
     const totals = Object.create(null);
+    const dropTotals = Object.create(null);
+    const nonDropTotals = Object.create(null);
     const addSlots = (slots) => {
       if (!Array.isArray(slots)) return;
       for (const slot of slots) {
@@ -4227,6 +4333,7 @@
         const qty = Math.max(0, Math.floor(Number(slot.qty) || 0));
         if (qty <= 0) continue;
         totals[slot.id] = (totals[slot.id] || 0) + qty;
+        nonDropTotals[slot.id] = (nonDropTotals[slot.id] || 0) + qty;
       }
     };
 
@@ -4247,10 +4354,16 @@
     }
     const surface = state.surfaceWorld || state.world;
     mpAutotestItemTotalsFromWorld(surface, totals);
+    mpAutotestItemTotalsFromWorld(surface, dropTotals);
     forEachGeneratedCaveLayerWorld(surface, (caveWorld) => {
       mpAutotestItemTotalsFromWorld(caveWorld, totals);
+      mpAutotestItemTotalsFromWorld(caveWorld, dropTotals);
     });
-    return totals;
+    return {
+      totals,
+      dropTotals,
+      nonDropTotals,
+    };
   }
 
   function mpAutotestTotalCountFromTotals(totals) {
@@ -4287,6 +4400,22 @@
       totalDelta: mpAutotestTotalCountFromTotals(next) - mpAutotestTotalCountFromTotals(prev),
       deltas,
     };
+  }
+
+  function mpAutotestIsPureDropDecay(prevLedger, nextLedger, totalDiff = null) {
+    if (!prevLedger || !nextLedger) return false;
+    const overallDiff = totalDiff || mpAutotestDiffTotals(prevLedger.totals, nextLedger.totals);
+    if (!overallDiff || overallDiff.totalDelta >= 0) return false;
+    const nonDropDiff = mpAutotestDiffTotals(prevLedger.nonDropTotals, nextLedger.nonDropTotals);
+    if (nonDropDiff.totalDelta !== 0) return false;
+    if (nonDropDiff.deltas.length > 0) return false;
+    const dropDiff = mpAutotestDiffTotals(prevLedger.dropTotals, nextLedger.dropTotals);
+    if (dropDiff.totalDelta !== overallDiff.totalDelta) return false;
+    if (dropDiff.totalDelta >= 0) return false;
+    for (const delta of overallDiff.deltas) {
+      if ((delta?.delta || 0) > 0) return false;
+    }
+    return true;
   }
 
   function mpAutotestBuildCanonicalFromSnapshot(snapshot) {
@@ -5917,18 +6046,29 @@
   }
 
   function mpAutotestApplyLedgerRule(actionDescriptor) {
-    const nextTotals = mpAutotestCollectHostItemTotals();
+    const nextLedger = mpAutotestCollectHostItemTotalsBreakdown();
+    const nextTotals = nextLedger.totals;
     const nextFingerprint = mpAutotestStableStringify(nextTotals);
     if (!mpAutotest.inventoryLedger.fingerprint) {
       mpAutotest.inventoryLedger.totals = nextTotals;
+      mpAutotest.inventoryLedger.dropTotals = nextLedger.dropTotals;
+      mpAutotest.inventoryLedger.nonDropTotals = nextLedger.nonDropTotals;
       mpAutotest.inventoryLedger.fingerprint = nextFingerprint;
       return null;
     }
-    const prevTotals = mpAutotest.inventoryLedger.totals;
-    const diff = mpAutotestDiffTotals(prevTotals, nextTotals);
+    const prevLedger = {
+      totals: mpAutotest.inventoryLedger.totals || Object.create(null),
+      dropTotals: mpAutotest.inventoryLedger.dropTotals || Object.create(null),
+      nonDropTotals: mpAutotest.inventoryLedger.nonDropTotals || Object.create(null),
+    };
+    const diff = mpAutotestDiffTotals(prevLedger.totals, nextTotals);
     const rule = actionDescriptor?.ledgerRule || "allowAny";
     let violation = null;
-    if (rule === "conserve" && diff.totalDelta !== 0) {
+    if (
+      rule === "conserve"
+      && diff.totalDelta !== 0
+      && !mpAutotestIsPureDropDecay(prevLedger, nextLedger, diff)
+    ) {
       violation = `Ledger violation: expected conserve, delta=${diff.totalDelta}`;
     } else if (rule === "noIncrease" && diff.totalDelta > 0) {
       violation = `Ledger violation: unexpected increase delta=${diff.totalDelta}`;
@@ -5936,6 +6076,8 @@
       violation = `Ledger violation: unexpected decrease delta=${diff.totalDelta}`;
     }
     mpAutotest.inventoryLedger.totals = nextTotals;
+    mpAutotest.inventoryLedger.dropTotals = nextLedger.dropTotals;
+    mpAutotest.inventoryLedger.nonDropTotals = nextLedger.nonDropTotals;
     mpAutotest.inventoryLedger.fingerprint = nextFingerprint;
     if (violation) {
       const top = diff.deltas.slice(0, 6).map((entry) => `${entry.key}:${entry.delta > 0 ? "+" : ""}${entry.delta}`).join(", ");
@@ -6261,6 +6403,8 @@
     mpAutotest.eventStats.authoritativeMutations = 0;
     mpAutotest.eventStats.clientAuthViolations = 0;
     mpAutotest.inventoryLedger.totals = Object.create(null);
+    mpAutotest.inventoryLedger.dropTotals = Object.create(null);
+    mpAutotest.inventoryLedger.nonDropTotals = Object.create(null);
     mpAutotest.inventoryLedger.fingerprint = "";
     mpAutotest.lastAction = "none";
     mpAutotest.replayBundle = null;
@@ -6437,6 +6581,8 @@
     mpAutotest.eventStats.authoritativeMutations = 0;
     mpAutotest.eventStats.clientAuthViolations = 0;
     mpAutotest.inventoryLedger.totals = Object.create(null);
+    mpAutotest.inventoryLedger.dropTotals = Object.create(null);
+    mpAutotest.inventoryLedger.nonDropTotals = Object.create(null);
     mpAutotest.inventoryLedger.fingerprint = "";
     mpAutotest.hostHash = "";
     mpAutotest.clientHashes = new Map();
@@ -6469,8 +6615,13 @@
     mpAutotestEnsureFixtureHouse();
     mpAutotestForceReliableSync();
     mpAutotestFlushMessageQueue(true);
-    mpAutotest.inventoryLedger.totals = mpAutotestCollectHostItemTotals();
-    mpAutotest.inventoryLedger.fingerprint = mpAutotestStableStringify(mpAutotest.inventoryLedger.totals);
+    {
+      const ledgerSeed = mpAutotestCollectHostItemTotalsBreakdown();
+      mpAutotest.inventoryLedger.totals = ledgerSeed.totals;
+      mpAutotest.inventoryLedger.dropTotals = ledgerSeed.dropTotals;
+      mpAutotest.inventoryLedger.nonDropTotals = ledgerSeed.nonDropTotals;
+      mpAutotest.inventoryLedger.fingerprint = mpAutotestStableStringify(mpAutotest.inventoryLedger.totals);
+    }
     mpAutotestSetStatus(mode.id);
     mpAutotestUpdateProgressUI(true);
     setPrompt(`MP Autotest running (${mode.label})`, 1.4);
@@ -10667,17 +10818,10 @@
     const seq = net.isHost ? nextNetSequence("snapshotSeq") : null;
     const serializeCaveLayers = (cave) => {
       if (!cave) return [];
-      const layers = [];
-      const layerWorlds = Array.isArray(cave.layers) ? cave.layers : [];
-      for (let layer = 0; layer < CAVE_LAYER_COUNT; layer += 1) {
-        const layerWorld = layerWorlds[layer] || (layer === 0 ? cave.world : null);
-        if (!layerWorld) continue;
-        layers.push({
-          layer,
-          world: serializeWorldState(layerWorld),
-        });
-      }
-      return layers;
+      return getGeneratedCaveLayerWorldEntries(cave).map((entry) => ({
+        layer: normalizeCaveLayerIndex(entry.layer),
+        world: serializeWorldState(entry.world),
+      }));
     };
     return {
       type: "snapshot",
@@ -10833,9 +10977,9 @@
     const caveMotions = [];
     for (const cave of surface.caves ?? []) {
       if (!cave) continue;
-      const layerWorlds = Array.isArray(cave.layers) ? cave.layers : [];
-      for (let layer = 0; layer < CAVE_LAYER_COUNT; layer += 1) {
-        const layerWorld = layerWorlds[layer] || (layer === 0 ? cave.world : null);
+      for (const layerEntry of getGeneratedCaveLayerWorldEntries(cave)) {
+        const layer = normalizeCaveLayerIndex(layerEntry.layer);
+        const layerWorld = layerEntry.world;
         if (!layerWorld) continue;
         if (getPlayersForWorld(layerWorld).length <= 0) continue;
         caveMotions.push({
@@ -11257,10 +11401,10 @@
       if (existingById) {
         if (entry.spawnedByPlayer) existingById.spawnedByPlayer = true;
         if (entry.linkConfig && typeof entry.linkConfig === "object") {
-          existingById.linkConfig = {
-            toLayer2: 1,
-            toLayer3: 1,
-          };
+          existingById.linkConfig = getNormalizedCaveLinkConfig({
+            ...existingById,
+            linkConfig: entry.linkConfig,
+          }, world);
         }
         if (typeof entry.hostileBlocked === "boolean") {
           existingById.hostileBlocked = entry.hostileBlocked;
@@ -11414,10 +11558,10 @@
         const caveSnapshot = snapshot.caves.find((entry) => entry.id === cave.id);
         if (!caveSnapshot) continue;
         if (caveSnapshot.linkConfig && typeof caveSnapshot.linkConfig === "object") {
-          cave.linkConfig = {
-            toLayer2: 1,
-            toLayer3: 1,
-          };
+          cave.linkConfig = getNormalizedCaveLinkConfig({
+            ...cave,
+            linkConfig: caveSnapshot.linkConfig,
+          }, world);
         }
         cave.hostileBlocked = typeof caveSnapshot.hostileBlocked === "boolean"
           ? caveSnapshot.hostileBlocked
@@ -15039,16 +15183,209 @@
     return clamp(parsed, 0, CAVE_LAYER_COUNT - 1);
   }
 
-  function buildCaveLayerLinkConfig(seed, caveId) {
+  function getCaveRoomGraphNeighbors(cellId, width = 3, height = 3) {
+    const neighbors = [];
+    const x = cellId % width;
+    const y = Math.floor(cellId / width);
+    if (y > 0) neighbors.push({ id: cellId - width, side: "top" });
+    if (x < width - 1) neighbors.push({ id: cellId + 1, side: "right" });
+    if (y < height - 1) neighbors.push({ id: cellId + width, side: "bottom" });
+    if (x > 0) neighbors.push({ id: cellId - 1, side: "left" });
+    return neighbors;
+  }
+
+  function getOppositeCaveRoomSide(side) {
+    if (side === "top") return "bottom";
+    if (side === "bottom") return "top";
+    if (side === "left") return "right";
+    if (side === "right") return "left";
+    return null;
+  }
+
+  function buildCaveRoomGraphConfig(seed, caveId) {
+    const width = 3;
+    const height = 3;
+    const entryCellId = 7; // bottom-center in a 3x3 grid
+    const seedKey = seedToInt(`${seed}:${caveId}:cave-room-graph`);
+    const rng = makeRng(seedKey);
+    const targetRooms = clamp(6 + Math.floor(rng() * 3), 5, CAVE_LAYER_COUNT);
+    const selected = [entryCellId];
+    const selectedSet = new Set(selected);
+    const treePairs = [];
+    while (selected.length < targetRooms) {
+      const frontier = [];
+      for (const cellId of selected) {
+        for (const neighbor of getCaveRoomGraphNeighbors(cellId, width, height)) {
+          if (selectedSet.has(neighbor.id)) continue;
+          frontier.push({ from: cellId, to: neighbor.id });
+        }
+      }
+      if (frontier.length <= 0) break;
+      const pick = frontier[Math.floor(rng() * frontier.length)];
+      if (!pick || selectedSet.has(pick.to)) continue;
+      selected.push(pick.to);
+      selectedSet.add(pick.to);
+      treePairs.push([pick.from, pick.to]);
+    }
+
+    const sortedCells = [entryCellId, ...selected.filter((id) => id !== entryCellId)];
+    const cellToRoom = new Map();
+    const roomToCell = [];
+    sortedCells.forEach((cellId, index) => {
+      if (index >= CAVE_LAYER_COUNT) return;
+      cellToRoom.set(cellId, index);
+      roomToCell[index] = cellId;
+    });
+    const roomCount = roomToCell.filter((value) => Number.isInteger(value)).length;
+
+    const edgeByKey = new Map();
+    let nextEdgeId = 0;
+    const addEdge = (cellA, cellB) => {
+      const roomA = cellToRoom.get(cellA);
+      const roomB = cellToRoom.get(cellB);
+      if (!Number.isInteger(roomA) || !Number.isInteger(roomB) || roomA === roomB) return;
+      const a = Math.min(roomA, roomB);
+      const b = Math.max(roomA, roomB);
+      const key = `${a}:${b}`;
+      if (edgeByKey.has(key)) return;
+      const cellOfA = roomToCell[a];
+      const cellOfB = roomToCell[b];
+      const ax = cellOfA % width;
+      const ay = Math.floor(cellOfA / width);
+      const bx = cellOfB % width;
+      const by = Math.floor(cellOfB / width);
+      let sideA = null;
+      if (bx === ax && by === ay - 1) sideA = "top";
+      else if (bx === ax + 1 && by === ay) sideA = "right";
+      else if (bx === ax && by === ay + 1) sideA = "bottom";
+      else if (bx === ax - 1 && by === ay) sideA = "left";
+      if (!sideA) return;
+      edgeByKey.set(key, {
+        id: nextEdgeId++,
+        a,
+        b,
+        sideA,
+        sideB: getOppositeCaveRoomSide(sideA),
+      });
+    };
+
+    for (const pair of treePairs) {
+      if (!pair || pair.length < 2) continue;
+      addEdge(pair[0], pair[1]);
+    }
+
+    const loopCandidates = [];
+    for (let room = 0; room < roomCount; room += 1) {
+      const cellId = roomToCell[room];
+      if (!Number.isInteger(cellId)) continue;
+      for (const neighbor of getCaveRoomGraphNeighbors(cellId, width, height)) {
+        const otherRoom = cellToRoom.get(neighbor.id);
+        if (!Number.isInteger(otherRoom) || otherRoom <= room) continue;
+        loopCandidates.push([cellId, neighbor.id]);
+      }
+    }
+    for (let i = loopCandidates.length - 1; i > 0; i -= 1) {
+      const j = Math.floor(rng() * (i + 1));
+      const tmp = loopCandidates[i];
+      loopCandidates[i] = loopCandidates[j];
+      loopCandidates[j] = tmp;
+    }
+    const desiredLoops = clamp(1 + Math.floor(rng() * 3), 1, 3);
+    let loopsAdded = 0;
+    for (const pair of loopCandidates) {
+      if (loopsAdded >= desiredLoops) break;
+      const beforeCount = edgeByKey.size;
+      addEdge(pair[0], pair[1]);
+      if (edgeByKey.size > beforeCount) loopsAdded += 1;
+    }
+
+    const adjacency = Array.from({ length: roomCount }, () => []);
+    for (const edge of edgeByKey.values()) {
+      adjacency[edge.a].push({ room: edge.b, edgeId: edge.id, side: edge.sideA });
+      adjacency[edge.b].push({ room: edge.a, edgeId: edge.id, side: edge.sideB });
+    }
+    const roomDepths = new Array(roomCount).fill(Infinity);
+    roomDepths[0] = 0;
+    const queue = [0];
+    for (let q = 0; q < queue.length; q += 1) {
+      const room = queue[q];
+      for (const neighbor of adjacency[room] || []) {
+        if (roomDepths[neighbor.room] <= roomDepths[room] + 1) continue;
+        roomDepths[neighbor.room] = roomDepths[room] + 1;
+        queue.push(neighbor.room);
+      }
+    }
+
+    let surfaceLinkRoom = null;
+    let bestDepth = -1;
+    for (let room = 1; room < roomCount; room += 1) {
+      const depth = Number.isFinite(roomDepths[room]) ? roomDepths[room] : 0;
+      if (depth > bestDepth) {
+        bestDepth = depth;
+        surfaceLinkRoom = room;
+      } else if (depth === bestDepth && rng() < 0.5) {
+        surfaceLinkRoom = room;
+      }
+    }
+
     return {
-      // Single route between layers for cleaner navigation and less portal clutter.
-      toLayer2: 1,
+      mode: "room_graph_v1",
+      roomCount,
+      entryRoom: 0,
+      surfaceLinkRoom: Number.isInteger(surfaceLinkRoom) ? surfaceLinkRoom : null,
+      roomDepths,
+      edges: Array.from(edgeByKey.values()).sort((a, b) => a.id - b.id),
+      roomToCell,
+      toLayer2: 1, // legacy compatibility fields
       toLayer3: 1,
     };
   }
 
+  function buildCaveLayerLinkConfig(seed, caveId) {
+    return buildCaveRoomGraphConfig(seed, caveId);
+  }
+
   function getCaveLayerPortalRequests(layerIndex, linkConfig) {
     const layer = normalizeCaveLayerIndex(layerIndex);
+    const graphEdges = Array.isArray(linkConfig?.edges) ? linkConfig.edges : null;
+    const roomCount = clamp(
+      Number.isInteger(linkConfig?.roomCount) ? linkConfig.roomCount : CAVE_LAYER_COUNT,
+      1,
+      CAVE_LAYER_COUNT
+    );
+    if (layer >= roomCount) return [];
+    if (graphEdges && graphEdges.length > 0) {
+      const depths = Array.isArray(linkConfig?.roomDepths) ? linkConfig.roomDepths : [];
+      const requests = [];
+      for (const edge of graphEdges) {
+        if (!edge || !Number.isInteger(edge.id)) continue;
+        if (edge.a !== layer && edge.b !== layer) continue;
+        const isA = edge.a === layer;
+        const targetLayer = normalizeCaveLayerIndex(isA ? edge.b : edge.a);
+        const side = normalizeCaveEdgeSide(isA ? edge.sideA : edge.sideB) || "top";
+        const targetSide = normalizeCaveEdgeSide(isA ? edge.sideB : edge.sideA) || getOppositeCaveRoomSide(side) || "bottom";
+        const thisDepth = Number.isFinite(depths[layer]) ? depths[layer] : 0;
+        const nextDepth = Number.isFinite(depths[targetLayer]) ? depths[targetLayer] : thisDepth;
+        let direction = "down";
+        if (nextDepth < thisDepth) direction = "up";
+        else if (nextDepth === thisDepth) direction = targetLayer < layer ? "up" : "down";
+        requests.push({
+          direction,
+          targetLayer,
+          slot: edge.id,
+          edgeSide: side,
+          targetEdgeSide: targetSide,
+        });
+      }
+      const sideOrder = ["top", "right", "bottom", "left"];
+      requests.sort((a, b) => (
+        sideOrder.indexOf(a.edgeSide) - sideOrder.indexOf(b.edgeSide)
+        || (a.targetLayer - b.targetLayer)
+        || (a.slot - b.slot)
+      ));
+      return requests;
+    }
+
     const requests = [];
     const toLayer2 = 1;
     const toLayer3 = 1;
@@ -15218,11 +15555,20 @@
     const size = CAVE_SIZE;
     const layerIndex = normalizeCaveLayerIndex(options?.layerIndex ?? 0);
     const linkConfig = options?.linkConfig || buildCaveLayerLinkConfig(seed, caveId);
+    const roomDepthTier = clamp(
+      Math.floor(
+        Number.isFinite(linkConfig?.roomDepths?.[layerIndex])
+          ? linkConfig.roomDepths[layerIndex]
+          : layerIndex
+      ),
+      0,
+      2
+    );
     const caveSeed = getCaveLayerSeed(seed, caveId, layerIndex);
     const rng = makeRng(caveSeed);
     const spawnHostiles = options?.spawnHostiles !== false;
-    const layerDangerScale = 1 + layerIndex * 0.28;
-    const layerResourceScale = 1 + layerIndex * 0.22;
+    const layerDangerScale = 1 + roomDepthTier * 0.28;
+    const layerResourceScale = 1 + roomDepthTier * 0.22;
     const tiles = new Array(size * size).fill(0);
     const shades = new Array(size * size).fill(1);
     const resources = [];
@@ -15290,13 +15636,13 @@
             openTrimChance: 0.54,
             mazeCutChance: 0.22,
           };
-    caveStyle.tunnelRadiusMin = Math.max(0.46, caveStyle.tunnelRadiusMin - layerIndex * 0.04);
+    caveStyle.tunnelRadiusMin = Math.max(0.46, caveStyle.tunnelRadiusMin - roomDepthTier * 0.04);
     caveStyle.tunnelRadiusMax = Math.max(
       caveStyle.tunnelRadiusMin + 0.1,
-      caveStyle.tunnelRadiusMax - layerIndex * 0.04
+      caveStyle.tunnelRadiusMax - roomDepthTier * 0.04
     );
-    caveStyle.openTrimChance = clamp(caveStyle.openTrimChance + layerIndex * 0.05, 0.18, 0.62);
-    caveStyle.mazeCutChance = clamp(caveStyle.mazeCutChance + layerIndex * 0.03, 0.08, 0.28);
+    caveStyle.openTrimChance = clamp(caveStyle.openTrimChance + roomDepthTier * 0.05, 0.18, 0.62);
+    caveStyle.mazeCutChance = clamp(caveStyle.mazeCutChance + roomDepthTier * 0.03, 0.08, 0.28);
 
     function carveCircle(cx, cy, radius) {
       for (let y = Math.floor(cy - radius); y <= Math.ceil(cy + radius); y += 1) {
@@ -15884,7 +16230,7 @@
       const fallbackRooms = roomDepths;
       let placed = null;
       const minFromEntrance = request.direction === "down"
-        ? (CAVE_DEEP_ENTRANCE_CONFIG.minFromMainEntranceTiles + layerIndex * 0.4)
+        ? (CAVE_DEEP_ENTRANCE_CONFIG.minFromMainEntranceTiles + roomDepthTier * 0.4)
         : Math.max(3.6, CAVE_DEEP_ENTRANCE_CONFIG.minFromMainEntranceTiles - 1.6);
       for (let attempt = 0; attempt < 56; attempt += 1) {
         const useFallback = attempt >= 34 || preferredRooms.length === 0;
@@ -15947,11 +16293,11 @@
         const emergencyOrigin = request.direction === "down"
           ? {
               x: entrance.tx + (rand2d(requestSalt + 3, layerIndex + 41, caveSeed + 6133) - 0.5) * 8,
-              y: entrance.ty - (4.6 + layerIndex * 1.8),
+              y: entrance.ty - (4.6 + roomDepthTier * 1.8),
             }
           : {
               x: entrance.tx + (rand2d(requestSalt + 7, layerIndex + 67, caveSeed + 7219) - 0.5) * 7,
-              y: entrance.ty - (3.2 + layerIndex * 1.3),
+              y: entrance.ty - (3.2 + roomDepthTier * 1.3),
             };
         placed = findNearestWalkableTile(emergencyOrigin.x, emergencyOrigin.y, 12, {
           minFromEntrance: Math.max(1.8, minFromEntrance - 2.4),
@@ -15988,7 +16334,7 @@
     for (let y = 0; y < size; y += 1) {
       for (let x = 0; x < size; x += 1) {
         const idx = tileIndex(x, y, size);
-        const baseShade = 0.45 - layerIndex * 0.07;
+        const baseShade = 0.45 - roomDepthTier * 0.07;
         shades[idx] = baseShade + fbm(x * 0.18, y * 0.18, caveSeed + 300) * 0.22;
       }
     }
@@ -16027,6 +16373,14 @@
       resourceGrid[idx] = res.id;
     }
 
+    function hasNearbyOreNode(tx, ty, minDistance = 1.8) {
+      for (const res of resources) {
+        if (!res || res.removed || res.type !== "ore") continue;
+        if (Math.hypot((res.tx ?? 0) - tx, (res.ty ?? 0) - ty) < minDistance) return true;
+      }
+      return false;
+    }
+
     for (let y = 1; y < size - 1; y += 1) {
       for (let x = 1; x < size - 1; x += 1) {
         const idx = tileIndex(x, y, size);
@@ -16037,15 +16391,15 @@
         const r = rand2d(x, y, caveSeed + 42);
         const depth = 1 - y / (size - 1);
         const oreBoost = (layerResourceScale - 1) * 0.018;
-        if (r < 0.02 + oreBoost * 0.9) {
+        if (r < 0.02 + oreBoost * 0.9 && !hasNearbyOreNode(x, y, 1.8)) {
           addResource("ore", x, y, 4, { oreKind: "coal" });
-        } else if (r < 0.034 + oreBoost * 1.1) {
+        } else if (r < 0.034 + oreBoost * 1.1 && !hasNearbyOreNode(x, y, 1.85)) {
           addResource("ore", x, y, 5, { oreKind: "iron_ore" });
-        } else if (r < 0.043 + oreBoost * 1.2 && depth > 0.16) {
+        } else if (r < 0.043 + oreBoost * 1.2 && depth > 0.16 && !hasNearbyOreNode(x, y, 1.9)) {
           addResource("ore", x, y, 5, { oreKind: "gold_ore" });
-        } else if (r < 0.049 + oreBoost * 0.95 && depth > 0.28) {
+        } else if (r < 0.049 + oreBoost * 0.95 && depth > 0.28 && !hasNearbyOreNode(x, y, 1.95)) {
           addResource("ore", x, y, 6, { oreKind: "emerald" });
-        } else if (r < 0.053 + oreBoost * 0.75 && depth > 0.38) {
+        } else if (r < 0.053 + oreBoost * 0.75 && depth > 0.38 && !hasNearbyOreNode(x, y, 2.05)) {
           addResource("ore", x, y, 7, { oreKind: "diamond" });
         } else if (r < 0.065 + oreBoost * 1.3) {
           addResource("rock", x, y, 4);
@@ -16086,6 +16440,10 @@
       if (!reachable[idx]) return false;
       if (isNearAnyCaveEntrance(tx, ty, 2.8)) return false;
       if (getCaveDepthAtY(ty) < getCaveOreMinDepth(oreKind)) return false;
+      if (hasNearbyOreNode(tx, ty, 1.75)) {
+        const existingNearbyId = resourceGrid[idx];
+        if (existingNearbyId === -1 || existingNearbyId == null) return false;
+      }
 
       const existingId = resourceGrid[idx];
       if (existingId === -1 || existingId == null) return true;
@@ -16146,13 +16504,13 @@
     function pickDeadEndRewardOreKind(depthRatio) {
       const depth = clamp(Number(depthRatio) || 0, 0, 1);
       const roll = rand2d(Math.floor(depth * 1000) + 19, layerIndex * 127 + caveId * 43, caveSeed + 12193);
-      if (layerIndex >= 2) {
+      if (roomDepthTier >= 2) {
         if (roll < 0.3) return "diamond";
         if (roll < 0.58) return "emerald";
         if (roll < 0.84) return "gold_ore";
         return "iron_ore";
       }
-      if (layerIndex >= 1) {
+      if (roomDepthTier >= 1) {
         if (roll < 0.16 && depth > 0.32) return "diamond";
         if (roll < 0.45 && depth > 0.2) return "emerald";
         if (roll < 0.76) return "gold_ore";
@@ -16196,16 +16554,19 @@
       if (canPlaceGuaranteedOreAt(endpoint.tx, endpoint.ty, oreKind, "preferred")) {
         spawnGuaranteedOreAt(endpoint.tx, endpoint.ty, oreKind);
       }
-      for (let branch = 0; branch < 2; branch += 1) {
-        const offsetX = branch === 0 ? 1 : -1;
-        const neighborX = endpoint.tx + offsetX;
-        const neighborY = endpoint.ty;
-        if (!canPlaceGuaranteedOreAt(neighborX, neighborY, oreKind, "preferred")) continue;
-        if (rand2d(i * 13 + branch * 71, caveId * 17 + layerIndex * 19, caveSeed + 14993) < 0.58) {
-          spawnGuaranteedOreAt(neighborX, neighborY, oreKind);
+      // Keep dead-end rewards as small pockets, not stacked ore lines.
+      if (rand2d(i * 13 + 71, caveId * 17 + layerIndex * 19, caveSeed + 14993) < 0.2) {
+        const offsets = [{ x: 1, y: 0 }, { x: -1, y: 0 }, { x: 0, y: 1 }, { x: 0, y: -1 }];
+        const pick = offsets[Math.floor(rng() * offsets.length)];
+        if (pick) {
+          const neighborX = endpoint.tx + pick.x;
+          const neighborY = endpoint.ty + pick.y;
+          if (canPlaceGuaranteedOreAt(neighborX, neighborY, oreKind, "preferred")) {
+            spawnGuaranteedOreAt(neighborX, neighborY, oreKind);
+          }
         }
       }
-      if (spawnHostiles && layerIndex >= 1) {
+      if (spawnHostiles && roomDepthTier >= 1) {
         const nestRoll = rand2d(i * 23 + 7, layerIndex * 47 + caveId * 11, caveSeed + 17389);
         if (nestRoll < 0.42) {
           chambers.push({
@@ -16216,13 +16577,8 @@
       }
     }
 
-    for (const chamber of chambers.slice(0, 4)) {
-      landmarks.push({
-        x: (chamber.x + 0.5) * CONFIG.tileSize,
-        y: (chamber.y + 0.5) * CONFIG.tileSize,
-        color: rng() < 0.5 ? "#86b9d7" : "#9ad0a1",
-      });
-    }
+    // Removed decorative cave landmark dots ("orbs") because they read as broken
+    // entities and cluttered rooms. Keep landmarks array for save compatibility.
 
     const monsters = [];
     const caveEntityBaseId = ((caveId + 1) * 100000) + (layerIndex * 15000);
@@ -16230,9 +16586,9 @@
     const walkableTileCount = tiles.reduce((total, tile) => total + Number(!!tile), 0);
     const monsterCount = spawnHostiles
       ? clamp(
-        Math.round(walkableTileCount / 190) + 2 + Math.floor(rng() * 2) + layerIndex,
-        4 + layerIndex,
-        14 + layerIndex * 2
+        Math.round(walkableTileCount / 190) + 2 + Math.floor(rng() * 2) + roomDepthTier,
+        4 + roomDepthTier,
+        14 + roomDepthTier * 2
       )
       : 0;
     for (let i = 0; i < monsterCount; i += 1) {
@@ -16253,11 +16609,11 @@
           y: (ty + 0.5) * CONFIG.tileSize,
           hp: Math.round(variant.hp * layerDangerScale),
           maxHp: Math.round(variant.hp * layerDangerScale),
-          speed: variant.speed * (0.9 + layerIndex * 0.05),
-          damage: Math.round(variant.damage * (1 + layerIndex * 0.18)),
+          speed: variant.speed * (0.9 + roomDepthTier * 0.05),
+          damage: Math.round(variant.damage * (1 + roomDepthTier * 0.18)),
           attackRange: variant.attackRange,
           attackCooldown: variant.attackCooldown,
-          aggroRange: variant.aggroRange + layerIndex * CONFIG.tileSize * 0.1,
+          aggroRange: variant.aggroRange + roomDepthTier * CONFIG.tileSize * 0.1,
           rangedRange: variant.rangedRange,
           attackTimer: 0,
           hitTimer: 0,
@@ -16284,10 +16640,11 @@
       respawnTasks: [],
       entrance,
       depthEntrances,
-      linkConfig: {
-        toLayer2: 1,
-        toLayer3: 1,
-      },
+      linkConfig: getNormalizedCaveLinkConfig({
+        id: caveId,
+        seedInt: seed,
+        linkConfig,
+      }),
       caves: [],
       monsters,
       nextMonsterId,
@@ -21360,10 +21717,10 @@
             ? !!savedCave.hostileBlocked
             : shouldBlockCaveHostilesForSurfaceTile(world, cave.tx, cave.ty);
           if (savedCave?.linkConfig && typeof savedCave.linkConfig === "object") {
-            cave.linkConfig = {
-              toLayer2: 1,
-              toLayer3: 1,
-            };
+            cave.linkConfig = getNormalizedCaveLinkConfig({
+              ...cave,
+              linkConfig: savedCave.linkConfig,
+            }, world);
           }
           if (savedCave) {
             const layerSnapshots = Array.isArray(savedCave.layers) && savedCave.layers.length > 0
@@ -22557,7 +22914,7 @@
   }
 
   function getFallbackCaveOreKindsForLayer(layerIndex) {
-    const layer = normalizeCaveLayerIndex(layerIndex);
+    const layer = Math.min(normalizeCaveLayerIndex(layerIndex), 2);
     if (layer >= 2) return ["gold_ore", "emerald", "diamond", "iron_ore", "coal"];
     if (layer >= 1) return ["iron_ore", "gold_ore", "coal", "emerald"];
     return ["coal", "iron_ore", "gold_ore"];
@@ -22593,7 +22950,7 @@
       ?? surfaceWorld?.seedInt
       ?? seedToInt(surfaceWorld?.seed || "island");
     const oreKinds = getFallbackCaveOreKindsForLayer(layerIndex);
-    const desiredCount = 3 + normalizeCaveLayerIndex(layerIndex);
+    const desiredCount = 3 + Math.min(normalizeCaveLayerIndex(layerIndex), 2);
     let added = 0;
     const total = Math.max(1, (size - 2) * (size - 2));
     const start = Math.floor(rand2d((cave.id + 1) * 41, normalizeCaveLayerIndex(layerIndex) * 67 + 9, seedInt + 24691) * total);
@@ -22606,6 +22963,15 @@
       if (caveWorld.resourceGrid[idx] !== -1 && caveWorld.resourceGrid[idx] != null) continue;
       if (isNearCaveTransitionNode(caveWorld, tx, ty, 2.6)) continue;
       if (getWorldCardinalOpenCount(caveWorld, tx, ty) <= 0) continue;
+      let tooClose = false;
+      for (const res of caveWorld.resources) {
+        if (!res || res.removed || res.type !== "ore") continue;
+        if (Math.hypot((res.tx ?? 0) - tx, (res.ty ?? 0) - ty) < 1.8) {
+          tooClose = true;
+          break;
+        }
+      }
+      if (tooClose) continue;
       const oreKind = oreKinds[(added + step) % oreKinds.length];
       const id = caveWorld.resources.length;
       const hp = getCaveOreHpForKind(oreKind);
@@ -22636,36 +23002,11 @@
     if (hasResourceGridInconsistency(caveWorld) && rebuildWorldResourceGrid(caveWorld)) changed = true;
     if (ensureCaveOreFallback(cave, caveWorld, layerIndex, surfaceWorld)) changed = true;
     if (normalizeCaveDropPositions(caveWorld)) changed = true;
+    // Legacy cave landmark dots read as broken orb clutter. Keep the field for
+    // compatibility, but clear loaded/generated entries so old saves self-heal.
     if (Array.isArray(caveWorld.landmarks) && caveWorld.landmarks.length > 0) {
-      const nextLandmarks = [];
-      for (const landmark of caveWorld.landmarks) {
-        if (!landmark || !Number.isFinite(landmark.x) || !Number.isFinite(landmark.y)) {
-          changed = true;
-          continue;
-        }
-        const clamped = clampEntityPositionToWalkable(caveWorld, landmark.x, landmark.y, 10);
-        if (!clamped) {
-          changed = true;
-          continue;
-        }
-        const tileDistToEntrance = caveWorld.entrance
-          ? Math.hypot(clamped.tx - caveWorld.entrance.tx, clamped.ty - caveWorld.entrance.ty)
-          : Infinity;
-        if (tileDistToEntrance < 2.4) {
-          changed = true;
-          continue;
-        }
-        if (landmark.x !== clamped.x || landmark.y !== clamped.y) {
-          landmark.x = clamped.x;
-          landmark.y = clamped.y;
-          changed = true;
-        }
-        nextLandmarks.push(landmark);
-      }
-      if (nextLandmarks.length !== caveWorld.landmarks.length) {
-        caveWorld.landmarks = nextLandmarks;
-        changed = true;
-      }
+      caveWorld.landmarks = [];
+      changed = true;
     }
     return changed;
   }
@@ -22686,10 +23027,34 @@
     }
     const normalizeLinkConfig = (rawConfig) => {
       const fallback = buildCaveLayerLinkConfig(seedInt, id);
-      return {
-        toLayer2: 1,
-        toLayer3: 1,
-      };
+      if (!rawConfig || typeof rawConfig !== "object") return fallback;
+      if (Array.isArray(rawConfig.edges) && Number.isInteger(rawConfig.roomCount)) {
+        return {
+          ...fallback,
+          ...rawConfig,
+          roomCount: clamp(Math.floor(rawConfig.roomCount), 1, CAVE_LAYER_COUNT),
+          entryRoom: normalizeCaveLayerIndex(rawConfig.entryRoom ?? 0),
+          surfaceLinkRoom: Number.isInteger(rawConfig.surfaceLinkRoom)
+            ? normalizeCaveLayerIndex(rawConfig.surfaceLinkRoom)
+            : fallback.surfaceLinkRoom,
+          roomDepths: Array.isArray(rawConfig.roomDepths)
+            ? rawConfig.roomDepths.slice(0, CAVE_LAYER_COUNT).map((d, idx) => (
+              Number.isFinite(d) ? Math.max(0, Math.floor(d)) : (fallback.roomDepths?.[idx] ?? 0)
+            ))
+            : fallback.roomDepths,
+          edges: rawConfig.edges
+            .filter((edge) => edge && Number.isInteger(edge.id) && Number.isInteger(edge.a) && Number.isInteger(edge.b))
+            .map((edge) => ({
+              id: Math.max(0, Math.floor(edge.id)),
+              a: normalizeCaveLayerIndex(edge.a),
+              b: normalizeCaveLayerIndex(edge.b),
+              sideA: normalizeCaveEdgeSide(edge.sideA) || "top",
+              sideB: normalizeCaveEdgeSide(edge.sideB) || "bottom",
+            }))
+            .filter((edge) => edge.a !== edge.b),
+        };
+      }
+      return fallback;
     };
     const linkConfig = normalizeLinkConfig(options?.linkConfig);
     clearResourceForStructure(world, tx, ty);
@@ -22715,15 +23080,39 @@
   }
 
   function getNormalizedCaveLinkConfig(cave, surfaceWorld = null) {
-    if (!cave) return { toLayer2: 1, toLayer3: 1 };
+    if (!cave) return buildCaveLayerLinkConfig(0, 0);
     const fallbackSeed = cave.seedInt
       ?? surfaceWorld?.seedInt
       ?? seedToInt(surfaceWorld?.seed || "island");
     const fallback = buildCaveLayerLinkConfig(fallbackSeed, cave.id);
-    const normalized = {
-      toLayer2: 1,
-      toLayer3: 1,
-    };
+    const raw = cave.linkConfig;
+    let normalized = fallback;
+    if (raw && typeof raw === "object" && Array.isArray(raw.edges) && Number.isInteger(raw.roomCount)) {
+      normalized = {
+        ...fallback,
+        ...raw,
+        roomCount: clamp(Math.floor(raw.roomCount), 1, CAVE_LAYER_COUNT),
+        entryRoom: normalizeCaveLayerIndex(raw.entryRoom ?? 0),
+        surfaceLinkRoom: Number.isInteger(raw.surfaceLinkRoom)
+          ? normalizeCaveLayerIndex(raw.surfaceLinkRoom)
+          : fallback.surfaceLinkRoom,
+        roomDepths: Array.isArray(raw.roomDepths)
+          ? raw.roomDepths.slice(0, CAVE_LAYER_COUNT).map((d, idx) => (
+            Number.isFinite(d) ? Math.max(0, Math.floor(d)) : (fallback.roomDepths?.[idx] ?? 0)
+          ))
+          : fallback.roomDepths,
+        edges: raw.edges
+          .filter((edge) => edge && Number.isInteger(edge.id) && Number.isInteger(edge.a) && Number.isInteger(edge.b))
+          .map((edge) => ({
+            id: Math.max(0, Math.floor(edge.id)),
+            a: normalizeCaveLayerIndex(edge.a),
+            b: normalizeCaveLayerIndex(edge.b),
+            sideA: normalizeCaveEdgeSide(edge.sideA) || "top",
+            sideB: normalizeCaveEdgeSide(edge.sideB) || "bottom",
+          }))
+          .filter((edge) => edge.a !== edge.b),
+      };
+    }
     cave.linkConfig = normalized;
     return normalized;
   }
@@ -22743,7 +23132,7 @@
 
   function getCaveSectionDisplayLabel(layerIndex) {
     const layer = normalizeCaveLayerIndex(layerIndex);
-    return `Section ${layer + 1}`;
+    return `Cave Room ${layer + 1}`;
   }
 
   function normalizeCaveEdgeSide(side) {
@@ -22786,6 +23175,9 @@
           const idx = tileIndex(nx, ny, size);
           if (!world.tiles[idx]) {
             world.tiles[idx] = 1;
+            changed = true;
+          }
+          if (isCaveWorldInstance(world) && clearCaveTransitionTileResource(world, nx, ny)) {
             changed = true;
           }
         }
@@ -23061,7 +23453,10 @@
       kind: "layer",
       ...req,
     }));
-    const surfaceLinkTarget = normalizedLayer === (CAVE_LAYER_COUNT - 1)
+    const surfaceLinkRoom = Number.isInteger(linkConfig?.surfaceLinkRoom)
+      ? normalizeCaveLayerIndex(linkConfig.surfaceLinkRoom)
+      : (CAVE_LAYER_COUNT - 1);
+    const surfaceLinkTarget = normalizedLayer === surfaceLinkRoom
       ? getCaveSurfaceLinkTarget(worldRef, cave)
       : null;
     if (surfaceLinkTarget) {
@@ -23071,6 +23466,8 @@
         targetLayer: normalizedLayer,
         slot: 0,
         targetCaveId: surfaceLinkTarget.id,
+        edgeSide: "top",
+        targetEdgeSide: "bottom",
       });
     }
     const getExpectedKey = (req) => {
@@ -23080,6 +23477,7 @@
       return `${req.direction}:${normalizeCaveLayerIndex(req.targetLayer)}:${req.slot}`;
     };
     const expectedKeys = new Set(expectedRequests.map(getExpectedKey));
+    const expectedByKey = new Map(expectedRequests.map((req) => [getExpectedKey(req), req]));
     const reserved = new Set();
     const nextEntries = [];
     const existing = Array.isArray(layerWorld.depthEntrances) ? layerWorld.depthEntrances : [];
@@ -23131,9 +23529,19 @@
       }
       reserved.add(`${tx},${ty}`);
       if (kind === "surface_link") {
-        nextEntries.push({ tx, ty, kind: "surface_link", direction: 0, slot: 0, targetLayer, targetCaveId });
+        nextEntries.push({ tx, ty, kind: "surface_link", direction: 0, slot: 0, targetLayer, targetCaveId, edgeSide: entry.edgeSide, travelMode: entry.travelMode });
       } else {
-        nextEntries.push({ tx, ty, direction, slot, targetLayer });
+        const expectedReq = expectedByKey.get(key);
+        nextEntries.push({
+          tx,
+          ty,
+          direction,
+          slot,
+          targetLayer,
+          edgeSide: expectedReq?.edgeSide ?? entry.edgeSide,
+          targetEdgeSide: expectedReq?.targetEdgeSide ?? entry.targetEdgeSide,
+          travelMode: entry.travelMode,
+        });
       }
     }
 
@@ -23175,6 +23583,8 @@
           slot: 0,
           targetLayer: normalizedLayer,
           targetCaveId: Number(request.targetCaveId),
+          edgeSide: request.edgeSide,
+          targetEdgeSide: request.targetEdgeSide,
         });
         existingKeys.add(key);
         changed = true;
@@ -23214,6 +23624,8 @@
         direction: request.direction === "down" ? 1 : -1,
         slot: request.slot,
         targetLayer: normalizeCaveLayerIndex(request.targetLayer),
+        edgeSide: request.edgeSide,
+        targetEdgeSide: request.targetEdgeSide,
       });
       existingKeys.add(key);
       changed = true;
@@ -31819,7 +32231,7 @@
     markDirty();
     if (net.enabled) sendPlayerUpdate();
     if (Array.isArray(caveWorld.depthEntrances) && caveWorld.depthEntrances.length > 0) {
-      setPrompt("Explore tunnels and follow cave passage exits to connected sections.", 2.2);
+      setPrompt("Explore tunnels and follow cave passage exits.", 2.2);
     }
   }
 
@@ -32303,7 +32715,7 @@
             if (nearbyDepthEntrance.entrance.kind === "surface_link") {
               setPrompt("Cave exit ahead - walk in or press E");
             } else {
-              setPrompt(`Passage to ${targetLabel} - walk in or press E`);
+              setPrompt(`Cave passage to ${targetLabel} - walk in or press E`);
             }
           } else if (state.targetMonster && !swordUnlocked) {
             setPrompt("Craft a sword first");
@@ -32319,7 +32731,7 @@
             setPrompt(
               hasPassages
                 ? `Explore tunnels and follow cave exits (${label})`
-                : `Wind echoes through the cave (${label})`
+                : "Wind echoes through the cave"
             );
           }
         }
@@ -35277,20 +35689,6 @@
         ctx.arc(cx, cy + 1, 5, 0, Math.PI * 2);
         ctx.fill();
       }
-    } else if (state.inCave && state.world.landmarks) {
-      for (const landmark of state.world.landmarks) {
-        const lx = landmark.x - camera.x;
-        const ly = landmark.y - camera.y;
-        if (lx < -24 || ly < -24 || lx > cameraViewWidth + 24 || ly > cameraViewHeight + 24) continue;
-        ctx.fillStyle = landmark.color || "#86b9d7";
-        ctx.beginPath();
-        ctx.arc(lx, ly, 6, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.fillStyle = "rgba(255,255,255,0.35)";
-        ctx.beginPath();
-        ctx.arc(lx - 2, ly - 2, 2, 0, Math.PI * 2);
-        ctx.fill();
-      }
     }
 
     for (const res of state.world.resources) {
@@ -35875,24 +36273,19 @@
           const isSurfaceTunnelExit = node.kind === "surface_link";
           const isEdgePassage = node.travelMode === "edge";
           const edgeSide = normalizeCaveEdgeSide(node.edgeSide);
-          const down = !isSurfaceTunnelExit && Number(node.direction) > 0;
           const pulse = 0.5 + 0.5 * Math.sin((performance.now() * 0.007) + ((node.slot || 0) * 1.17) + ((node.targetLayer || 0) * 0.93));
-          const glowAlpha = 0.12 + pulse * 0.14;
+          const glowAlpha = isSurfaceTunnelExit ? (0.15 + pulse * 0.14) : (0.06 + pulse * 0.07);
           ctx.save();
           ctx.globalAlpha = 0.95;
           ctx.fillStyle = isSurfaceTunnelExit
-            ? `rgba(240, 196, 96, ${glowAlpha})`
-            : (down ? `rgba(92, 178, 240, ${glowAlpha})` : `rgba(202, 231, 255, ${glowAlpha})`);
+            ? `rgba(242, 203, 112, ${glowAlpha})`
+            : `rgba(178, 213, 236, ${glowAlpha})`;
           ctx.beginPath();
-          ctx.arc(markerX, markerY, 13 + pulse * 2.2, 0, Math.PI * 2);
+          ctx.arc(markerX, markerY, 12 + pulse * 1.6, 0, Math.PI * 2);
           ctx.fill();
-          ctx.fillStyle = isSurfaceTunnelExit
-            ? "rgba(26, 18, 10, 0.92)"
-            : (down ? "rgba(8, 14, 20, 0.92)" : "rgba(10, 16, 24, 0.88)");
-          ctx.strokeStyle = isSurfaceTunnelExit
-            ? "rgba(255, 220, 142, 0.9)"
-            : (down ? "rgba(140, 212, 255, 0.82)" : "rgba(214, 239, 255, 0.86)");
-          ctx.lineWidth = 1.9;
+          ctx.fillStyle = isSurfaceTunnelExit ? "rgba(30, 20, 8, 0.94)" : "rgba(8, 13, 20, 0.9)";
+          ctx.strokeStyle = isSurfaceTunnelExit ? "rgba(255, 225, 152, 0.86)" : "rgba(186, 219, 242, 0.72)";
+          ctx.lineWidth = 1.6;
           if (isEdgePassage && edgeSide) {
             const sx = edgeSide === "left" ? -1 : edgeSide === "right" ? 1 : 0;
             const sy = edgeSide === "top" ? -1 : edgeSide === "bottom" ? 1 : 0;
@@ -35902,16 +36295,16 @@
             ctx.ellipse(
               markerX + sx * 3.5,
               markerY + sy * 3.5,
-              10.2,
-              7.1,
+              10.6,
+              7.4,
               (sx !== 0) ? Math.PI * 0.5 : 0,
               0,
               Math.PI
             );
             ctx.fill();
             ctx.stroke();
-            ctx.strokeStyle = "rgba(255,255,255,0.18)";
-            ctx.lineWidth = 1;
+            ctx.strokeStyle = isSurfaceTunnelExit ? "rgba(255, 233, 188, 0.22)" : "rgba(255,255,255,0.12)";
+            ctx.lineWidth = 0.9;
             ctx.beginPath();
             ctx.moveTo(markerX + inwardX * 1.5 - sy * 3.8, markerY + inwardY * 1.5 - sx * 3.8);
             ctx.lineTo(markerX + inwardX * 6.2, markerY + inwardY * 6.2);
@@ -35923,46 +36316,20 @@
             ctx.fill();
             ctx.stroke();
           }
-          ctx.strokeStyle = isSurfaceTunnelExit
-            ? "rgba(230, 176, 96, 0.46)"
-            : (down ? "rgba(96, 176, 235, 0.42)" : "rgba(186, 216, 242, 0.42)");
-          ctx.lineWidth = 1;
-          ctx.beginPath();
-          ctx.moveTo(markerX - 4.8, markerY - 1.2);
-          ctx.lineTo(markerX + 4.9, markerY + 1.5);
-          ctx.moveTo(markerX - 3.2, markerY + 2.9);
-          ctx.lineTo(markerX + 3.5, markerY - 2.5);
-          ctx.stroke();
-          ctx.fillStyle = isSurfaceTunnelExit ? "rgba(255, 234, 182, 0.95)" : "rgba(225, 244, 255, 0.9)";
-          ctx.beginPath();
-          if (isEdgePassage && edgeSide) {
-            const inward = getCaveEdgePassageInwardVector(edgeSide);
-            const nx = inward.x;
-            const ny = inward.y;
-            const px = -ny;
-            const py = nx;
-            ctx.moveTo(markerX + nx * 4.5, markerY + ny * 4.5);
-            ctx.lineTo(markerX + px * 2.8, markerY + py * 2.8);
-            ctx.lineTo(markerX - px * 2.8, markerY - py * 2.8);
-          } else if (isSurfaceTunnelExit) {
-            ctx.moveTo(markerX - 3.2, markerY - 1.8);
-            ctx.lineTo(markerX + 2.8, markerY - 1.8);
-            ctx.lineTo(markerX + 2.8, markerY - 4.2);
-            ctx.lineTo(markerX + 5.8, markerY + 0.3);
-            ctx.lineTo(markerX + 2.8, markerY + 4.4);
-            ctx.lineTo(markerX + 2.8, markerY + 2.1);
-            ctx.lineTo(markerX - 3.2, markerY + 2.1);
-          } else if (down) {
-            ctx.moveTo(markerX - 3.1, markerY - 2.4);
-            ctx.lineTo(markerX + 3.1, markerY - 2.4);
-            ctx.lineTo(markerX, markerY + 2.8);
-          } else {
-            ctx.moveTo(markerX - 3.1, markerY + 2.4);
-            ctx.lineTo(markerX + 3.1, markerY + 2.4);
-            ctx.lineTo(markerX, markerY - 2.8);
+          if (isSurfaceTunnelExit) {
+            ctx.strokeStyle = "rgba(255, 232, 186, 0.32)";
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.arc(markerX, markerY, 14 + pulse * 1.2, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.strokeStyle = "rgba(255, 240, 214, 0.25)";
+            ctx.beginPath();
+            ctx.moveTo(markerX - 4.5, markerY - 1.8);
+            ctx.lineTo(markerX + 4.8, markerY - 1.8);
+            ctx.moveTo(markerX - 3.4, markerY + 1.8);
+            ctx.lineTo(markerX + 3.7, markerY + 1.8);
+            ctx.stroke();
           }
-          ctx.closePath();
-          ctx.fill();
           ctx.restore();
         }
       }
