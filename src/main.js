@@ -637,6 +637,12 @@
     duration: 0.55,
     maxAlpha: 0.72,
   });
+  const CAVE_EDGE_PASSAGE_CONFIG = Object.freeze({
+    autoTriggerRangeTiles: 0.68,
+    autoTriggerCooldown: 0.55,
+    edgeInsetTile: 1,
+    edgeSearchMinDistanceFromEntrance: 4.8,
+  });
 
   const SAVE_KEY = "island_survival_save_v1";
   const SAVE_KEY_PREFIX = "island_survival_seed_save_v1:";
@@ -1967,6 +1973,7 @@
     inCave: false,
     returnPosition: null,
     caveTransition: null,
+    cavePassageCooldown: 0,
     housePlayer: null,
     spawnTile: null,
     timeOfDay: 0,
@@ -16024,6 +16031,7 @@
       for (let x = 1; x < size - 1; x += 1) {
         const idx = tileIndex(x, y, size);
         if (!tiles[idx]) continue;
+        if (!reachable[idx]) continue;
         if (isNearAnyCaveEntrance(x, y, 2.4)) continue;
         if (!isClear(x, y, 1)) continue;
         const r = rand2d(x, y, caveSeed + 42);
@@ -16075,6 +16083,7 @@
       if (!inBounds(tx, ty, size)) return false;
       const idx = tileIndex(tx, ty, size);
       if (!tiles[idx]) return false;
+      if (!reachable[idx]) return false;
       if (isNearAnyCaveEntrance(tx, ty, 2.8)) return false;
       if (getCaveDepthAtY(ty) < getCaveOreMinDepth(oreKind)) return false;
 
@@ -22732,6 +22741,231 @@
     return count;
   }
 
+  function getCaveSectionDisplayLabel(layerIndex) {
+    const layer = normalizeCaveLayerIndex(layerIndex);
+    return `Section ${layer + 1}`;
+  }
+
+  function normalizeCaveEdgeSide(side) {
+    if (side === "top" || side === "right" || side === "bottom" || side === "left") return side;
+    return null;
+  }
+
+  function getCaveEdgeSideVector(side) {
+    const normalized = normalizeCaveEdgeSide(side);
+    if (normalized === "top") return { x: 0, y: -1 };
+    if (normalized === "right") return { x: 1, y: 0 };
+    if (normalized === "bottom") return { x: 0, y: 1 };
+    if (normalized === "left") return { x: -1, y: 0 };
+    return { x: 0, y: 0 };
+  }
+
+  function getCaveEdgePassageInwardVector(side) {
+    const edge = getCaveEdgeSideVector(side);
+    return { x: -edge.x, y: -edge.y };
+  }
+
+  function carveCaveWalkableLine(world, fromTx, fromTy, toTx, toTy) {
+    if (!world || !Array.isArray(world.tiles)) return false;
+    if (!Number.isInteger(fromTx) || !Number.isInteger(fromTy) || !Number.isInteger(toTx) || !Number.isInteger(toTy)) return false;
+    const size = Number.isInteger(world.size) ? world.size : 0;
+    if (size <= 2) return false;
+    const steps = Math.max(Math.abs(toTx - fromTx), Math.abs(toTy - fromTy), 1);
+    let changed = false;
+    for (let step = 0; step <= steps; step += 1) {
+      const t = step / steps;
+      const tx = clamp(Math.round(lerp(fromTx, toTx, t)), 1, size - 2);
+      const ty = clamp(Math.round(lerp(fromTy, toTy, t)), 1, size - 2);
+      for (let oy = -1; oy <= 1; oy += 1) {
+        for (let ox = -1; ox <= 1; ox += 1) {
+          if (Math.abs(ox) + Math.abs(oy) > 1) continue;
+          const nx = tx + ox;
+          const ny = ty + oy;
+          if (!inBounds(nx, ny, size)) continue;
+          if (nx <= 0 || ny <= 0 || nx >= size - 1 || ny >= size - 1) continue;
+          const idx = tileIndex(nx, ny, size);
+          if (!world.tiles[idx]) {
+            world.tiles[idx] = 1;
+            changed = true;
+          }
+        }
+      }
+    }
+    return changed;
+  }
+
+  function clearCaveTransitionTileResource(world, tx, ty) {
+    if (!world || !Array.isArray(world.resources) || !Array.isArray(world.resourceGrid)) return false;
+    if (!Number.isInteger(tx) || !Number.isInteger(ty) || !inBounds(tx, ty, world.size)) return false;
+    const idx = tileIndex(tx, ty, world.size);
+    const resourceId = world.resourceGrid[idx];
+    if (!Number.isInteger(resourceId) || resourceId < 0) return false;
+    const res = world.resources[resourceId];
+    if (!res) {
+      world.resourceGrid[idx] = -1;
+      return true;
+    }
+    if (res.removed) {
+      world.resourceGrid[idx] = -1;
+      return true;
+    }
+    res.removed = true;
+    res.hp = 0;
+    res.stage = "alive";
+    res.respawnTimer = 0;
+    world.resourceGrid[idx] = -1;
+    return true;
+  }
+
+  function buildCavePassageSideOrder(cave, layerIndex, node) {
+    const caveId = Number(cave?.id) || 0;
+    const layer = normalizeCaveLayerIndex(layerIndex);
+    const direction = Number(node?.direction) || 0;
+    const slot = Number(node?.slot) || 0;
+    const targetLayer = normalizeCaveLayerIndex(node?.targetLayer ?? layer);
+    const targetCaveId = Number(node?.targetCaveId) || 0;
+    const kindBias = node?.kind === "surface_link" ? 19 : 7;
+    const salt = (((caveId + 1) * 131) ^ ((layer + 1) * 173) ^ ((direction + 2) * 199)
+      ^ ((slot + 1) * 223) ^ ((targetLayer + 1) * 257) ^ ((targetCaveId + 5) * 283) ^ kindBias) >>> 0;
+    const sides = ["top", "right", "bottom", "left"];
+    const rotated = [];
+    let order = sides.slice();
+    for (let i = order.length - 1; i > 0; i -= 1) {
+      const pick = Math.floor(rand2d(salt + i * 17, caveId + layer * 31 + 11, (cave?.seedInt || 0) + 47111) * (i + 1));
+      const tmp = order[i];
+      order[i] = order[pick];
+      order[pick] = tmp;
+    }
+    if (direction > 0) {
+      order = ["top", ...order.filter((side) => side !== "top")];
+    } else if (direction < 0) {
+      order = ["bottom", ...order.filter((side) => side !== "bottom")];
+    }
+    if (node?.kind === "surface_link") {
+      order = ["left", "right", "top", "bottom"].sort((a, b) => (
+        order.indexOf(a) - order.indexOf(b)
+      ));
+    }
+    for (const side of order) {
+      if (!rotated.includes(side)) rotated.push(side);
+    }
+    return rotated;
+  }
+
+  function chooseCaveEdgePassageTile(world, side, entrance, reserved = null, minFromEntrance = 0) {
+    if (!world || !Array.isArray(world.tiles)) return null;
+    const size = Number.isInteger(world.size) ? world.size : 0;
+    if (size <= 3) return null;
+    const normalizedSide = normalizeCaveEdgeSide(side);
+    if (!normalizedSide) return null;
+    const inset = CAVE_EDGE_PASSAGE_CONFIG.edgeInsetTile;
+    const alongStart = 2;
+    const alongEnd = size - 3;
+    let best = null;
+    let bestScore = Infinity;
+    const samples = Math.max(1, alongEnd - alongStart + 1);
+    for (let i = 0; i < samples; i += 1) {
+      const along = alongStart + i;
+      let tx = 1;
+      let ty = 1;
+      if (normalizedSide === "top") {
+        tx = along;
+        ty = inset;
+      } else if (normalizedSide === "bottom") {
+        tx = along;
+        ty = size - 1 - inset;
+      } else if (normalizedSide === "left") {
+        tx = inset;
+        ty = along;
+      } else if (normalizedSide === "right") {
+        tx = size - 1 - inset;
+        ty = along;
+      }
+      if (!inBounds(tx, ty, size)) continue;
+      const idx = tileIndex(tx, ty, size);
+      if (!world.tiles[idx]) continue;
+      if (reserved?.has(`${tx},${ty}`)) continue;
+      const openCount = getWorldCardinalOpenCount(world, tx, ty);
+      if (openCount <= 0) continue;
+      const distanceFromEntrance = entrance ? Math.hypot(tx - entrance.tx, ty - entrance.ty) : Infinity;
+      if (distanceFromEntrance < minFromEntrance) continue;
+      const branchBias = Math.abs(openCount - 2) * 0.55;
+      const edgeCenter = size * 0.5;
+      const centerBias = normalizedSide === "top" || normalizedSide === "bottom"
+        ? Math.abs(tx - edgeCenter) * 0.03
+        : Math.abs(ty - edgeCenter) * 0.03;
+      const score = branchBias + centerBias;
+      if (score < bestScore) {
+        bestScore = score;
+        best = { tx, ty };
+      }
+    }
+    return best;
+  }
+
+  function ensureCaveEdgePassageNodePlacement(world, cave, layerIndex, node, reserved = null) {
+    if (!world || !node || !Array.isArray(world.tiles)) return { ok: false, changed: false };
+    const size = Number.isInteger(world.size) ? world.size : 0;
+    if (size <= 3) return { ok: false, changed: false };
+    const beforeTx = Number.isInteger(node.tx) ? node.tx : null;
+    const beforeTy = Number.isInteger(node.ty) ? node.ty : null;
+    const beforeSide = normalizeCaveEdgeSide(node.edgeSide);
+    const beforeMode = node.travelMode === "edge" ? "edge" : String(node.travelMode || "");
+    let changed = false;
+    const entrance = world.entrance && Number.isInteger(world.entrance.tx) && Number.isInteger(world.entrance.ty)
+      ? world.entrance
+      : null;
+    const minFromEntrance = CAVE_EDGE_PASSAGE_CONFIG.edgeSearchMinDistanceFromEntrance;
+    const sideOrder = buildCavePassageSideOrder(cave, layerIndex, node);
+    let chosenSide = normalizeCaveEdgeSide(node.edgeSide);
+    let chosenTile = null;
+    if (chosenSide) {
+      chosenTile = chooseCaveEdgePassageTile(world, chosenSide, entrance, reserved, minFromEntrance);
+    }
+    if (!chosenTile) {
+      for (const side of sideOrder) {
+        const tile = chooseCaveEdgePassageTile(world, side, entrance, reserved, minFromEntrance);
+        if (!tile) continue;
+        chosenSide = side;
+        chosenTile = tile;
+        break;
+      }
+    }
+    if (!chosenTile) {
+      const seedOrigin = entrance || { tx: Math.floor(size / 2), ty: Math.floor(size / 2) };
+      const side = chosenSide || sideOrder[0] || "top";
+      let targetTx = seedOrigin.tx;
+      let targetTy = seedOrigin.ty;
+      if (side === "top") targetTy = 1;
+      else if (side === "bottom") targetTy = size - 2;
+      else if (side === "left") targetTx = 1;
+      else if (side === "right") targetTx = size - 2;
+      const fallback = findNearestWalkableCaveDepthTile(world, targetTx, targetTy, reserved, {
+        maxRadius: 12,
+        minFromEntrance,
+        preferBranch: false,
+      });
+      if (!fallback) return { ok: false, changed };
+      chosenSide = side;
+      chosenTile = fallback;
+      const desiredEdgeTx = side === "left" ? 1 : side === "right" ? size - 2 : chosenTile.tx;
+      const desiredEdgeTy = side === "top" ? 1 : side === "bottom" ? size - 2 : chosenTile.ty;
+      if (carveCaveWalkableLine(world, chosenTile.tx, chosenTile.ty, desiredEdgeTx, desiredEdgeTy)) changed = true;
+      chosenTile = { tx: desiredEdgeTx, ty: desiredEdgeTy };
+    }
+    if (reserved && reserved.has(`${chosenTile.tx},${chosenTile.ty}`)) return { ok: false, changed };
+    if (clearCaveTransitionTileResource(world, chosenTile.tx, chosenTile.ty)) changed = true;
+    node.tx = chosenTile.tx;
+    node.ty = chosenTile.ty;
+    node.edgeSide = chosenSide;
+    node.travelMode = "edge";
+    if (reserved) reserved.add(`${chosenTile.tx},${chosenTile.ty}`);
+    if (beforeTx !== node.tx || beforeTy !== node.ty) changed = true;
+    if (beforeSide !== normalizeCaveEdgeSide(node.edgeSide)) changed = true;
+    if (beforeMode !== "edge") changed = true;
+    return { ok: true, changed };
+  }
+
   function findNearestWalkableCaveDepthTile(world, originTx, originTy, reserved = null, options = null) {
     if (!world || !Array.isArray(world.tiles)) return null;
     const size = Number.isInteger(world.size) ? world.size : 0;
@@ -22993,9 +23227,33 @@
       || (a.ty - b.ty)
       || (a.tx - b.tx)
     ));
+    const edgeReserved = new Set();
+    for (const entry of nextEntries) {
+      const edgePlacement = ensureCaveEdgePassageNodePlacement(layerWorld, cave, normalizedLayer, entry, edgeReserved);
+      if (!edgePlacement?.ok) {
+        changed = true;
+      } else if (edgePlacement.changed) {
+        changed = true;
+      }
+    }
     if (changed || nextEntries.length !== existing.length) {
       layerWorld.depthEntrances = nextEntries;
       return true;
+    }
+    return false;
+  }
+
+  function caveDepthEntrancesNeedRepair(caveWorld) {
+    if (!caveWorld || !Array.isArray(caveWorld.depthEntrances)) return true;
+    const seen = new Set();
+    for (const node of caveWorld.depthEntrances) {
+      if (!node || !Number.isInteger(node.tx) || !Number.isInteger(node.ty)) return true;
+      if (!inBounds(node.tx, node.ty, caveWorld.size)) return true;
+      if (!caveWorld.tiles[tileIndex(node.tx, node.ty, caveWorld.size)]) return true;
+      if (node.travelMode !== "edge" || !normalizeCaveEdgeSide(node.edgeSide)) return true;
+      const key = `${node.tx},${node.ty}`;
+      if (seen.has(key)) return true;
+      seen.add(key);
     }
     return false;
   }
@@ -23124,7 +23382,9 @@
     const activeLayer = state.inCave && state.activeCave === cave
       ? normalizeCaveLayerIndex(state.activeCaveLayer ?? 0)
       : 0;
-    repairCaveDepthEntrances(cave, caveWorld, activeLayer, state.surfaceWorld || state.world);
+    if (caveDepthEntrancesNeedRepair(caveWorld)) {
+      repairCaveDepthEntrances(cave, caveWorld, activeLayer, state.surfaceWorld || state.world);
+    }
     if (!Array.isArray(caveWorld.depthEntrances)) return null;
     let closest = null;
     let closestDist = Infinity;
@@ -23161,6 +23421,27 @@
     return null;
   }
 
+  function findCaveResourceRespawnTile(world, originTx, originTy) {
+    if (!isCaveWorldInstance(world)) return null;
+    const reserved = new Set();
+    if (Array.isArray(world.depthEntrances)) {
+      for (const node of world.depthEntrances) {
+        if (!node || !Number.isInteger(node.tx) || !Number.isInteger(node.ty)) continue;
+        reserved.add(`${node.tx},${node.ty}`);
+      }
+    }
+    const candidate = findNearestWalkableCaveDepthTile(world, originTx, originTy, reserved, {
+      maxRadius: 14,
+      minFromEntrance: 2.8,
+      preferBranch: false,
+    });
+    if (!candidate) return null;
+    if (isNearCaveTransitionNode(world, candidate.tx, candidate.ty, 2.2)) return null;
+    const resAt = getResourceAt(world, candidate.tx, candidate.ty);
+    if (resAt && !resAt.removed) return null;
+    return candidate;
+  }
+
   function traverseCaveDepthEntrance(entrance) {
     if (!state.inCave || !state.activeCave || !state.player || !entrance) return false;
     if (entrance.kind === "surface_link") {
@@ -23183,10 +23464,10 @@
       state.returnPosition = null;
       state.player.x = surfacePos.x;
       state.player.y = surfacePos.y;
-      startCaveLayerTransitionEffect("Tunnel Exit");
+      startCaveLayerTransitionEffect("Cave Exit");
       markDirty();
       if (net.enabled) sendPlayerUpdate();
-      setPrompt("You surfaced through a cave tunnel on another island.", 1.6);
+      setPrompt("You followed a cave passage to another island.", 1.6);
       return true;
     }
     const currentLayer = normalizeCaveLayerIndex(state.activeCaveLayer);
@@ -23205,8 +23486,23 @@
     if (!target) return false;
     state.activeCaveLayer = targetLayer;
     state.world = targetWorld;
-    state.player.x = (target.tx + 0.5) * CONFIG.tileSize;
-    state.player.y = (target.ty + 0.5) * CONFIG.tileSize;
+    let spawnX = (target.tx + 0.5) * CONFIG.tileSize;
+    let spawnY = (target.ty + 0.5) * CONFIG.tileSize;
+    if (counterpart && counterpart.travelMode === "edge" && normalizeCaveEdgeSide(counterpart.edgeSide)) {
+      const inward = getCaveEdgePassageInwardVector(counterpart.edgeSide);
+      const inwardTile = findWalkableCaveTileNear(
+        targetWorld,
+        counterpart.tx + inward.x,
+        counterpart.ty + inward.y,
+        4
+      );
+      if (inwardTile) {
+        spawnX = (inwardTile.tx + 0.5) * CONFIG.tileSize;
+        spawnY = (inwardTile.ty + 0.5) * CONFIG.tileSize;
+      }
+    }
+    state.player.x = spawnX;
+    state.player.y = spawnY;
     const facing = normalizeDirectionVector(
       target.tx - (Number.isInteger(counterpart?.tx) ? counterpart.tx : target.tx),
       target.ty - (Number.isInteger(counterpart?.ty) ? counterpart.ty : target.ty),
@@ -23215,20 +23511,18 @@
     );
     state.player.facing.x = facing.x;
     state.player.facing.y = facing.y;
-    startCaveLayerTransitionEffect(CAVE_LAYER_LABELS[targetLayer] || `Layer ${targetLayer + 1}`);
+    startCaveLayerTransitionEffect(getCaveSectionDisplayLabel(targetLayer));
     markDirty();
     if (net.enabled) sendPlayerUpdate();
-    const movedDown = entrance.direction > 0;
-    const layerLabel = CAVE_LAYER_LABELS[targetLayer] || `Layer ${targetLayer + 1}`;
-    const hasMoreDepthOptions = (targetWorld.depthEntrances || []).some((node) => Number(node?.direction) > 0);
+    const layerLabel = getCaveSectionDisplayLabel(targetLayer);
+    const hasMorePassages = (targetWorld.depthEntrances || []).length > 0;
     setPrompt(
-      movedDown && hasMoreDepthOptions
-        ? `Descended to ${layerLabel}. Look for another shaft to go deeper.`
-        : movedDown
-          ? `Descended to ${layerLabel}`
-          : `Ascended to ${layerLabel}`,
+      hasMorePassages
+        ? `Entered ${layerLabel}. Follow side passages to keep exploring.`
+        : `Entered ${layerLabel}`,
       1.3
     );
+    state.cavePassageCooldown = Math.max(state.cavePassageCooldown || 0, CAVE_EDGE_PASSAGE_CONFIG.autoTriggerCooldown);
     return true;
   }
 
@@ -26898,6 +27192,26 @@
     if (isWalkableAt(state.player.x, nextY)) {
       state.player.y = nextY;
     }
+    if (state.inCave) {
+      state.cavePassageCooldown = Math.max(0, (Number(state.cavePassageCooldown) || 0) - dt);
+      if (
+        state.cavePassageCooldown <= 0
+        && !uiLock
+        && !state.caveTransition
+        && state.activeCave
+      ) {
+        const nearbyPassage = findNearestCaveDepthEntrance(state.activeCave, state.player, CONFIG.tileSize * CAVE_EDGE_PASSAGE_CONFIG.autoTriggerRangeTiles);
+        const entranceNode = nearbyPassage?.entrance || null;
+        if (entranceNode && entranceNode.travelMode === "edge") {
+          const side = normalizeCaveEdgeSide(entranceNode.edgeSide);
+          const edgeVec = getCaveEdgeSideVector(side);
+          const movingTowardPassage = (move.x * edgeVec.x) + (move.y * edgeVec.y) > 0.15;
+          if (movingTowardPassage) {
+            traverseCaveDepthEntrance(entranceNode);
+          }
+        }
+      }
+    }
   }
 
   function updateStructureEffects(dt) {
@@ -27094,6 +27408,18 @@
       }
 
       const idx = tileIndex(task.tx, task.ty, world.size);
+      if (
+        isCaveWorldInstance(world)
+        && (world.tiles[idx] !== 1 || isNearCaveTransitionNode(world, task.tx, task.ty, 1.6))
+      ) {
+        const relocated = findCaveResourceRespawnTile(world, task.tx, task.ty);
+        if (relocated) {
+          task.tx = relocated.tx;
+          task.ty = relocated.ty;
+          markDirty();
+          continue;
+        }
+      }
       const tileIsLand = world.tiles[idx] === 1;
       const resAt = getResourceAt(world, task.tx, task.ty);
       const hasStructure = world === state.surfaceWorld ? !!getStructureAt(task.tx, task.ty) : false;
@@ -31488,11 +31814,12 @@
     const entrance = caveWorld.entrance;
     state.player.x = (entrance.tx + 0.5) * CONFIG.tileSize;
     state.player.y = (entrance.ty + 0.5) * CONFIG.tileSize;
-    startCaveLayerTransitionEffect(CAVE_LAYER_LABELS[0]);
+    state.cavePassageCooldown = CAVE_EDGE_PASSAGE_CONFIG.autoTriggerCooldown;
+    startCaveLayerTransitionEffect(getCaveSectionDisplayLabel(0));
     markDirty();
     if (net.enabled) sendPlayerUpdate();
     if (Array.isArray(caveWorld.depthEntrances) && caveWorld.depthEntrances.length > 0) {
-      setPrompt("Look for dark shaft markers with arrows. Press E to go deeper.", 2.2);
+      setPrompt("Explore tunnels and follow cave passage exits to connected sections.", 2.2);
     }
   }
 
@@ -31510,6 +31837,7 @@
       state.player.y = returnPos.y;
     }
     state.returnPosition = null;
+    state.cavePassageCooldown = 0;
     startCaveLayerTransitionEffect("Surface");
     closeShipRepairPanel();
     closeInventory();
@@ -31971,13 +32299,11 @@
             setPrompt("Press E to leave cave");
           } else if (nearbyDepthEntrance?.entrance) {
             const targetLayer = normalizeCaveLayerIndex(nearbyDepthEntrance.entrance.targetLayer);
-            const targetLabel = CAVE_LAYER_LABELS[targetLayer] || `Layer ${targetLayer + 1}`;
+            const targetLabel = getCaveSectionDisplayLabel(targetLayer);
             if (nearbyDepthEntrance.entrance.kind === "surface_link") {
-              setPrompt("Tunnel exit (E) - Surface");
-            } else if (nearbyDepthEntrance.entrance.direction > 0) {
-              setPrompt(`Go deeper (E) - ${targetLabel}`);
+              setPrompt("Cave exit ahead - walk in or press E");
             } else {
-              setPrompt(`Go up (E) - ${targetLabel}`);
+              setPrompt(`Passage to ${targetLabel} - walk in or press E`);
             }
           } else if (state.targetMonster && !swordUnlocked) {
             setPrompt("Craft a sword first");
@@ -31988,12 +32314,11 @@
           } else if (state.targetResource) {
             setPrompt(`Press Space / Tap Attack to ${getResourceActionName(state.targetResource)}`);
           } else {
-            const label = CAVE_LAYER_LABELS[currentLayer] || `Layer ${currentLayer + 1}`;
-            const canGoDeeper = Array.isArray(caveWorld?.depthEntrances)
-              && caveWorld.depthEntrances.some((node) => Number(node?.direction) > 0);
+            const label = getCaveSectionDisplayLabel(currentLayer);
+            const hasPassages = Array.isArray(caveWorld?.depthEntrances) && caveWorld.depthEntrances.length > 0;
             setPrompt(
-              canGoDeeper
-                ? `Explore branches and look for dark shaft markers (${label})`
+              hasPassages
+                ? `Explore tunnels and follow cave exits (${label})`
                 : `Wind echoes through the cave (${label})`
             );
           }
@@ -35548,6 +35873,8 @@
             || markerY > cameraViewHeight + 28
           ) continue;
           const isSurfaceTunnelExit = node.kind === "surface_link";
+          const isEdgePassage = node.travelMode === "edge";
+          const edgeSide = normalizeCaveEdgeSide(node.edgeSide);
           const down = !isSurfaceTunnelExit && Number(node.direction) > 0;
           const pulse = 0.5 + 0.5 * Math.sin((performance.now() * 0.007) + ((node.slot || 0) * 1.17) + ((node.targetLayer || 0) * 0.93));
           const glowAlpha = 0.12 + pulse * 0.14;
@@ -35566,10 +35893,36 @@
             ? "rgba(255, 220, 142, 0.9)"
             : (down ? "rgba(140, 212, 255, 0.82)" : "rgba(214, 239, 255, 0.86)");
           ctx.lineWidth = 1.9;
-          ctx.beginPath();
-          ctx.ellipse(markerX, markerY + 1, 9.5, 7.2, 0, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.stroke();
+          if (isEdgePassage && edgeSide) {
+            const sx = edgeSide === "left" ? -1 : edgeSide === "right" ? 1 : 0;
+            const sy = edgeSide === "top" ? -1 : edgeSide === "bottom" ? 1 : 0;
+            const inwardX = -sx;
+            const inwardY = -sy;
+            ctx.beginPath();
+            ctx.ellipse(
+              markerX + sx * 3.5,
+              markerY + sy * 3.5,
+              10.2,
+              7.1,
+              (sx !== 0) ? Math.PI * 0.5 : 0,
+              0,
+              Math.PI
+            );
+            ctx.fill();
+            ctx.stroke();
+            ctx.strokeStyle = "rgba(255,255,255,0.18)";
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(markerX + inwardX * 1.5 - sy * 3.8, markerY + inwardY * 1.5 - sx * 3.8);
+            ctx.lineTo(markerX + inwardX * 6.2, markerY + inwardY * 6.2);
+            ctx.lineTo(markerX + inwardX * 1.5 + sy * 3.8, markerY + inwardY * 1.5 + sx * 3.8);
+            ctx.stroke();
+          } else {
+            ctx.beginPath();
+            ctx.ellipse(markerX, markerY + 1, 9.5, 7.2, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+          }
           ctx.strokeStyle = isSurfaceTunnelExit
             ? "rgba(230, 176, 96, 0.46)"
             : (down ? "rgba(96, 176, 235, 0.42)" : "rgba(186, 216, 242, 0.42)");
@@ -35582,7 +35935,16 @@
           ctx.stroke();
           ctx.fillStyle = isSurfaceTunnelExit ? "rgba(255, 234, 182, 0.95)" : "rgba(225, 244, 255, 0.9)";
           ctx.beginPath();
-          if (isSurfaceTunnelExit) {
+          if (isEdgePassage && edgeSide) {
+            const inward = getCaveEdgePassageInwardVector(edgeSide);
+            const nx = inward.x;
+            const ny = inward.y;
+            const px = -ny;
+            const py = nx;
+            ctx.moveTo(markerX + nx * 4.5, markerY + ny * 4.5);
+            ctx.lineTo(markerX + px * 2.8, markerY + py * 2.8);
+            ctx.lineTo(markerX - px * 2.8, markerY - py * 2.8);
+          } else if (isSurfaceTunnelExit) {
             ctx.moveTo(markerX - 3.2, markerY - 1.8);
             ctx.lineTo(markerX + 2.8, markerY - 1.8);
             ctx.lineTo(markerX + 2.8, markerY - 4.2);
