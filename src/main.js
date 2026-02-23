@@ -691,7 +691,7 @@
   });
   const CAVE_ORE_MIN_SPACING_TILES = 2.15;
   const CAVE_DEAD_END_REWARD_MIN_SEPARATION_TILES = 4.8;
-  const CAVES_ENABLED = false;
+  const CAVES_ENABLED = true;
 
   const SAVE_KEY = "island_survival_save_v1";
   const SAVE_KEY_PREFIX = "island_survival_seed_save_v1:";
@@ -11811,6 +11811,7 @@
           ty: cave.ty,
           spawnedByPlayer: !!cave.spawnedByPlayer,
           hostileBlocked: !!cave.hostileBlocked,
+          surfaceLinkTargetCaveId: Number.isInteger(cave.surfaceLinkTargetCaveId) ? cave.surfaceLinkTargetCaveId : null,
           linkConfig: getNormalizedCaveLinkConfig(cave, surface),
           world: layerZeroWorld,
           layers,
@@ -12389,6 +12390,9 @@
         } else {
           existingById.hostileBlocked = shouldBlockCaveHostilesForSurfaceTile(world, existingById.tx, existingById.ty);
         }
+        if (Number.isInteger(entry.surfaceLinkTargetCaveId)) {
+          existingById.surfaceLinkTargetCaveId = entry.surfaceLinkTargetCaveId;
+        }
         if (existingById.hostileBlocked) {
           const generatedLayers = getGeneratedCaveLayerWorldEntries(existingById);
           for (const layerEntry of generatedLayers) {
@@ -12409,6 +12413,9 @@
       addSurfaceCave(world, tx, ty, entry.id, {
         spawnedByPlayer: !!entry.spawnedByPlayer,
         linkConfig: entry.linkConfig,
+        surfaceLinkTargetCaveId: Number.isInteger(entry.surfaceLinkTargetCaveId)
+          ? entry.surfaceLinkTargetCaveId
+          : null,
         hostileBlocked: typeof entry.hostileBlocked === "boolean"
           ? entry.hostileBlocked
           : shouldBlockCaveHostilesForSurfaceTile(world, tx, ty),
@@ -12547,6 +12554,9 @@
         cave.hostileBlocked = typeof caveSnapshot.hostileBlocked === "boolean"
           ? caveSnapshot.hostileBlocked
           : shouldBlockCaveHostilesForSurfaceTile(world, cave.tx, cave.ty);
+        if (Number.isInteger(caveSnapshot.surfaceLinkTargetCaveId)) {
+          cave.surfaceLinkTargetCaveId = caveSnapshot.surfaceLinkTargetCaveId;
+        }
         const layerSnapshots = Array.isArray(caveSnapshot.layers) && caveSnapshot.layers.length > 0
           ? caveSnapshot.layers
           : [{ layer: 0, world: caveSnapshot.world && typeof caveSnapshot.world === "object" ? caveSnapshot.world : caveSnapshot }];
@@ -16384,12 +16394,12 @@
       roomDepths,
       edges: Array.from(edgeByKey.values()).sort((a, b) => a.id - b.id),
       roomToCell,
-      toLayer2: 1, // legacy compatibility fields
-      toLayer3: 1,
     };
   }
 
   function buildCaveLayerLinkConfig(seed, caveId) {
+    // Legacy function name retained because CaveV2 room graphs are threaded
+    // through existing save/snapshot plumbing keyed as "linkConfig".
     return buildCaveRoomGraphConfig(seed, caveId);
   }
 
@@ -16434,44 +16444,8 @@
       return requests;
     }
 
-    const requests = [];
-    const toLayer2 = 1;
-    const toLayer3 = 1;
-    if (layer === 0) {
-      for (let slot = 0; slot < toLayer2; slot += 1) {
-        requests.push({
-          direction: "down",
-          targetLayer: 1,
-          slot,
-        });
-      }
-      return requests;
-    }
-    if (layer === 1) {
-      for (let slot = 0; slot < toLayer2; slot += 1) {
-        requests.push({
-          direction: "up",
-          targetLayer: 0,
-          slot,
-        });
-      }
-      for (let slot = 0; slot < toLayer3; slot += 1) {
-        requests.push({
-          direction: "down",
-          targetLayer: 2,
-          slot,
-        });
-      }
-      return requests;
-    }
-    for (let slot = 0; slot < toLayer3; slot += 1) {
-      requests.push({
-        direction: "up",
-        targetLayer: 1,
-        slot,
-      });
-    }
-    return requests;
+    // CaveV2 is room-graph-only. No legacy linear layer portal requests.
+    return [];
   }
 
   function getCaveLayerSeed(seed, caveId, layerIndex) {
@@ -19203,6 +19177,7 @@
           ty: cave.ty,
           spawnedByPlayer: !!cave.spawnedByPlayer,
           hostileBlocked: !!cave.hostileBlocked,
+          surfaceLinkTargetCaveId: Number.isInteger(cave.surfaceLinkTargetCaveId) ? cave.surfaceLinkTargetCaveId : null,
           linkConfig: getNormalizedCaveLinkConfig(cave, surface),
           world: layerZeroState,
           layers: layerPayloads,
@@ -22777,6 +22752,9 @@
           cave.hostileBlocked = savedCave && typeof savedCave.hostileBlocked === "boolean"
             ? !!savedCave.hostileBlocked
             : shouldBlockCaveHostilesForSurfaceTile(world, cave.tx, cave.ty);
+          if (Number.isInteger(savedCave?.surfaceLinkTargetCaveId)) {
+            cave.surfaceLinkTargetCaveId = savedCave.surfaceLinkTargetCaveId;
+          }
           if (savedCave?.linkConfig && typeof savedCave.linkConfig === "object") {
             cave.linkConfig = getNormalizedCaveLinkConfig({
               ...cave,
@@ -23973,6 +23951,36 @@
     return surfaceWorld.caves.find((entry) => entry && entry.id === targetId) || null;
   }
 
+  function getCaveSurfaceEntryBinding(surfaceWorld, surfaceCave) {
+    if (!surfaceCave) return null;
+    const localLinkConfig = getNormalizedCaveLinkConfig(surfaceCave, surfaceWorld);
+    const localEntryRoom = normalizeCaveLayerIndex(localLinkConfig.entryRoom ?? 0);
+    const targetCave = getCaveSurfaceLinkTarget(surfaceWorld, surfaceCave);
+    if (
+      targetCave
+      && Number.isInteger(surfaceCave.id)
+      && Number.isInteger(targetCave.id)
+      && surfaceCave.id > targetCave.id
+    ) {
+      const targetLinkConfig = getNormalizedCaveLinkConfig(targetCave, surfaceWorld);
+      const targetRoom = Number.isInteger(targetLinkConfig.surfaceLinkRoom)
+        ? normalizeCaveLayerIndex(targetLinkConfig.surfaceLinkRoom)
+        : normalizeCaveLayerIndex(targetLinkConfig.entryRoom ?? 0);
+      return {
+        cave: targetCave,
+        roomId: targetRoom,
+        viaLinkedSurface: true,
+        viaSurfaceCaveId: surfaceCave.id,
+      };
+    }
+    return {
+      cave: surfaceCave,
+      roomId: localEntryRoom,
+      viaLinkedSurface: false,
+      viaSurfaceCaveId: null,
+    };
+  }
+
   function getCaveOreHpForKind(oreKind) {
     if (oreKind === "coal") return 4;
     if (oreKind === "iron_ore") return 5;
@@ -24088,6 +24096,9 @@
     const hostileBlocked = typeof options?.hostileBlocked === "boolean"
       ? options.hostileBlocked
       : shouldBlockCaveHostilesForSurfaceTile(world, tx, ty);
+    const surfaceLinkTargetCaveId = Number.isInteger(options?.surfaceLinkTargetCaveId)
+      ? options.surfaceLinkTargetCaveId
+      : null;
     const seedInt = world.seedInt ?? seedToInt(world.seed || "island");
     const usedIds = new Set(world.caves.map((entry) => entry.id));
     let id = typeof preferredId === "number" ? preferredId : 0;
@@ -24139,6 +24150,7 @@
       ty,
       spawnedByPlayer,
       hostileBlocked,
+      surfaceLinkTargetCaveId,
       seedInt,
       linkConfig,
       layers: [layerZeroWorld],
@@ -24998,6 +25010,16 @@
       }
     }
     return null;
+  }
+
+  function findCaveSurfaceLinkNodeForTarget(world, targetCaveId) {
+    if (!world || !Array.isArray(world.depthEntrances) || !Number.isInteger(targetCaveId)) return null;
+    return world.depthEntrances.find((node) => (
+      node
+      && node.kind === "surface_link"
+      && Number.isInteger(node.targetCaveId)
+      && node.targetCaveId === targetCaveId
+    )) || null;
   }
 
   function findCaveResourceRespawnTile(world, originTx, originTy) {
@@ -33390,12 +33412,17 @@
     if (!CAVES_ENABLED) return;
     if (!cave || state.inCave) return;
     state.sleepSequence = null;
+    const surfaceWorld = state.surfaceWorld || state.world;
+    const entryBinding = getCaveSurfaceEntryBinding(surfaceWorld, cave);
+    if (!entryBinding?.cave) return;
+    const entryCave = entryBinding.cave;
+    const entryRoomId = normalizeCaveLayerIndex(entryBinding.roomId ?? 0);
     state.returnPosition = { x: state.player.x, y: state.player.y };
-    const caveWorld = ensureCaveLayerWorld(cave, 0, state.surfaceWorld || state.world);
+    const caveWorld = ensureCaveLayerWorld(entryCave, entryRoomId, surfaceWorld);
     if (!caveWorld) return;
     state.inCave = true;
-    state.activeCave = cave;
-    state.activeCaveLayer = 0;
+    state.activeCave = entryCave;
+    state.activeCaveLayer = entryRoomId;
     state.world = caveWorld;
     state.player.inHut = false;
     closeStationMenu();
@@ -33403,18 +33430,49 @@
     closeShipRepairPanel();
     closeInventory();
     buildMenu.classList.add("hidden");
-    const entrance = caveWorld.entrance;
-    state.player.x = (entrance.tx + 0.5) * CONFIG.tileSize;
-    state.player.y = (entrance.ty + 0.5) * CONFIG.tileSize;
+    let spawnX = null;
+    let spawnY = null;
+    if (entryBinding.viaLinkedSurface && Number.isInteger(entryBinding.viaSurfaceCaveId)) {
+      const surfaceNode = findCaveSurfaceLinkNodeForTarget(caveWorld, entryBinding.viaSurfaceCaveId);
+      if (surfaceNode && surfaceNode.travelMode === "edge" && normalizeCaveEdgeSide(surfaceNode.edgeSide)) {
+        const inward = getCaveEdgePassageInwardVector(surfaceNode.edgeSide);
+        const inwardTile = findWalkableCaveTileNear(
+          caveWorld,
+          surfaceNode.tx + inward.x,
+          surfaceNode.ty + inward.y,
+          4
+        ) || findWalkableCaveTileNear(caveWorld, surfaceNode.tx, surfaceNode.ty, 4);
+        if (inwardTile) {
+          spawnX = (inwardTile.tx + 0.5) * CONFIG.tileSize;
+          spawnY = (inwardTile.ty + 0.5) * CONFIG.tileSize;
+          setCavePassageLockForNode(entryCave, entryRoomId, surfaceNode);
+        }
+      }
+    }
+    if (!Number.isFinite(spawnX) || !Number.isFinite(spawnY)) {
+      const entranceTile = caveWorld.entrance;
+      spawnX = (entranceTile.tx + 0.5) * CONFIG.tileSize;
+      spawnY = (entranceTile.ty + 0.5) * CONFIG.tileSize;
+      state.cavePassageLock = null;
+    }
+    state.player.x = spawnX;
+    state.player.y = spawnY;
     state.player.renderX = state.player.x;
     state.player.renderY = state.player.y;
     state.cavePassageCooldown = CAVE_EDGE_PASSAGE_CONFIG.autoTriggerCooldown;
-    state.cavePassageLock = null;
+    if (!entryBinding.viaLinkedSurface) {
+      state.cavePassageLock = null;
+    }
     startCaveLayerTransitionEffect("Cave");
     markDirty();
     if (net.enabled) sendPlayerUpdate();
     if (Array.isArray(caveWorld.depthEntrances) && caveWorld.depthEntrances.length > 0) {
-      setPrompt("Enter Cave. Move through tunnel exits at the room edges.", 2.0);
+      setPrompt(
+        entryBinding.viaLinkedSurface
+          ? "Enter Cave. This entrance reconnects to a deeper tunnel room."
+          : "Enter Cave. Move through tunnel exits at the room edges.",
+        2.0
+      );
     }
   }
 
