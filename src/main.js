@@ -17142,14 +17142,10 @@
       playerScreenY = base.y + active.y;
     }
 
-    // Mild cave vignette (drawn before player so it never hides the player sprite)
+    // CaveV2 emergency fix: remove the player-centered vignette for now so the player sprite
+    // can never be visually replaced by a glow/radiation effect during cave debugging.
     const vx = playerScreenX;
     const vy = playerScreenY;
-    const vignette = ctx.createRadialGradient(vx, vy, 50, vx, vy, Math.max(viewWidth, viewHeight) * 0.6);
-    vignette.addColorStop(0, "rgba(0,0,0,0)");
-    vignette.addColorStop(1, "rgba(0,0,0,0.22)");
-    ctx.fillStyle = vignette;
-    ctx.fillRect(0, 0, viewWidth, viewHeight);
     drawCaveV2PlayerAt(playerScreenX, playerScreenY);
 
     if (state.debugUnlocked) {
