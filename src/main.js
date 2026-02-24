@@ -724,6 +724,7 @@
     transitionCooldown: 0.12,
     boundaryTriggerDepthTiles: 0.2,
     spawnInsetTiles: 1.3,
+    transitionLockReleaseTiles: 1.05,
     oreMinPerRoom: 2,
     oreMaxPerRoom: 6,
     oreMinSpacingTiles: 2.35,
@@ -2088,10 +2089,13 @@
       transitionT: 0,
       transition: null,
       transitionCooldown: 0,
+      transitionLock: null,
       targetOreId: null,
       targetDropId: null,
       debugLastSummary: "",
       debugLastRoomStatsKey: "",
+      debugEntryAuditPending: false,
+      debugLastEntryAuditKey: "",
     },
     caveDisableRecoveryPending: false,
     caveDisableRecoveryReason: "",
@@ -3400,6 +3404,35 @@
           const nextId = room.exits[side];
           if (!nextId) continue;
           edgeCount += 1;
+          const exitInfo = getCaveV2ExitCenterTile(room, side);
+          if (!exitInfo) {
+            qaPushIssue(issues, `[caveV2:${caveId}:${roomId}] Missing exit lane info for ${side}`);
+            break;
+          }
+          const laneLimit = (side === "N" || side === "S") ? room.sizeW : room.sizeH;
+          if (
+            exitInfo.laneMin < 0
+            || exitInfo.laneMax >= laneLimit
+            || exitInfo.laneMin > exitInfo.laneMax
+          ) {
+            qaPushIssue(issues, `[caveV2:${caveId}:${roomId}] Exit lane out of bounds for ${side}`);
+            break;
+          }
+          if (!isCaveV2FloorTile(room, exitInfo.tx, exitInfo.ty)) {
+            qaPushIssue(issues, `[caveV2:${caveId}:${roomId}] Exit ${side} doorway tile is not floor`);
+            break;
+          }
+          const laneRect = getCaveV2ExitLaneRectPx(room, side);
+          if (!laneRect || laneRect.w <= 0 || laneRect.h <= 0) {
+            qaPushIssue(issues, `[caveV2:${caveId}:${roomId}] Invalid exit lane rect for ${side}`);
+            break;
+          }
+          const boundaryDepth = getCaveV2BoundaryTriggerDepthPx();
+          const roomPxForBoundary = getCaveV2RoomPixelSize(room);
+          if (!Number.isFinite(boundaryDepth) || boundaryDepth <= 0 || boundaryDepth >= Math.max(roomPxForBoundary.w, roomPxForBoundary.h)) {
+            qaPushIssue(issues, `[caveV2:${caveId}:${roomId}] Invalid boundary trigger depth`);
+            break;
+          }
           const nextRoom = cave.roomsById[nextId];
           if (!nextRoom) {
             qaPushIssue(issues, `[caveV2:${caveId}:${roomId}] Exit ${side} points to missing room ${String(nextId)}`);
@@ -3427,12 +3460,22 @@
             break;
           }
           const oreSeen = new Set();
+          const oreIdSeen = new Set();
           for (let i = 0; i < room.entities.ores.length; i += 1) {
             const ore = room.entities.ores[i];
             if (!ore) {
               qaPushIssue(issues, `[caveV2:${caveId}:${roomId}] Null ore entry`);
               break;
             }
+            if (!ore.id) {
+              qaPushIssue(issues, `[caveV2:${caveId}:${roomId}] Ore missing id`);
+              break;
+            }
+            if (oreIdSeen.has(ore.id)) {
+              qaPushIssue(issues, `[caveV2:${caveId}:${roomId}] Duplicate ore id ${String(ore.id)}`);
+              break;
+            }
+            oreIdSeen.add(ore.id);
             if (!Number.isFinite(ore.x) || !Number.isFinite(ore.y) || !Number.isInteger(ore.tx) || !Number.isInteger(ore.ty)) {
               qaPushIssue(issues, `[caveV2:${caveId}:${roomId}] Ore has invalid coordinates`);
               break;
@@ -3530,6 +3573,9 @@
       if (!cave || !room) {
         qaPushIssue(issues, `[caveV2] Active room missing (${String(active.caveId)}:${String(active.roomId)})`);
       } else {
+        if (!room.generated) {
+          qaPushIssue(issues, "[caveV2] Active room not marked generated");
+        }
         if (!Number.isFinite(active.x) || !Number.isFinite(active.y)) {
           qaPushIssue(issues, "[caveV2] Active player room coordinates are non-finite");
         }
@@ -7212,7 +7258,9 @@
         });
       }
       for (const payload of descriptor.payloads || []) {
-        mpAutotestSendFromClient(client, payload, { reliable: false });
+        const reliableAutotestPayload = descriptor.kind === "harvest"
+          || (descriptor.kind === "caveTrip" && payload?.type === "harvest");
+        mpAutotestSendFromClient(client, payload, { reliable: reliableAutotestPayload });
       }
       if (descriptor.kind === "spam" && Number.isInteger(descriptor.repeatCraftChecks) && descriptor.repeatCraftChecks > 0) {
         for (let i = 0; i < descriptor.repeatCraftChecks; i += 1) {
@@ -15537,6 +15585,7 @@
         transitionT: 0,
         transition: null,
         transitionCooldown: 0,
+        transitionLock: null,
         targetOreId: null,
         targetDropId: null,
         debugLastSummary: "",
@@ -15551,8 +15600,17 @@
     if (!Object.prototype.hasOwnProperty.call(state.caveV2, "targetDropId")) {
       state.caveV2.targetDropId = null;
     }
+    if (!Object.prototype.hasOwnProperty.call(state.caveV2, "transitionLock")) {
+      state.caveV2.transitionLock = null;
+    }
     if (typeof state.caveV2.debugLastRoomStatsKey !== "string") {
       state.caveV2.debugLastRoomStatsKey = "";
+    }
+    if (typeof state.caveV2.debugLastEntryAuditKey !== "string") {
+      state.caveV2.debugLastEntryAuditKey = "";
+    }
+    if (!Object.prototype.hasOwnProperty.call(state.caveV2, "debugEntryAuditPending")) {
+      state.caveV2.debugEntryAuditPending = false;
     }
     return state.caveV2;
   }
@@ -16136,10 +16194,13 @@
     caveState.transitionT = 0;
     caveState.transition = null;
     caveState.transitionCooldown = 0;
+    caveState.transitionLock = null;
     caveState.targetOreId = null;
     caveState.targetDropId = null;
     caveState.debugLastSummary = "";
     caveState.debugLastRoomStatsKey = "";
+    caveState.debugEntryAuditPending = false;
+    caveState.debugLastEntryAuditKey = "";
     state.nearCaveV2 = null;
   }
 
@@ -16418,8 +16479,15 @@
     caveState.transitionT = 0;
     caveState.transition = null;
     caveState.transitionCooldown = 0.12;
+    caveState.transitionLock = null;
     caveState.targetOreId = null;
     caveState.targetDropId = null;
+    caveState.debugEntryAuditPending = true;
+    caveState.debugLastEntryAuditKey = `${cave.caveId}:${cave.entryRoomId}`;
+    state.player.x = spawn.x;
+    state.player.y = spawn.y;
+    state.player.renderX = spawn.x;
+    state.player.renderY = spawn.y;
     state.nearCaveV2 = null;
     state.promptTimer = 0;
     state.promptText = "";
@@ -16435,8 +16503,10 @@
     caveState.transition = null;
     caveState.transitionT = 0;
     caveState.transitionCooldown = 0.18;
+    caveState.transitionLock = null;
     caveState.targetOreId = null;
     caveState.targetDropId = null;
+    caveState.debugEntryAuditPending = false;
     if (ret && Number.isFinite(ret.x) && Number.isFinite(ret.y)) {
       state.player.x = ret.x;
       state.player.y = ret.y;
@@ -16478,6 +16548,108 @@
     return { test: () => false };
   }
 
+  function getCaveV2BoundaryTriggerDepthPx() {
+    return (CONFIG.tileSize * 0.5) + (CAVE_V2_ROOM_CONFIG.boundaryTriggerDepthTiles * CONFIG.tileSize);
+  }
+
+  function isPlayerAtCaveV2Boundary(room, side, x, y) {
+    return getCaveV2BoundaryTrigger(room, side).test(x, y);
+  }
+
+  function getCaveV2ExitLaneRectPx(room, side) {
+    const info = getCaveV2ExitCenterTile(room, side);
+    if (!info) return null;
+    const tile = CONFIG.tileSize;
+    const roomPx = getCaveV2RoomPixelSize(room);
+    if (side === "N") {
+      return {
+        x: info.laneMin * tile,
+        y: 0,
+        w: (info.laneMax - info.laneMin + 1) * tile,
+        h: tile,
+      };
+    }
+    if (side === "S") {
+      return {
+        x: info.laneMin * tile,
+        y: roomPx.h - tile,
+        w: (info.laneMax - info.laneMin + 1) * tile,
+        h: tile,
+      };
+    }
+    if (side === "W") {
+      return {
+        x: 0,
+        y: info.laneMin * tile,
+        w: tile,
+        h: (info.laneMax - info.laneMin + 1) * tile,
+      };
+    }
+    if (side === "E") {
+      return {
+        x: roomPx.w - tile,
+        y: info.laneMin * tile,
+        w: tile,
+        h: (info.laneMax - info.laneMin + 1) * tile,
+      };
+    }
+    return null;
+  }
+
+  function refreshCaveV2TransitionLock(caveState, room) {
+    if (!caveState || !room) return;
+    const lock = caveState.transitionLock;
+    if (!lock) return;
+    if (lock.roomId !== room.roomId || lock.side !== normalizeCaveV2Direction(lock.side)) {
+      caveState.transitionLock = null;
+      return;
+    }
+    const active = caveState.active;
+    if (!active) {
+      caveState.transitionLock = null;
+      return;
+    }
+    if (!isCaveV2PointInExitLane(room, lock.side, active.x, active.y)) {
+      caveState.transitionLock = null;
+      return;
+    }
+    const roomPx = getCaveV2RoomPixelSize(room);
+    const releasePx = Math.max(CONFIG.tileSize * 0.5, (Number(lock.releaseDistancePx) || 0));
+    let distanceFromEdge = Infinity;
+    if (lock.side === "N") distanceFromEdge = active.y;
+    else if (lock.side === "S") distanceFromEdge = roomPx.h - active.y;
+    else if (lock.side === "W") distanceFromEdge = active.x;
+    else if (lock.side === "E") distanceFromEdge = roomPx.w - active.x;
+    if (distanceFromEdge >= releasePx) {
+      caveState.transitionLock = null;
+    }
+  }
+
+  function isCaveV2TransitionSideLocked(caveState, room, side) {
+    const lock = caveState?.transitionLock;
+    if (!lock || !room) return false;
+    return lock.roomId === room.roomId && lock.side === normalizeCaveV2Direction(side);
+  }
+
+  function setCaveV2TransitionLock(caveState, roomId, side) {
+    if (!caveState || !roomId) return;
+    const normalizedSide = normalizeCaveV2Direction(side);
+    if (!normalizedSide) return;
+    caveState.transitionLock = {
+      roomId: String(roomId),
+      side: normalizedSide,
+      releaseDistancePx: CAVE_V2_ROOM_CONFIG.transitionLockReleaseTiles * CONFIG.tileSize,
+    };
+  }
+
+  function syncCaveV2PlayerProxyPosition(x, y) {
+    if (!state.player || !Number.isFinite(x) || !Number.isFinite(y)) return;
+    state.player.x = x;
+    state.player.y = y;
+    state.player.renderX = x;
+    state.player.renderY = y;
+  }
+
   function getCaveV2TransitionSpawnTarget(room, fromSide, currentPos) {
     const roomPx = getCaveV2RoomPixelSize(room);
     const inset = CAVE_V2_ROOM_CONFIG.spawnInsetTiles * CONFIG.tileSize;
@@ -16504,7 +16676,16 @@
     if (!nextRoom) return false;
     const vec = getCaveV2DirVec(dir);
     const roomPx = getCaveV2RoomPixelSize(room);
-    const fromPos = { x: caveState.active.x, y: caveState.active.y };
+    const boundaryPos = { x: caveState.active.x, y: caveState.active.y };
+    const halfTile = CONFIG.tileSize * 0.5;
+    if (dir === "N") boundaryPos.y = halfTile;
+    else if (dir === "S") boundaryPos.y = roomPx.h - halfTile;
+    else if (dir === "W") boundaryPos.x = halfTile;
+    else if (dir === "E") boundaryPos.x = roomPx.w - halfTile;
+    caveState.active.x = boundaryPos.x;
+    caveState.active.y = boundaryPos.y;
+    syncCaveV2PlayerProxyPosition(boundaryPos.x, boundaryPos.y);
+    const fromPos = { x: boundaryPos.x, y: boundaryPos.y };
     const toLocal = getCaveV2TransitionSpawnTarget(nextRoom, dir, fromPos);
     caveState.transitioning = true;
     caveState.transitionT = 0;
@@ -16591,6 +16772,8 @@
         caveState.active.x = tr.toPos.x;
         caveState.active.y = tr.toPos.y;
         cave.activeRoomId = tr.toRoomId;
+        setCaveV2TransitionLock(caveState, tr.toRoomId, getCaveV2OppositeSide(tr.side));
+        syncCaveV2PlayerProxyPosition(tr.toPos.x, tr.toPos.y);
         caveState.transitioning = false;
         caveState.transition = null;
         caveState.transitionT = 0;
@@ -16598,6 +16781,7 @@
       updateCaveV2Prompt();
       if (interactPressed) interactPressed = false;
       attackPressed = false;
+      syncCaveV2PlayerProxyPosition(caveState.active.x, caveState.active.y);
       return;
     }
 
@@ -16630,13 +16814,15 @@
     if (isCaveV2WalkableAt(room, tryX, caveState.active.y)) caveState.active.x = tryX;
     const tryY = clamp(nextY, minPos, maxY);
     if (isCaveV2WalkableAt(room, caveState.active.x, tryY)) caveState.active.y = tryY;
+    syncCaveV2PlayerProxyPosition(caveState.active.x, caveState.active.y);
+    refreshCaveV2TransitionLock(caveState, room);
 
     if (!uiLock && caveState.transitionCooldown <= 0) {
       for (const side of ["N", "S", "E", "W"]) {
         if (!room.exits?.[side]) continue;
+        if (isCaveV2TransitionSideLocked(caveState, room, side)) continue;
         if (!isCaveV2PointInExitLane(room, side, caveState.active.x, caveState.active.y)) continue;
-        const trigger = getCaveV2BoundaryTrigger(room, side);
-        if (!trigger.test(caveState.active.x, caveState.active.y)) continue;
+        if (!isPlayerAtCaveV2Boundary(room, side, caveState.active.x, caveState.active.y)) continue;
         const vec = getCaveV2DirVec(side);
         const toward = (move.x * vec.x) + (move.y * vec.y);
         if (toward <= 0.15) continue;
@@ -16863,6 +17049,41 @@
       ctx.lineWidth = 2;
       ctx.strokeRect(drawX - 1, drawY - 1, roomPx.w + 2, roomPx.h + 2);
     }
+
+    if (state.debugUnlocked) {
+      ctx.save();
+      ctx.strokeStyle = "rgba(170, 220, 255, 0.18)";
+      ctx.lineWidth = 1;
+      ctx.strokeRect(drawX + 0.5, drawY + 0.5, roomPx.w - 1, roomPx.h - 1);
+      for (const side of ["N", "S", "E", "W"]) {
+        if (!room.exits?.[side]) continue;
+        const laneRect = getCaveV2ExitLaneRectPx(room, side);
+        if (laneRect) {
+          ctx.fillStyle = "rgba(118, 196, 255, 0.08)";
+          ctx.strokeStyle = "rgba(118, 196, 255, 0.35)";
+          ctx.fillRect(drawX + laneRect.x, drawY + laneRect.y, laneRect.w, laneRect.h);
+          ctx.strokeRect(drawX + laneRect.x + 0.5, drawY + laneRect.y + 0.5, laneRect.w - 1, laneRect.h - 1);
+        }
+        const depth = getCaveV2BoundaryTriggerDepthPx();
+        ctx.strokeStyle = "rgba(255, 209, 107, 0.38)";
+        ctx.beginPath();
+        if (side === "N") {
+          ctx.moveTo(drawX, drawY + depth);
+          ctx.lineTo(drawX + roomPx.w, drawY + depth);
+        } else if (side === "S") {
+          ctx.moveTo(drawX, drawY + roomPx.h - depth);
+          ctx.lineTo(drawX + roomPx.w, drawY + roomPx.h - depth);
+        } else if (side === "W") {
+          ctx.moveTo(drawX + depth, drawY);
+          ctx.lineTo(drawX + depth, drawY + roomPx.h);
+        } else if (side === "E") {
+          ctx.moveTo(drawX + roomPx.w - depth, drawY);
+          ctx.lineTo(drawX + roomPx.w - depth, drawY + roomPx.h);
+        }
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
   }
 
   function drawCaveV2PlayerAt(screenX, screenY) {
@@ -16895,6 +17116,8 @@
     ctx.fillRect(0, 0, viewWidth, viewHeight);
 
     const base = getCaveV2RoomDrawOrigin(activeRoom);
+    let playerScreenX = base.x + active.x;
+    let playerScreenY = base.y + active.y;
     if (caveState.transitioning && caveState.transition) {
       const tr = caveState.transition;
       const fromRoom = cave.roomsById[tr.fromRoomId];
@@ -16906,7 +17129,8 @@
       if (toRoom) drawCaveV2Room(toRoom, base.x + (tr.vec.x * tr.roomPxW) - panX, base.y + (tr.vec.y * tr.roomPxH) - panY, cave, true);
       const px = lerp(tr.fromPos.x, tr.toPos.x + (tr.vec.x * tr.roomPxW), e) - panX;
       const py = lerp(tr.fromPos.y, tr.toPos.y + (tr.vec.y * tr.roomPxH), e) - panY;
-      drawCaveV2PlayerAt(base.x + px, base.y + py);
+      playerScreenX = base.x + px;
+      playerScreenY = base.y + py;
       const overlayAlpha = (1 - Math.abs((e * 2) - 1)) * 0.08;
       if (overlayAlpha > 0.005) {
         ctx.fillStyle = `rgba(0,0,0,${overlayAlpha})`;
@@ -16914,17 +17138,56 @@
       }
     } else {
       drawCaveV2Room(activeRoom, base.x, base.y, cave, true);
-      drawCaveV2PlayerAt(base.x + active.x, base.y + active.y);
+      playerScreenX = base.x + active.x;
+      playerScreenY = base.y + active.y;
     }
 
-    // Mild cave vignette centered on room/player area, still very playable
-    const vx = base.x + (caveState.transitioning && caveState.transition ? (caveState.transition.fromPos.x || active.x) : active.x);
-    const vy = base.y + (caveState.transitioning && caveState.transition ? (caveState.transition.fromPos.y || active.y) : active.y);
+    // Mild cave vignette (drawn before player so it never hides the player sprite)
+    const vx = playerScreenX;
+    const vy = playerScreenY;
     const vignette = ctx.createRadialGradient(vx, vy, 50, vx, vy, Math.max(viewWidth, viewHeight) * 0.6);
     vignette.addColorStop(0, "rgba(0,0,0,0)");
-    vignette.addColorStop(1, "rgba(0,0,0,0.28)");
+    vignette.addColorStop(1, "rgba(0,0,0,0.22)");
     ctx.fillStyle = vignette;
     ctx.fillRect(0, 0, viewWidth, viewHeight);
+    drawCaveV2PlayerAt(playerScreenX, playerScreenY);
+
+    if (state.debugUnlocked) {
+      const caveLocalX = Number(caveState.active?.x);
+      const caveLocalY = Number(caveState.active?.y);
+      const physicsX = Number(state.player?.x);
+      const physicsY = Number(state.player?.y);
+      if (!caveState.transitioning && Number.isFinite(caveLocalX) && Number.isFinite(caveLocalY) && Number.isFinite(physicsX) && Number.isFinite(physicsY)) {
+        const d = Math.hypot(caveLocalX - physicsX, caveLocalY - physicsY);
+        if (d > 0.5) {
+          console.error("[CaveV2] Player render/collision desync", {
+            caveId: active.caveId,
+            roomId: active.roomId,
+            caveLocal: { x: caveLocalX, y: caveLocalY },
+            physics: { x: physicsX, y: physicsY },
+            playerRender: { x: state.player?.renderX, y: state.player?.renderY },
+            delta: d,
+          });
+        }
+      }
+      if (caveState.debugEntryAuditPending && caveState.debugLastEntryAuditKey === `${active.caveId}:${active.roomId}`) {
+        caveState.debugEntryAuditPending = false;
+        console.info("[CaveV2] Entry audit", {
+          caveId: active.caveId,
+          roomId: active.roomId,
+          collisionCenter: { x: caveLocalX, y: caveLocalY },
+          physicsPlayer: { x: physicsX, y: physicsY },
+          playerRenderSource: { x: state.player?.renderX, y: state.player?.renderY },
+          screenDraw: { x: playerScreenX, y: playerScreenY },
+          lightingOverlay: {
+            applied: true,
+            source: "renderCaveV2 radial vignette",
+            drawOrder: "before-player",
+            center: { x: vx, y: vy },
+          },
+        });
+      }
+    }
 
     if (state.debugUnlocked) {
       const exits = activeRoom.exits || {};
@@ -36337,6 +36600,12 @@
     }
     if (isCaveV2Active()) {
       updateCaveV2(dt);
+      // CaveV2 uses room-local player coordinates; keep the canonical player position synced
+      // so shared timers/effects and debug overlays never drift from the visible cave player.
+      const caveV2Active = state.caveV2?.active;
+      if (caveV2Active && Number.isFinite(caveV2Active.x) && Number.isFinite(caveV2Active.y)) {
+        syncCaveV2PlayerProxyPosition(caveV2Active.x, caveV2Active.y);
+      }
       updatePlayerCombatTimers(dt);
       updatePlayerEffects(dt);
       updateRemoteRender(dt);
@@ -39443,27 +39712,48 @@
           ) continue;
           const cx = screenX + CONFIG.tileSize / 2;
           const cy = screenY + CONFIG.tileSize / 2;
-          ctx.fillStyle = "rgba(0,0,0,0.22)";
+          ctx.save();
+          ctx.fillStyle = "rgba(0,0,0,0.2)";
           ctx.beginPath();
-          ctx.ellipse(cx, cy + 7, 10, 4, 0, 0, Math.PI * 2);
+          ctx.ellipse(cx, cy + 8.5, 14, 5, 0, 0, Math.PI * 2);
           ctx.fill();
-          ctx.fillStyle = "rgba(106, 96, 88, 0.95)";
+          const rockGrad = ctx.createRadialGradient(cx - 2, cy - 3, 2, cx, cy + 1, 14);
+          rockGrad.addColorStop(0, "rgba(151, 138, 121, 0.95)");
+          rockGrad.addColorStop(0.7, "rgba(112, 100, 89, 0.97)");
+          rockGrad.addColorStop(1, "rgba(84, 75, 69, 0.98)");
+          ctx.fillStyle = rockGrad;
           ctx.beginPath();
-          ctx.arc(cx, cy, 10, 0, Math.PI * 2);
+          ctx.moveTo(cx - 12, cy + 2);
+          ctx.quadraticCurveTo(cx - 14, cy - 8, cx - 5, cy - 11);
+          ctx.quadraticCurveTo(cx, cy - 13, cx + 5, cy - 11);
+          ctx.quadraticCurveTo(cx + 14, cy - 7, cx + 12, cy + 3);
+          ctx.quadraticCurveTo(cx + 10, cy + 9, cx + 4, cy + 10);
+          ctx.quadraticCurveTo(cx, cy + 12, cx - 5, cy + 10);
+          ctx.quadraticCurveTo(cx - 11, cy + 8, cx - 12, cy + 2);
+          ctx.closePath();
           ctx.fill();
-          ctx.fillStyle = "rgba(135, 123, 112, 0.62)";
-          ctx.beginPath();
-          ctx.arc(cx - 2, cy - 2, 6.2, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.strokeStyle = "rgba(255,255,255,0.14)";
-          ctx.lineWidth = 1.2;
-          ctx.beginPath();
-          ctx.arc(cx, cy, 10, 0, Math.PI * 2);
+          ctx.strokeStyle = "rgba(255,255,255,0.12)";
+          ctx.lineWidth = 1.1;
           ctx.stroke();
-          ctx.fillStyle = "rgba(8, 10, 14, 0.92)";
+          ctx.fillStyle = "rgba(94, 86, 79, 0.7)";
           ctx.beginPath();
-          ctx.ellipse(cx, cy + 1.4, 5.8, 4.4, 0, 0, Math.PI * 2);
+          ctx.arc(cx - 9, cy + 6, 2.1, 0, Math.PI * 2);
+          ctx.arc(cx + 10, cy + 5, 1.9, 0, Math.PI * 2);
+          ctx.arc(cx + 6, cy - 9, 1.6, 0, Math.PI * 2);
           ctx.fill();
+          const mouthGrad = ctx.createRadialGradient(cx, cy + 2, 1, cx, cy + 2, 9.5);
+          mouthGrad.addColorStop(0, "rgba(0,0,0,0.98)");
+          mouthGrad.addColorStop(0.58, "rgba(4,6,10,0.95)");
+          mouthGrad.addColorStop(1, "rgba(0,0,0,0.25)");
+          ctx.fillStyle = mouthGrad;
+          ctx.beginPath();
+          ctx.ellipse(cx, cy + 2.2, 8.3, 6.1, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillStyle = "rgba(255, 228, 176, 0.07)";
+          ctx.beginPath();
+          ctx.ellipse(cx - 1.8, cy - 1.1, 4.3, 2.1, -0.2, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
         }
       }
     }
