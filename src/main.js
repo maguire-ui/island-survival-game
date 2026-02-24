@@ -535,6 +535,26 @@
     "save/load cave persistence: src/main.js -> serializeWorldState, qaValidateSaveRoundTrip, migrate/load save cave restore paths",
   ]);
 
+  const QA_CAVE_FIELD_CLASSIFICATION = Object.freeze([
+    "persistent: save.player.inCave/caveId/caveLayer/returnPosition (loaded safely, ignored while caves disabled)",
+    "persistent: surfaceWorld.caves metadata (id, tx, ty, linkConfig, hostileBlocked, surfaceLinkTargetCaveId)",
+    "persistent: saved cave room payloads in save.caves[*].world/layers (preserved while caves disabled; no regeneration)",
+    "persistent: world seed + islandLayout + biome/island data (must never be mutated by cave disable path)",
+    "runtime: state.activeCave / state.activeCaveLayer / state.inCave / state.returnPosition pointers",
+    "runtime: state.caveTransition / state.cavePassageCooldown / state.cavePassageLock / nearCave prompt state",
+    "runtime: state.world pointer when temporarily pointed at cave room world",
+    "runtime: generated cave room world caches (cave.world / cave.layers[])",
+    "runtime: world.runtimeCaves cave entrance cache used by gameplay/render while caves may be disabled",
+  ]);
+
+  const QA_SAVE_ROOT_SHAPE = Object.freeze([
+    "Save root object keys: version, seed, worldSize, worldLayoutVersion, islandLayout, player, timeOfDay, gameWon, inventory",
+    "Save root object keys: resourceStates, respawnTasks, structures, drops, monsters, animals, villagers, caves",
+    "Save root object key: caveV2 (Phase 2 persistence payload for CaveV2 only; optional/backward-compatible)",
+    "Save versioning: SAVE_VERSION is reused; migrateSave preserves caveV2 when present and defaults null for older versions",
+    "CaveV2 persistence split: room tiles/shades regenerate deterministically; mutable ores/drops/nextDropSeq serialize",
+  ]);
+
   const MP_AUTOTEST_LAST_FAILURE_KEY = "mp_autotest_last_failure";
   const MP_AUTOTEST_LOG_MAX_LINES = 280;
   const MP_AUTOTEST_MESSAGE_LOG_SIZE = 200;
@@ -691,7 +711,24 @@
   });
   const CAVE_ORE_MIN_SPACING_TILES = 2.15;
   const CAVE_DEAD_END_REWARD_MIN_SEPARATION_TILES = 4.8;
-  const CAVES_ENABLED = true;
+  const CAVES_ENABLED = false;
+  const CAVE_V2_ENABLED = true;
+  const CAVE_V2_ROOM_CONFIG = Object.freeze({
+    roomCountMin: 8,
+    roomCountMax: 12,
+    gridRadius: 3,
+    sizeW: 28,
+    sizeH: 18,
+    corridorHalfWidthTiles: 2,
+    transitionDuration: 0.18,
+    transitionCooldown: 0.12,
+    boundaryTriggerDepthTiles: 0.2,
+    spawnInsetTiles: 1.3,
+    oreMinPerRoom: 2,
+    oreMaxPerRoom: 6,
+    oreMinSpacingTiles: 2.35,
+    oreMaxPerRoomWarn: 8,
+  });
 
   const SAVE_KEY = "island_survival_save_v1";
   const SAVE_KEY_PREFIX = "island_survival_seed_save_v1:";
@@ -1948,11 +1985,22 @@
     runCount: 0,
     featureInventoryLogged: false,
     caveChecklistLogged: false,
+    caveFieldClassificationLogged: false,
+    saveSchemaLogged: false,
     passChecklistLogged: false,
     truthMapLogged: false,
+    caveDisableReadinessLogged: false,
     initCallCount: 0,
     gameLoopStartCount: 0,
     caveOrbTraceKeys: new Set(),
+    caveDisabledNetCounters: {
+      sent: 0,
+      recv: 0,
+      activePayloads: 0,
+      types: Object.create(null),
+      recent: [],
+    },
+    caveV2LastRoomSummary: "",
   };
 
   const mpAutotest = {
@@ -2018,6 +2066,7 @@
     nearStation: null,
     nearChest: null,
     nearCave: null,
+    nearCaveV2: null,
     nearHouse: null,
     nearBed: null,
     nearDock: null,
@@ -2032,6 +2081,24 @@
     caveTransition: null,
     cavePassageCooldown: 0,
     cavePassageLock: null,
+    caveV2: {
+      cavesById: Object.create(null),
+      active: null,
+      transitioning: false,
+      transitionT: 0,
+      transition: null,
+      transitionCooldown: 0,
+      targetOreId: null,
+      targetDropId: null,
+      debugLastSummary: "",
+      debugLastRoomStatsKey: "",
+    },
+    caveDisableRecoveryPending: false,
+    caveDisableRecoveryReason: "",
+    caveDisableRecoveryWindow: 0,
+    caveDisableRecoveryTriggered: false,
+    caveDisableRecoveryRunCount: 0,
+    caveDisableRecoveryLastReason: "",
     housePlayer: null,
     spawnTile: null,
     timeOfDay: 0,
@@ -2687,8 +2754,11 @@
       qaRuntime.saveRoundTripTimer = QA_SELF_TEST_CONFIG.saveRoundTripInterval;
       qaRuntime.featureInventoryLogged = false;
       qaRuntime.caveChecklistLogged = false;
+      qaRuntime.caveFieldClassificationLogged = false;
+      qaRuntime.saveSchemaLogged = false;
       qaRuntime.passChecklistLogged = false;
       qaRuntime.truthMapLogged = false;
+      qaRuntime.caveDisableReadinessLogged = false;
     }
     updateMpAutotestControls();
     if (persist) saveUserSettings();
@@ -2719,6 +2789,27 @@
     console.groupEnd();
   }
 
+  function qaLogCaveFieldClassificationOnce() {
+    if (qaRuntime.caveFieldClassificationLogged) return;
+    qaRuntime.caveFieldClassificationLogged = true;
+    console.groupCollapsed("[QA] Cave field classification (persistent vs runtime)");
+    for (let i = 0; i < QA_CAVE_FIELD_CLASSIFICATION.length; i += 1) {
+      console.info(`${i + 1}. ${QA_CAVE_FIELD_CLASSIFICATION[i]}`);
+    }
+    console.groupEnd();
+  }
+
+  function qaLogSaveSchemaOnce() {
+    if (qaRuntime.saveSchemaLogged) return;
+    qaRuntime.saveSchemaLogged = true;
+    console.groupCollapsed("[QA] Save schema + CaveV2 persistence placement");
+    console.info(`SAVE_VERSION=${SAVE_VERSION}`);
+    for (let i = 0; i < QA_SAVE_ROOT_SHAPE.length; i += 1) {
+      console.info(`${i + 1}. ${QA_SAVE_ROOT_SHAPE[i]}`);
+    }
+    console.groupEnd();
+  }
+
   function qaLogVerificationPassesOnce() {
     if (qaRuntime.passChecklistLogged) return;
     qaRuntime.passChecklistLogged = true;
@@ -2735,6 +2826,98 @@
     console.groupCollapsed("[QA] Multiplayer truth map (host-authoritative rules)");
     for (let i = 0; i < QA_MULTIPLAYER_TRUTH_MAP.length; i += 1) {
       console.info(`${i + 1}. ${QA_MULTIPLAYER_TRUTH_MAP[i]}`);
+    }
+    console.groupEnd();
+  }
+
+  function qaPushRecentCaveDisableNetEvent(direction, message) {
+    if (!(qaRuntime.caveDisabledNetCounters && typeof qaRuntime.caveDisabledNetCounters === "object")) return;
+    const counters = qaRuntime.caveDisabledNetCounters;
+    if (!Array.isArray(counters.recent)) counters.recent = [];
+    const type = typeof message?.type === "string" ? message.type : "unknown";
+    const event = {
+      t: Number.isFinite(performance?.now?.()) ? Math.round(performance.now()) : 0,
+      dir: direction,
+      type,
+      caveId: Number.isInteger(message?.caveId) ? message.caveId : null,
+      caveLayer: Number.isFinite(message?.caveLayer) ? normalizeCaveLayerIndex(message.caveLayer) : null,
+    };
+    counters.recent.push(event);
+    while (counters.recent.length > 16) counters.recent.shift();
+  }
+
+  function qaTrackCaveDisabledNetMessage(direction, message) {
+    if (CAVES_ENABLED || !message || typeof message !== "object") return;
+    if (!state.debugUnlocked) return;
+    if (!(qaRuntime.caveDisabledNetCounters && typeof qaRuntime.caveDisabledNetCounters === "object")) return;
+    const counters = qaRuntime.caveDisabledNetCounters;
+    const type = typeof message.type === "string" ? message.type : "unknown";
+    let caveActivePayload = false;
+    if (type === "snapshot") {
+      caveActivePayload = (
+        (Array.isArray(message.caves) && message.caves.length > 0)
+        || (Array.isArray(message.players) && message.players.some((p) => p && p.inCave))
+      );
+    } else if (type === "motion") {
+      caveActivePayload = Array.isArray(message.caves) && message.caves.length > 0;
+    } else if (type === "playerUpdate" || type === "welcome") {
+      caveActivePayload = !!message.inCave || Number.isInteger(message.caveId) || (Number(message.caveLayer) || 0) !== 0;
+      if (!caveActivePayload && message.playerState && typeof message.playerState === "object") {
+        caveActivePayload = !!message.playerState.inCave
+          || Number.isInteger(message.playerState.caveId)
+          || (Number(message.playerState.caveLayer) || 0) !== 0;
+      }
+      if (!caveActivePayload && message.snapshot) {
+        caveActivePayload = Array.isArray(message.snapshot.caves) && message.snapshot.caves.length > 0;
+      }
+    } else {
+      caveActivePayload = !!message.inCave || Number.isInteger(message.caveId) || (Number(message.caveLayer) || 0) !== 0;
+    }
+    if (!caveActivePayload) return;
+    if (direction === "send") counters.sent = (Number(counters.sent) || 0) + 1;
+    else counters.recv = (Number(counters.recv) || 0) + 1;
+    counters.activePayloads = (Number(counters.activePayloads) || 0) + 1;
+    counters.types[type] = (Number(counters.types[type]) || 0) + 1;
+    qaPushRecentCaveDisableNetEvent(direction, message);
+  }
+
+  function getCaveDisableReadinessSnapshot() {
+    const surface = state.surfaceWorld || state.world || null;
+    const persistentCaves = Array.isArray(surface?.caves) ? surface.caves : [];
+    const runtimeCaves = getRuntimeCaveEntrances(surface);
+    const staleWorldPointer = !!(
+      !CAVES_ENABLED
+      && state.world
+      && isCaveWorldInstance(state.world)
+      && state.world !== state.surfaceWorld
+    );
+    return {
+      cavesEnabled: !!CAVES_ENABLED,
+      saveVersion: SAVE_VERSION,
+      persistentSurfaceCaveEntrances: persistentCaves.length,
+      runtimeSurfaceCaveEntrances: Array.isArray(runtimeCaves) ? runtimeCaves.length : 0,
+      staleCaveWorldPointer: staleWorldPointer,
+      recoveryTriggeredThisSession: !!state.caveDisableRecoveryTriggered,
+      recoveryRunCount: Number(state.caveDisableRecoveryRunCount) || 0,
+      recoveryLastReason: state.caveDisableRecoveryLastReason || "",
+      recoveryPending: !!state.caveDisableRecoveryPending,
+      recoveryWindow: Number(state.caveDisableRecoveryWindow || 0).toFixed(2),
+      netEnabled: !!net.enabled,
+      netRole: net.enabled ? (net.isHost ? "host" : "joiner") : "offline",
+      caveNetMsgsSentWhileDisabled: Number(qaRuntime.caveDisabledNetCounters?.sent) || 0,
+      caveNetMsgsRecvWhileDisabled: Number(qaRuntime.caveDisabledNetCounters?.recv) || 0,
+      caveNetActivePayloadsWhileDisabled: Number(qaRuntime.caveDisabledNetCounters?.activePayloads) || 0,
+    };
+  }
+
+  function qaLogCaveDisableReadinessOnce() {
+    if (qaRuntime.caveDisableReadinessLogged) return;
+    qaRuntime.caveDisableReadinessLogged = true;
+    console.groupCollapsed("[QA] CaveV2 readiness (caves disabled prep)");
+    console.info(getCaveDisableReadinessSnapshot());
+    const recent = qaRuntime.caveDisabledNetCounters?.recent;
+    if (Array.isArray(recent) && recent.length > 0) {
+      console.info("Recent cave-disabled MP payloads", recent);
     }
     console.groupEnd();
   }
@@ -3088,6 +3271,24 @@
     }
   }
 
+  function qaCheckCavesDisabledReadiness(surfaceWorld, issues) {
+    if (CAVES_ENABLED) return;
+    const runtimeCaves = getRuntimeCaveEntrances(surfaceWorld);
+    if (!Array.isArray(runtimeCaves)) {
+      qaPushIssue(issues, "[caves-disabled] runtime cave entrance cache missing");
+    } else if (runtimeCaves.length !== 0) {
+      qaPushIssue(issues, `[caves-disabled] runtime cave entrance cache not empty (${runtimeCaves.length})`);
+    }
+    if (hasStaleDisabledCaveState()) {
+      qaPushIssue(issues, "[caves-disabled] stale cave world/player pointers still active");
+    }
+    const counters = qaRuntime.caveDisabledNetCounters;
+    const activePayloads = Number(counters?.activePayloads) || 0;
+    if (net.enabled && activePayloads > 0) {
+      qaPushIssue(issues, `[caves-disabled] cave-related multiplayer payloads observed while disabled (${activePayloads})`);
+    }
+  }
+
   function qaValidateCaveLinkGraphConfig(linkConfig, label, issues) {
     if (!linkConfig || typeof linkConfig !== "object") {
       qaPushIssue(issues, `[${label}] Missing cave linkConfig`);
@@ -3136,6 +3337,251 @@
     }
     if (roomCount > 1 && seenEdges.size <= 0) {
       qaPushIssue(issues, `[${label}] Cave graph has multiple rooms but no edges`);
+    }
+  }
+
+  function qaCheckCaveV2State(issues) {
+    if (!CAVE_V2_ENABLED) {
+      if (state.caveV2?.active) {
+        qaPushIssue(issues, "[caveV2] CaveV2 active while disabled");
+      }
+      return;
+    }
+    const caveState = getCaveV2State();
+    if (!caveState || typeof caveState !== "object") {
+      qaPushIssue(issues, "[caveV2] Missing caveV2 state");
+      return;
+    }
+    if (!caveState.cavesById || typeof caveState.cavesById !== "object") {
+      qaPushIssue(issues, "[caveV2] cavesById missing");
+      return;
+    }
+
+    for (const [caveId, cave] of Object.entries(caveState.cavesById)) {
+      if (!cave || typeof cave !== "object") {
+        qaPushIssue(issues, `[caveV2:${caveId}] Missing cave object`);
+        continue;
+      }
+      if (!cave.roomsById || typeof cave.roomsById !== "object") {
+        qaPushIssue(issues, `[caveV2:${caveId}] Missing roomsById`);
+        continue;
+      }
+      const roomEntries = Object.entries(cave.roomsById);
+      if (roomEntries.length <= 0) {
+        qaPushIssue(issues, `[caveV2:${caveId}] Empty room graph`);
+        continue;
+      }
+      if (!cave.entryRoomId || !cave.roomsById[cave.entryRoomId]) {
+        qaPushIssue(issues, `[caveV2:${caveId}] Invalid entryRoomId`);
+      }
+
+      let edgeCount = 0;
+      const visited = new Set();
+      const queue = cave.entryRoomId && cave.roomsById[cave.entryRoomId] ? [cave.entryRoomId] : [];
+      while (queue.length > 0) {
+        const roomId = queue.shift();
+        if (visited.has(roomId)) continue;
+        visited.add(roomId);
+        const room = cave.roomsById[roomId];
+        if (!room) continue;
+        if (room.roomId !== roomId) {
+          qaPushIssue(issues, `[caveV2:${caveId}] Room key/id mismatch (${roomId} != ${String(room.roomId)})`);
+          break;
+        }
+        if (room.sizeW !== CAVE_V2_ROOM_CONFIG.sizeW || room.sizeH !== CAVE_V2_ROOM_CONFIG.sizeH) {
+          qaPushIssue(issues, `[caveV2:${caveId}:${roomId}] Room size mismatch`);
+          break;
+        }
+        if (!room.exits || typeof room.exits !== "object") {
+          qaPushIssue(issues, `[caveV2:${caveId}:${roomId}] Missing exits`);
+          break;
+        }
+        for (const side of ["N", "S", "E", "W"]) {
+          const nextId = room.exits[side];
+          if (!nextId) continue;
+          edgeCount += 1;
+          const nextRoom = cave.roomsById[nextId];
+          if (!nextRoom) {
+            qaPushIssue(issues, `[caveV2:${caveId}:${roomId}] Exit ${side} points to missing room ${String(nextId)}`);
+            break;
+          }
+          const opposite = getCaveV2OppositeSide(side);
+          if (!opposite || nextRoom.exits?.[opposite] !== roomId) {
+            qaPushIssue(issues, `[caveV2:${caveId}] Non-bidirectional exit ${roomId}.${side} -> ${nextId}`);
+            break;
+          }
+          if (!visited.has(nextId)) queue.push(nextId);
+        }
+        if (room.generated) {
+          const expectedTileCount = room.sizeW * room.sizeH;
+          if (!Array.isArray(room.tiles) || room.tiles.length !== expectedTileCount) {
+            qaPushIssue(issues, `[caveV2:${caveId}:${roomId}] Tile array size mismatch`);
+            break;
+          }
+          if (room.shades && (!Array.isArray(room.shades) || room.shades.length !== expectedTileCount)) {
+            qaPushIssue(issues, `[caveV2:${caveId}:${roomId}] Shades array size mismatch`);
+            break;
+          }
+          if (!room.entities || !Array.isArray(room.entities.ores) || !Array.isArray(room.entities.mobs) || !Array.isArray(room.entities.drops)) {
+            qaPushIssue(issues, `[caveV2:${caveId}:${roomId}] Missing entity container arrays`);
+            break;
+          }
+          const oreSeen = new Set();
+          for (let i = 0; i < room.entities.ores.length; i += 1) {
+            const ore = room.entities.ores[i];
+            if (!ore) {
+              qaPushIssue(issues, `[caveV2:${caveId}:${roomId}] Null ore entry`);
+              break;
+            }
+            if (!Number.isFinite(ore.x) || !Number.isFinite(ore.y) || !Number.isInteger(ore.tx) || !Number.isInteger(ore.ty)) {
+              qaPushIssue(issues, `[caveV2:${caveId}:${roomId}] Ore has invalid coordinates`);
+              break;
+            }
+            if (!isCaveV2FloorTile(room, ore.tx, ore.ty)) {
+              qaPushIssue(issues, `[caveV2:${caveId}:${roomId}] Ore on non-floor tile (${ore.tx},${ore.ty})`);
+              break;
+            }
+            if (!Number.isFinite(ore.hp) || !Number.isFinite(ore.maxHp)) {
+              qaPushIssue(issues, `[caveV2:${caveId}:${roomId}] Ore HP is non-finite`);
+              break;
+            }
+            if (ore.maxHp <= 0 || ore.hp < -50 || ore.hp > ore.maxHp + 1) {
+              qaPushIssue(issues, `[caveV2:${caveId}:${roomId}] Ore HP out of bounds`);
+              break;
+            }
+            if (!!ore.removed !== !!ore.destroyed) {
+              qaPushIssue(issues, `[caveV2:${caveId}:${roomId}] Ore removed/destroyed flags diverged`);
+              break;
+            }
+            const oreKey = `${ore.tx},${ore.ty}`;
+            if (oreSeen.has(oreKey)) {
+              qaPushIssue(issues, `[caveV2:${caveId}:${roomId}] Duplicate ore tile ${oreKey}`);
+              break;
+            }
+            oreSeen.add(oreKey);
+            for (let j = i + 1; j < room.entities.ores.length; j += 1) {
+              const other = room.entities.ores[j];
+              if (!other || !Number.isInteger(other.tx) || !Number.isInteger(other.ty)) continue;
+              const distTiles = Math.hypot(ore.tx - other.tx, ore.ty - other.ty);
+              if (distTiles + 0.001 < CAVE_V2_ROOM_CONFIG.oreMinSpacingTiles) {
+                qaPushIssue(
+                  issues,
+                  `[caveV2:${caveId}:${roomId}] Ore spacing violation (${ore.tx},${ore.ty}) vs (${other.tx},${other.ty})`
+                );
+                break;
+              }
+            }
+            if (issues.length > 0) break;
+          }
+          if (issues.length > 0) break;
+          const dropSeen = new Set();
+          for (const drop of room.entities.drops) {
+            if (!drop) {
+              qaPushIssue(issues, `[caveV2:${caveId}:${roomId}] Null drop entry`);
+              break;
+            }
+            if (!drop.id) {
+              qaPushIssue(issues, `[caveV2:${caveId}:${roomId}] Drop missing id`);
+              break;
+            }
+            if (dropSeen.has(drop.id)) {
+              qaPushIssue(issues, `[caveV2:${caveId}:${roomId}] Duplicate drop id ${String(drop.id)}`);
+              break;
+            }
+            dropSeen.add(drop.id);
+            if (!Number.isFinite(drop.x) || !Number.isFinite(drop.y)) {
+              qaPushIssue(issues, `[caveV2:${caveId}:${roomId}] Drop has invalid coordinates`);
+              break;
+            }
+            const qty = Math.floor(Number(drop.qty) || 0);
+            if (qty <= 0 || qty > MAX_STACK) {
+              qaPushIssue(issues, `[caveV2:${caveId}:${roomId}] Drop qty invalid`);
+              break;
+            }
+            const tx = Math.floor(drop.x / CONFIG.tileSize);
+            const ty = Math.floor(drop.y / CONFIG.tileSize);
+            if (!isCaveV2FloorTile(room, tx, ty)) {
+              qaPushIssue(issues, `[caveV2:${caveId}:${roomId}] Drop on non-floor tile (${tx},${ty})`);
+              break;
+            }
+          }
+        }
+        if (issues.length > 0) break;
+      }
+      if (issues.length > 0) break;
+      if (visited.size !== roomEntries.length) {
+        qaPushIssue(issues, `[caveV2:${caveId}] Disconnected room graph (${visited.size}/${roomEntries.length} reachable)`);
+        break;
+      }
+      const loopCount = Math.max(0, (edgeCount / 2) - roomEntries.length + 1);
+      if (roomEntries.length >= 6 && loopCount < 2) {
+        qaPushIssue(issues, `[caveV2:${caveId}] Loop count too low (${loopCount} < 2)`);
+        break;
+      } else if (roomEntries.length >= 4 && loopCount < 1) {
+        qaPushIssue(issues, `[caveV2:${caveId}] Missing loop (tree-like graph)`);
+        break;
+      }
+    }
+
+    if (caveState.active) {
+      const active = caveState.active;
+      const cave = caveState.cavesById[active.caveId];
+      const room = cave?.roomsById?.[active.roomId];
+      if (!cave || !room) {
+        qaPushIssue(issues, `[caveV2] Active room missing (${String(active.caveId)}:${String(active.roomId)})`);
+      } else {
+        if (!Number.isFinite(active.x) || !Number.isFinite(active.y)) {
+          qaPushIssue(issues, "[caveV2] Active player room coordinates are non-finite");
+        }
+        const roomPx = getCaveV2RoomPixelSize(room);
+        if (!caveState.transitioning) {
+          const minPos = CONFIG.tileSize * 0.5 - 1;
+          const maxX = roomPx.w - CONFIG.tileSize * 0.5 + 1;
+          const maxY = roomPx.h - CONFIG.tileSize * 0.5 + 1;
+          if (active.x < minPos || active.x > maxX || active.y < minPos || active.y > maxY) {
+            qaPushIssue(issues, "[caveV2] Active player coordinates out of room bounds");
+          }
+        }
+      }
+      if (caveState.transitioning) {
+        const tr = caveState.transition;
+        if (!tr || typeof tr !== "object") {
+          qaPushIssue(issues, "[caveV2] Transitioning without transition payload");
+        } else {
+          if (!Number.isFinite(caveState.transitionT) || caveState.transitionT < -0.01 || caveState.transitionT > 1.01) {
+            qaPushIssue(issues, "[caveV2] transitionT invalid");
+          }
+          if (!Number.isFinite(tr.elapsed) || !Number.isFinite(tr.duration) || tr.duration <= 0) {
+            qaPushIssue(issues, "[caveV2] Transition timing invalid");
+          }
+          if (!Number.isFinite(tr.roomPxW) || !Number.isFinite(tr.roomPxH) || tr.roomPxW <= 0 || tr.roomPxH <= 0) {
+            qaPushIssue(issues, "[caveV2] Transition room pixel size invalid");
+          }
+          if (!Number.isFinite(tr.fromPos?.x) || !Number.isFinite(tr.fromPos?.y) || !Number.isFinite(tr.toPos?.x) || !Number.isFinite(tr.toPos?.y)) {
+            qaPushIssue(issues, "[caveV2] Transition endpoint positions invalid");
+          }
+          const vec = tr.vec || {};
+          const cardinal = (Math.abs(Number(vec.x) || 0) + Math.abs(Number(vec.y) || 0));
+          if (cardinal !== 1) {
+            qaPushIssue(issues, "[caveV2] Transition vector is non-cardinal");
+          }
+        }
+      }
+      const activeRoomForStats = cave?.roomsById?.[active.roomId];
+      if (activeRoomForStats && state.debugUnlocked) {
+        const ores = Array.isArray(activeRoomForStats.entities?.ores) ? activeRoomForStats.entities.ores : [];
+        const drops = Array.isArray(activeRoomForStats.entities?.drops) ? activeRoomForStats.entities.drops : [];
+        const remaining = ores.reduce((sum, ore) => sum + Number(!!ore && !ore.removed && !ore.destroyed), 0);
+        const destroyed = ores.reduce((sum, ore) => sum + Number(!!ore && (ore.removed || ore.destroyed)), 0);
+        const summary = `${String(active.caveId)}:${String(active.roomId)} ores=${remaining}/${ores.length} destroyed=${destroyed} drops=${drops.length}`;
+        if (qaRuntime.caveV2LastRoomSummary !== summary) {
+          qaRuntime.caveV2LastRoomSummary = summary;
+          console.debug(`[QA] CaveV2 room summary ${summary}`);
+        }
+      }
+      if (typeof state.promptText === "string" && /go deeper|layer\s+\d+/i.test(state.promptText)) {
+        qaPushIssue(issues, "[caveV2] Legacy layer/portal prompt text visible");
+      }
     }
   }
 
@@ -3260,6 +3706,7 @@
     }
 
     if (isSurface) {
+      qaCheckCavesDisabledReadiness(world, issues);
       if (state.spawnTile && !isSpawnableTile(world, state.spawnTile.x, state.spawnTile.y)) {
         qaPushIssue(issues, "[surface] Spawn tile is not valid land");
       }
@@ -3660,6 +4107,9 @@
   function qaBuildRuntimeCavePersistenceSignature(surfaceWorld) {
     const caves = Array.isArray(surfaceWorld?.caves) ? surfaceWorld.caves : [];
     const normalized = caves.map((cave) => {
+      if (!CAVES_ENABLED && cave?.persistedSavePayload && typeof cave.persistedSavePayload === "object") {
+        return JSON.parse(qaBuildSavedCavePersistenceSignature([cave.persistedSavePayload]))[0];
+      }
       const generatedEntries = getGeneratedCaveLayerWorldEntries(cave);
       const layerPayloads = generatedEntries.map((entry) => ({
         layer: normalizeCaveLayerIndex(entry.layer),
@@ -3668,12 +4118,14 @@
           includeVillagers: true,
         }),
       }));
-      const fallbackLayerZero = ensureCaveLayerWorld(cave, 0, surfaceWorld);
-      const layerZeroState = layerPayloads.find((entry) => entry.layer === 0)?.world
-        || serializePersistedWorldState(fallbackLayerZero, {
+      let layerZeroState = layerPayloads.find((entry) => entry.layer === 0)?.world;
+      if (!layerZeroState) {
+        const fallbackLayerZero = ensureCaveLayerWorld(cave, 0, surfaceWorld);
+        layerZeroState = serializePersistedWorldState(fallbackLayerZero, {
           includeAnimals: true,
           includeVillagers: true,
         });
+      }
       const layerEntries = layerPayloads.length > 0
         ? layerPayloads
         : [{ layer: 0, world: layerZeroState }];
@@ -3721,6 +4173,89 @@
     return JSON.stringify(normalized);
   }
 
+  function qaNormalizeSavedCaveV2Payload(savedCaveV2) {
+    if (!savedCaveV2 || typeof savedCaveV2 !== "object") return null;
+    const caves = (Array.isArray(savedCaveV2.caves) ? savedCaveV2.caves : []).map((cave) => {
+      const rooms = (Array.isArray(cave?.rooms) ? cave.rooms : []).map((room) => {
+        const ores = (Array.isArray(room?.entities?.ores) ? room.entities.ores : []).map((ore) => ({
+          id: String(ore?.id || ""),
+          kind: String(ore?.oreKind || "iron_ore"),
+          tx: Math.floor(Number(ore?.tx) || 0),
+          ty: Math.floor(Number(ore?.ty) || 0),
+          hp: Math.floor(Number(ore?.hp) || 0),
+          maxHp: Math.floor(Number(ore?.maxHp) || 0),
+          removed: !!ore?.removed,
+          destroyed: !!ore?.destroyed,
+        })).sort((a, b) => a.id.localeCompare(b.id));
+        const drops = (Array.isArray(room?.entities?.drops) ? room.entities.drops : []).map((drop) => ({
+          id: String(drop?.id || ""),
+          itemId: String(normalizeLegacyItemId(drop?.itemId) || ""),
+          qty: Math.floor(Number(drop?.qty) || 0),
+          x: Math.round((Number(drop?.x) || 0) * 100) / 100,
+          y: Math.round((Number(drop?.y) || 0) * 100) / 100,
+        })).sort((a, b) => a.id.localeCompare(b.id));
+        return {
+          roomId: String(room?.roomId || ""),
+          exits: {
+            N: room?.exits?.N || null,
+            S: room?.exits?.S || null,
+            E: room?.exits?.E || null,
+            W: room?.exits?.W || null,
+          },
+          generated: !!room?.generated,
+          oreCount: ores.length,
+          ores,
+          dropCount: drops.length,
+          drops,
+        };
+      }).sort((a, b) => a.roomId.localeCompare(b.roomId));
+      return {
+        caveId: String(cave?.caveId || ""),
+        entrySurfaceKey: String(cave?.entrySurfaceKey || ""),
+        entryRoomId: String(cave?.entryRoomId || ""),
+        activeRoomId: String(cave?.activeRoomId || ""),
+        nextDropSeq: Math.max(1, Math.floor(Number(cave?.nextDropSeq) || 1)),
+        roomCount: rooms.length,
+        rooms,
+      };
+    }).sort((a, b) => a.caveId.localeCompare(b.caveId));
+    const active = savedCaveV2.active && typeof savedCaveV2.active === "object"
+      ? {
+          caveId: String(savedCaveV2.active.caveId || ""),
+          roomId: String(savedCaveV2.active.roomId || ""),
+          x: Math.round((Number(savedCaveV2.active.x) || 0) * 100) / 100,
+          y: Math.round((Number(savedCaveV2.active.y) || 0) * 100) / 100,
+          returnSurfacePos: savedCaveV2.active.returnSurfacePos && Number.isFinite(savedCaveV2.active.returnSurfacePos.x) && Number.isFinite(savedCaveV2.active.returnSurfacePos.y)
+            ? {
+                x: Math.round(savedCaveV2.active.returnSurfacePos.x * 100) / 100,
+                y: Math.round(savedCaveV2.active.returnSurfacePos.y * 100) / 100,
+              }
+            : null,
+        }
+      : null;
+    return {
+      version: Math.floor(Number(savedCaveV2.version) || 0),
+      seed: String(savedCaveV2.seed || ""),
+      caveCount: caves.length,
+      caves,
+      active,
+    };
+  }
+
+  function qaBuildSavedCaveV2PersistenceSignature(savedCaveV2) {
+    const normalized = qaNormalizeSavedCaveV2Payload(savedCaveV2);
+    return normalized ? JSON.stringify(normalized) : "";
+  }
+
+  function qaBuildRuntimeCaveV2PersistenceSignature() {
+    return qaBuildSavedCaveV2PersistenceSignature(serializeCaveV2ForSave());
+  }
+
+  function qaBuildCaveV2StateHashFromSignature(signature) {
+    if (!signature) return "none";
+    return (seedToInt(signature) >>> 0).toString(16).padStart(8, "0");
+  }
+
   function qaValidateSaveRoundTrip(issues) {
     if (netIsClientReady()) return;
     const world = state.surfaceWorld || state.world;
@@ -3736,6 +4271,7 @@
       monsterCount: Array.isArray(world.monsters) ? world.monsters.length : 0,
       caveCount: Array.isArray(world.caves) ? world.caves.length : 0,
       caveSignature: qaBuildRuntimeCavePersistenceSignature(world),
+      caveV2Signature: qaBuildRuntimeCaveV2PersistenceSignature(),
       toolTier: Number(state.player.toolTier) || 1,
     };
     const prevDirty = state.dirty;
@@ -3778,6 +4314,22 @@
     const loadedCaveSignature = qaBuildSavedCavePersistenceSignature(loaded.caves);
     if (loadedCaveSignature !== before.caveSignature) {
       qaPushIssue(issues, "[save/load] Cave resource/drop state mismatch after reload");
+    }
+    if (!CAVES_ENABLED && before.caveCount > 0 && !(Array.isArray(loaded.caves) && loaded.caves.every((cave) => cave && typeof cave === "object"))) {
+      qaPushIssue(issues, "[save/load] Cave-disabled mode failed to preserve cave payload fields");
+    }
+    const loadedCaveV2Signature = qaBuildSavedCaveV2PersistenceSignature(loaded.caveV2);
+    if (loadedCaveV2Signature !== before.caveV2Signature) {
+      qaPushIssue(issues, "[save/load] CaveV2 room ore/drop state mismatch after reload");
+      if (state.debugUnlocked) {
+        console.debug(
+          `[QA] CaveV2 save hash before=${qaBuildCaveV2StateHashFromSignature(before.caveV2Signature)} after=${qaBuildCaveV2StateHashFromSignature(loadedCaveV2Signature)}`
+        );
+      }
+    } else if (state.debugUnlocked && before.caveV2Signature) {
+      console.debug(
+        `[QA] CaveV2 save hash stable=${qaBuildCaveV2StateHashFromSignature(before.caveV2Signature)}`
+      );
     }
     if ((Number(loaded.player?.toolTier) || 1) !== before.toolTier) {
       qaPushIssue(issues, "[save/load] Player tool tier mismatch after reload");
@@ -3862,8 +4414,11 @@
     if (!state.debugUnlocked) return;
     qaLogFeatureInventoryOnce();
     qaLogCaveV2ChecklistOnce();
+    qaLogCaveFieldClassificationOnce();
+    qaLogSaveSchemaOnce();
     qaLogVerificationPassesOnce();
     qaLogMultiplayerTruthMapOnce();
+    qaLogCaveDisableReadinessOnce();
     const step = Math.max(0, Number(dt) || 0);
     qaRuntime.runTimer -= step;
     qaRuntime.saveRoundTripTimer -= step;
@@ -3980,6 +4535,7 @@
     qaCheckFiniteTimer(net.resyncTimer, "net.resyncTimer", issues, -0.5, 300);
     qaCheckPendingRequestLifetimes(issues);
     qaValidateCraftInventoryFullRule(issues);
+    qaCheckCaveV2State(issues);
     qaCheckUniqueNumericIds(state.structures || [], "structures", issues);
     for (const structure of state.structures || []) {
       if (!structure || structure.removed) continue;
@@ -11031,6 +11587,7 @@
 
   function sendToHost(payload) {
     if (net.hostConn && net.hostConn.open) {
+      qaTrackCaveDisabledNetMessage("send", payload);
       net.hostConn.send(payload);
     }
   }
@@ -11038,7 +11595,10 @@
   function broadcastNet(payload, exceptId = null) {
     for (const [peerId, conn] of net.connections.entries()) {
       if (peerId === exceptId) continue;
-      if (conn.open) conn.send(payload);
+      if (conn.open) {
+        qaTrackCaveDisabledNetMessage("send", payload);
+        conn.send(payload);
+      }
     }
   }
 
@@ -11142,6 +11702,7 @@
 
   function handleNetMessage(conn, message) {
     if (!message || typeof message !== "object") return;
+    qaTrackCaveDisabledNetMessage("recv", message);
     if (!net.isHost && conn && conn === net.hostConn) {
       net.lastHostPacketAt = performance.now();
     }
@@ -11785,6 +12346,7 @@
   function buildSnapshot() {
     const surface = state.surfaceWorld || state.world;
     const seq = net.isHost ? nextNetSequence("snapshotSeq") : null;
+    if (!surface) return null;
     const serializeCaveLayers = (cave) => {
       if (!cave) return [];
       return getGeneratedCaveLayerWorldEntries(cave).map((entry) => ({
@@ -11801,7 +12363,7 @@
       isNight: state.isNight,
       gameWon: state.gameWon,
       world: serializeWorldState(surface),
-      caves: surface.caves?.map((cave) => {
+      caves: CAVES_ENABLED ? (surface.caves?.map((cave) => {
         const layers = serializeCaveLayers(cave);
         const layerZeroWorld = layers.find((entry) => normalizeCaveLayerIndex(entry.layer) === 0)?.world
           || serializeWorldState(ensureCaveLayerWorld(cave, 0, surface));
@@ -11816,7 +12378,7 @@
           world: layerZeroWorld,
           layers,
         };
-      }) ?? [],
+      }) ?? []) : [],
       structures: serializeStructuresList(),
       players: getPlayersSnapshot(),
     };
@@ -11945,18 +12507,20 @@
     if (!surface) return null;
     const seq = net.isHost ? nextNetSequence("motionSeq") : null;
     const caveMotions = [];
-    for (const cave of surface.caves ?? []) {
-      if (!cave) continue;
-      for (const layerEntry of getGeneratedCaveLayerWorldEntries(cave)) {
-        const layer = normalizeCaveLayerIndex(layerEntry.layer);
-        const layerWorld = layerEntry.world;
-        if (!layerWorld) continue;
-        if (getPlayersForWorld(layerWorld).length <= 0) continue;
-        caveMotions.push({
-          id: cave.id,
-          layer,
-          world: serializeWorldMotion(layerWorld),
-        });
+    if (CAVES_ENABLED) {
+      for (const cave of surface.caves ?? []) {
+        if (!cave) continue;
+        for (const layerEntry of getGeneratedCaveLayerWorldEntries(cave)) {
+          const layer = normalizeCaveLayerIndex(layerEntry.layer);
+          const layerWorld = layerEntry.world;
+          if (!layerWorld) continue;
+          if (getPlayersForWorld(layerWorld).length <= 0) continue;
+          caveMotions.push({
+            id: cave.id,
+            layer,
+            world: serializeWorldMotion(layerWorld),
+          });
+        }
       }
     }
     return {
@@ -12363,16 +12927,57 @@
 
   function ensureSurfaceCaves(world, caveEntries) {
     if (!world) return;
-    if (!CAVES_ENABLED) {
-      if (!Array.isArray(world.caves)) {
-        world.caves = [];
-      } else if (world.caves.length > 0) {
-        world.caves = [];
-      }
+    if (!Array.isArray(world.caves)) world.caves = [];
+    if (!Array.isArray(caveEntries)) {
+      refreshRuntimeCaveEntranceCache(world);
       return;
     }
-    if (!Array.isArray(caveEntries)) return;
-    if (!Array.isArray(world.caves)) world.caves = [];
+    if (!CAVES_ENABLED) {
+      const nextCaves = [];
+      for (const entry of caveEntries) {
+        if (!entry || typeof entry.id !== "number") continue;
+        if (typeof entry.tx !== "number" || typeof entry.ty !== "number") continue;
+        const tx = Math.floor(entry.tx);
+        const ty = Math.floor(entry.ty);
+        if (!inBounds(tx, ty, world.size)) continue;
+        const idx = tileIndex(tx, ty, world.size);
+        if (!world.tiles[idx]) continue;
+        const existingById = world.caves.find((cave) => cave && cave.id === entry.id) || null;
+        const cave = existingById || {
+          id: entry.id,
+          tx,
+          ty,
+          spawnedByPlayer: false,
+          hostileBlocked: false,
+          surfaceLinkTargetCaveId: null,
+          seedInt: world.seedInt ?? seedToInt(world.seed || "island"),
+          linkConfig: null,
+          layers: [],
+          world: null,
+        };
+        cave.tx = tx;
+        cave.ty = ty;
+        cave.spawnedByPlayer = !!entry.spawnedByPlayer;
+        cave.hostileBlocked = typeof entry.hostileBlocked === "boolean"
+          ? entry.hostileBlocked
+          : shouldBlockCaveHostilesForSurfaceTile(world, tx, ty);
+        cave.surfaceLinkTargetCaveId = Number.isInteger(entry.surfaceLinkTargetCaveId)
+          ? entry.surfaceLinkTargetCaveId
+          : null;
+        if (entry.linkConfig && typeof entry.linkConfig === "object") {
+          cave.linkConfig = getNormalizedCaveLinkConfig({ ...cave, linkConfig: entry.linkConfig }, world);
+        } else {
+          cave.linkConfig = getNormalizedCaveLinkConfig(cave, world);
+        }
+        cave.layers = [];
+        cave.world = null;
+        cave.persistedSavePayload = entry ? JSON.parse(JSON.stringify(entry)) : null;
+        nextCaves.push(cave);
+      }
+      world.caves = nextCaves;
+      refreshRuntimeCaveEntranceCache(world);
+      return;
+    }
     let caveTopologyChanged = false;
     for (const entry of caveEntries) {
       if (!entry || typeof entry.id !== "number") continue;
@@ -12425,6 +13030,7 @@
     if (caveTopologyChanged) {
       assignSurfaceCaveTunnelLinks(world);
     }
+    refreshRuntimeCaveEntranceCache(world);
   }
 
   function applyNetworkSnapshot(snapshot) {
@@ -12528,7 +13134,8 @@
     ensurePlayerProgress(state.player);
     ensureSurfaceCaves(world, snapshot.caves);
     if (!CAVES_ENABLED) {
-      forceSurfaceFromDisabledCaves();
+      requestCaveDisableRecovery("snapshot-caves-disabled", { windowSeconds: 1.0 });
+      runCaveDisableRecoveryTick(0);
     }
     applyResourceStates(world, snapshot.world?.resourceStates ?? []);
     applyRespawnTasks(world, snapshot.world?.respawnTasks ?? []);
@@ -12601,7 +13208,8 @@
     seedDisplay.textContent = `Seed: ${snapshot.seed}`;
     applyPlayersSnapshot(snapshot.players);
     if (!CAVES_ENABLED) {
-      forceSurfaceFromDisabledCaves();
+      requestCaveDisableRecovery("snapshot-players-caves-disabled", { windowSeconds: 1.0 });
+      runCaveDisableRecoveryTick(0);
     }
     const syncedWorld = getPlayerWorldForSync(
       state.inCave,
@@ -14901,9 +15509,1506 @@
     return state.surfaceWorld || state.world || null;
   }
 
+  function refreshRuntimeCaveEntranceCache(world) {
+    if (!world || typeof world !== "object") return [];
+    const persistent = Array.isArray(world.caves) ? world.caves : [];
+    if (CAVES_ENABLED) {
+      if (world.runtimeCaves !== persistent) world.runtimeCaves = persistent;
+    } else if (!Array.isArray(world.runtimeCaves) || world.runtimeCaves.length > 0) {
+      world.runtimeCaves = [];
+    }
+    return Array.isArray(world.runtimeCaves) ? world.runtimeCaves : [];
+  }
+
+  function getRuntimeCaveEntrances(world) {
+    return refreshRuntimeCaveEntranceCache(world);
+  }
+
+  function isCaveV2Active() {
+    return !!(CAVE_V2_ENABLED && state.caveV2?.active);
+  }
+
+  function getCaveV2State() {
+    if (!state.caveV2 || typeof state.caveV2 !== "object") {
+      state.caveV2 = {
+        cavesById: Object.create(null),
+        active: null,
+        transitioning: false,
+        transitionT: 0,
+        transition: null,
+        transitionCooldown: 0,
+        targetOreId: null,
+        targetDropId: null,
+        debugLastSummary: "",
+      };
+    }
+    if (!state.caveV2.cavesById || typeof state.caveV2.cavesById !== "object") {
+      state.caveV2.cavesById = Object.create(null);
+    }
+    if (!Object.prototype.hasOwnProperty.call(state.caveV2, "targetOreId")) {
+      state.caveV2.targetOreId = null;
+    }
+    if (!Object.prototype.hasOwnProperty.call(state.caveV2, "targetDropId")) {
+      state.caveV2.targetDropId = null;
+    }
+    if (typeof state.caveV2.debugLastRoomStatsKey !== "string") {
+      state.caveV2.debugLastRoomStatsKey = "";
+    }
+    return state.caveV2;
+  }
+
+  function buildCaveV2EntranceSurfaceKey(world, tx, ty) {
+    const seed = String(world?.seed ?? "island");
+    return `${seed}:${tx},${ty}`;
+  }
+
+  function getCaveV2EntranceStableId(world, tx, ty) {
+    const key = buildCaveV2EntranceSurfaceKey(world, tx, ty);
+    return `cv2-${(seedToInt(key) >>> 0).toString(16)}`;
+  }
+
+  function ensureCaveV2RuntimeEntrances(world) {
+    if (!world || typeof world !== "object") return [];
+    if (Array.isArray(world.runtimeCaveV2Entrances)) return world.runtimeCaveV2Entrances;
+    const entrances = [];
+    const sourceCaves = Array.isArray(world.caves) ? world.caves : [];
+    for (const cave of sourceCaves) {
+      if (!cave || !Number.isInteger(cave.tx) || !Number.isInteger(cave.ty)) continue;
+      entrances.push({
+        tx: cave.tx,
+        ty: cave.ty,
+        key: buildCaveV2EntranceSurfaceKey(world, cave.tx, cave.ty),
+        caveId: getCaveV2EntranceStableId(world, cave.tx, cave.ty),
+      });
+    }
+    if (entrances.length === 0 && Array.isArray(world.islands) && world.islands.length > 0) {
+      const starter = world.islands.find((island) => island?.starter) || world.islands[0];
+      if (starter) {
+        const cx = clamp(Math.floor(starter.x), 1, world.size - 2);
+        const cy = clamp(Math.floor(starter.y), 1, world.size - 2);
+        let found = null;
+        for (let r = 0; r <= Math.ceil(starter.radius) + 4 && !found; r += 1) {
+          for (let dy = -r; dy <= r && !found; dy += 1) {
+            for (let dx = -r; dx <= r; dx += 1) {
+              const tx = cx + dx;
+              const ty = cy + dy;
+              if (!inBounds(tx, ty, world.size)) continue;
+              const idx = tileIndex(tx, ty, world.size);
+              if (!world.tiles[idx]) continue;
+              found = { tx, ty };
+              break;
+            }
+          }
+        }
+        if (found) {
+          entrances.push({
+            tx: found.tx,
+            ty: found.ty,
+            key: buildCaveV2EntranceSurfaceKey(world, found.tx, found.ty),
+            caveId: getCaveV2EntranceStableId(world, found.tx, found.ty),
+          });
+        }
+      }
+    }
+    world.runtimeCaveV2Entrances = entrances;
+    return world.runtimeCaveV2Entrances;
+  }
+
+  function getRuntimeCaveV2Entrances(world) {
+    return ensureCaveV2RuntimeEntrances(world);
+  }
+
+  function findNearestCaveV2Entrance(world, player) {
+    if (!CAVE_V2_ENABLED || !world || !player) return null;
+    const entrances = getRuntimeCaveV2Entrances(world);
+    let best = null;
+    let bestDist = Infinity;
+    for (const entry of entrances) {
+      if (!entry) continue;
+      const x = (entry.tx + 0.5) * CONFIG.tileSize;
+      const y = (entry.ty + 0.5) * CONFIG.tileSize;
+      const dist = Math.hypot(player.x - x, player.y - y);
+      if (dist < CONFIG.interactRange && dist < bestDist) {
+        best = entry;
+        bestDist = dist;
+      }
+    }
+    if (!best) return null;
+    return { ...best, dist: bestDist };
+  }
+
+  function caveV2RoomTileIndex(tx, ty, room) {
+    return tileIndex(tx, ty, room.sizeW);
+  }
+
+  function getCaveV2RoomPixelSize(room) {
+    return {
+      w: room.sizeW * CONFIG.tileSize,
+      h: room.sizeH * CONFIG.tileSize,
+    };
+  }
+
+  function normalizeCaveV2Direction(side) {
+    if (side === "N" || side === "S" || side === "E" || side === "W") return side;
+    return null;
+  }
+
+  function getCaveV2DirVec(side) {
+    switch (normalizeCaveV2Direction(side)) {
+      case "N": return { x: 0, y: -1 };
+      case "S": return { x: 0, y: 1 };
+      case "E": return { x: 1, y: 0 };
+      case "W": return { x: -1, y: 0 };
+      default: return { x: 0, y: 0 };
+    }
+  }
+
+  function getCaveV2OppositeSide(side) {
+    switch (normalizeCaveV2Direction(side)) {
+      case "N": return "S";
+      case "S": return "N";
+      case "E": return "W";
+      case "W": return "E";
+      default: return null;
+    }
+  }
+
+  function getCaveV2ExitCenterTile(room, side) {
+    const half = CAVE_V2_ROOM_CONFIG.corridorHalfWidthTiles;
+    const cx = Math.floor(room.sizeW / 2);
+    const cy = Math.floor(room.sizeH / 2);
+    if (side === "N") return { tx: cx, ty: 0, laneMin: cx - half, laneMax: cx + half };
+    if (side === "S") return { tx: cx, ty: room.sizeH - 1, laneMin: cx - half, laneMax: cx + half };
+    if (side === "W") return { tx: 0, ty: cy, laneMin: cy - half, laneMax: cy + half };
+    if (side === "E") return { tx: room.sizeW - 1, ty: cy, laneMin: cy - half, laneMax: cy + half };
+    return null;
+  }
+
+  function carveCaveV2Rect(room, x0, y0, x1, y1) {
+    const minX = clamp(Math.min(x0, x1), 0, room.sizeW - 1);
+    const maxX = clamp(Math.max(x0, x1), 0, room.sizeW - 1);
+    const minY = clamp(Math.min(y0, y1), 0, room.sizeH - 1);
+    const maxY = clamp(Math.max(y0, y1), 0, room.sizeH - 1);
+    for (let y = minY; y <= maxY; y += 1) {
+      for (let x = minX; x <= maxX; x += 1) {
+        room.tiles[caveV2RoomTileIndex(x, y, room)] = 1;
+      }
+    }
+  }
+
+  function generateCaveV2RoomTiles(room, rng) {
+    room.tiles = new Array(room.sizeW * room.sizeH).fill(0);
+    const cx = Math.floor(room.sizeW / 2);
+    const cy = Math.floor(room.sizeH / 2);
+    carveCaveV2Rect(room, cx - 4, cy - 3, cx + 4, cy + 3);
+    for (let i = 0; i < 3; i += 1) {
+      const ox = Math.floor((rng() - 0.5) * 8);
+      const oy = Math.floor((rng() - 0.5) * 6);
+      const rw = 2 + Math.floor(rng() * 4);
+      const rh = 2 + Math.floor(rng() * 3);
+      carveCaveV2Rect(room, cx + ox - rw, cy + oy - rh, cx + ox + rw, cy + oy + rh);
+    }
+    for (const side of ["N", "S", "E", "W"]) {
+      if (!room.exits[side]) continue;
+      const half = CAVE_V2_ROOM_CONFIG.corridorHalfWidthTiles;
+      if (side === "N") carveCaveV2Rect(room, cx - half, 0, cx + half, cy);
+      else if (side === "S") carveCaveV2Rect(room, cx - half, cy, cx + half, room.sizeH - 1);
+      else if (side === "W") carveCaveV2Rect(room, 0, cy - half, cx, cy + half);
+      else if (side === "E") carveCaveV2Rect(room, cx, cy - half, room.sizeW - 1, cy + half);
+    }
+    room.shades = new Array(room.tiles.length).fill(0);
+    for (let y = 0; y < room.sizeH; y += 1) {
+      for (let x = 0; x < room.sizeW; x += 1) {
+        const idx = caveV2RoomTileIndex(x, y, room);
+        if (!room.tiles[idx]) continue;
+        room.shades[idx] = 0.85 + (rng() - 0.5) * 0.18;
+      }
+    }
+  }
+
+  function isCaveV2FloorTile(room, tx, ty) {
+    if (!room || !Number.isInteger(tx) || !Number.isInteger(ty)) return false;
+    if (tx < 0 || ty < 0 || tx >= room.sizeW || ty >= room.sizeH) return false;
+    return !!room.tiles[caveV2RoomTileIndex(tx, ty, room)];
+  }
+
+  function isCaveV2OrePlacementValid(room, tx, ty, ores, minSpacingTiles) {
+    if (!isCaveV2FloorTile(room, tx, ty)) return false;
+    for (const ore of ores) {
+      if (!ore) continue;
+      const dx = ore.tx - tx;
+      const dy = ore.ty - ty;
+      if ((dx * dx) + (dy * dy) < (minSpacingTiles * minSpacingTiles)) return false;
+    }
+    return true;
+  }
+
+  function populateCaveV2RoomEntities(cave, room, rng, roomDepth = 0) {
+    if (!room || room.generated) return;
+    room.entities = room.entities || { ores: [], mobs: [], drops: [] };
+    room.entities.ores = [];
+    room.entities.mobs = [];
+    room.entities.drops = [];
+
+    const oreCountBase = CAVE_V2_ROOM_CONFIG.oreMinPerRoom + Math.floor(rng() * (CAVE_V2_ROOM_CONFIG.oreMaxPerRoom - CAVE_V2_ROOM_CONFIG.oreMinPerRoom + 1));
+    const oreCount = clamp(oreCountBase + Math.min(1, Math.floor(roomDepth / 3)), 1, CAVE_V2_ROOM_CONFIG.oreMaxPerRoom);
+    const floorTiles = [];
+    for (let y = 1; y < room.sizeH - 1; y += 1) {
+      for (let x = 1; x < room.sizeW - 1; x += 1) {
+        if (!isCaveV2FloorTile(room, x, y)) continue;
+        floorTiles.push({ tx: x, ty: y });
+      }
+    }
+    for (let i = floorTiles.length - 1; i > 0; i -= 1) {
+      const j = Math.floor(rng() * (i + 1));
+      [floorTiles[i], floorTiles[j]] = [floorTiles[j], floorTiles[i]];
+    }
+    const ores = room.entities.ores;
+    for (const tile of floorTiles) {
+      if (ores.length >= oreCount) break;
+      if (!isCaveV2OrePlacementValid(room, tile.tx, tile.ty, ores, CAVE_V2_ROOM_CONFIG.oreMinSpacingTiles)) continue;
+      const id = `${cave.caveId}:${room.roomId}:ore:${ores.length}`;
+      const oreKind = ["coal", "iron_ore", "gold_ore", "emerald", "diamond"][Math.floor(rng() * 5)] || "iron_ore";
+      const baseHp = getResourceBaseHp({ type: "ore", oreKind });
+      ores.push({
+        id,
+        type: "ore",
+        oreKind,
+        tx: tile.tx,
+        ty: tile.ty,
+        x: (tile.tx + 0.5) * CONFIG.tileSize,
+        y: (tile.ty + 0.5) * CONFIG.tileSize,
+        hp: baseHp,
+        maxHp: baseHp,
+        removed: false,
+        destroyed: false,
+        hitTimer: 0,
+      });
+    }
+    room.generated = true;
+  }
+
+  function getCaveV2ActiveOre(room, caveState = null) {
+    const localState = caveState || getCaveV2State();
+    const targetId = localState?.targetOreId;
+    if (!targetId || !room?.entities?.ores) return null;
+    return room.entities.ores.find((ore) => ore && ore.id === targetId) || null;
+  }
+
+  function stabilizeCaveV2Ore(ore) {
+    if (!ore || ore.type !== "ore") return;
+    const baseHp = getResourceBaseHp(ore);
+    if (!Number.isFinite(ore.maxHp) || ore.maxHp < 1) ore.maxHp = baseHp;
+    ore.maxHp = Math.max(baseHp, Math.floor(ore.maxHp));
+    if (!Number.isFinite(ore.hp)) ore.hp = ore.maxHp;
+    ore.hp = clamp(Math.floor(ore.hp), 0, ore.maxHp);
+    if (!Number.isFinite(ore.hitTimer) || ore.hitTimer < 0) ore.hitTimer = 0;
+    ore.removed = !!ore.removed || !!ore.destroyed;
+    ore.destroyed = !!ore.destroyed || !!ore.removed;
+  }
+
+  function findNearestCaveV2Ore(room, x, y, range = CONFIG.interactRange) {
+    if (!room?.entities?.ores) return null;
+    let best = null;
+    let bestDist = Infinity;
+    for (const ore of room.entities.ores) {
+      if (!ore) continue;
+      stabilizeCaveV2Ore(ore);
+      if (ore.removed || ore.destroyed) continue;
+      const dist = Math.hypot((Number(ore.x) || 0) - x, (Number(ore.y) || 0) - y);
+      if (dist < range && dist < bestDist) {
+        best = ore;
+        bestDist = dist;
+      }
+    }
+    return best ? { ore: best, dist: bestDist } : null;
+  }
+
+  function clampCaveV2DropToFloor(room, drop) {
+    if (!room || !drop || !Number.isFinite(drop.x) || !Number.isFinite(drop.y)) return false;
+    const tile = CONFIG.tileSize;
+    const tx = Math.floor(drop.x / tile);
+    const ty = Math.floor(drop.y / tile);
+    if (isCaveV2FloorTile(room, tx, ty)) return true;
+    const originTx = clamp(tx, 1, room.sizeW - 2);
+    const originTy = clamp(ty, 1, room.sizeH - 2);
+    for (let radius = 0; radius <= 3; radius += 1) {
+      for (let dy = -radius; dy <= radius; dy += 1) {
+        for (let dx = -radius; dx <= radius; dx += 1) {
+          if (Math.max(Math.abs(dx), Math.abs(dy)) !== radius) continue;
+          const nx = originTx + dx;
+          const ny = originTy + dy;
+          if (!isCaveV2FloorTile(room, nx, ny)) continue;
+          drop.x = (nx + 0.5) * tile;
+          drop.y = (ny + 0.5) * tile;
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  function createCaveV2OreDrops(cave, room, ore, itemId, qty) {
+    if (!cave || !room || !ore || !itemId) return 0;
+    room.entities = room.entities || { ores: [], mobs: [], drops: [] };
+    room.entities.drops = Array.isArray(room.entities.drops) ? room.entities.drops : [];
+    const count = clamp(Math.floor(Number(qty) || 0), 1, 8);
+    cave.nextDropSeq = Math.max(1, Math.floor(Number(cave.nextDropSeq) || 1));
+    let created = 0;
+    for (let i = 0; i < count; i += 1) {
+      const angle = ((cave.nextDropSeq * 1.61803398875) + i * 0.83) % (Math.PI * 2);
+      const radius = 4 + ((cave.nextDropSeq + i) % 6);
+      const drop = {
+        id: `${cave.caveId}:${room.roomId}:drop:${ore.id}:${cave.nextDropSeq}:${i}`,
+        itemId,
+        qty: 1,
+        x: (Number(ore.x) || 0) + Math.cos(angle) * radius,
+        y: (Number(ore.y) || 0) + Math.sin(angle) * radius,
+      };
+      cave.nextDropSeq += 1;
+      if (!clampCaveV2DropToFloor(room, drop)) {
+        drop.x = Number(ore.x) || 0;
+        drop.y = Number(ore.y) || 0;
+        if (!clampCaveV2DropToFloor(room, drop)) continue;
+      }
+      room.entities.drops.push(drop);
+      created += 1;
+    }
+    return created;
+  }
+
+  function attemptHarvestCaveV2Ore(cave, room, ore) {
+    if (!cave || !room || !ore || ore.removed || ore.destroyed) return false;
+    stabilizeCaveV2Ore(ore);
+    const gate = canHarvestResource(ore);
+    if (!gate.ok) {
+      setPrompt(gate.reason, 1.1);
+      return false;
+    }
+    const damage = getAppliedHarvestDamage(state.player, ore);
+    const prevHp = ore.hp;
+    let applied = Math.max(1, Math.floor(Number(damage) || 1));
+    if (ore.hp === ore.maxHp && ore.maxHp > 1) {
+      applied = Math.min(applied, Math.max(1, ore.maxHp - 1));
+    }
+    ore.hp = Math.max(0, ore.hp - applied);
+    ore.hitTimer = 0.18;
+    const broke = ore.hp <= 0;
+    playSfx(broke ? "oreBreak" : "oreHit");
+    if (broke) {
+      ore.hp = 0;
+      ore.removed = true;
+      ore.destroyed = true;
+      const dropId = getResourceDropId(ore);
+      const dropQty = getResourceDropQty(ore);
+      if (dropId && dropQty > 0) {
+        createCaveV2OreDrops(cave, room, ore, dropId, dropQty);
+      }
+      setPrompt(`Mined ${ORE_LABELS[ore.oreKind] || "Ore"}`, 0.9);
+    } else if (prevHp !== ore.hp) {
+      markDirty();
+    }
+    if (broke) markDirty();
+    return true;
+  }
+
+  function pickupCaveV2RoomDrops(cave, room, active) {
+    if (!cave || !room?.entities?.drops || !active || !Array.isArray(state.inventory)) return false;
+    let inventoryChanged = false;
+    let pickedAny = false;
+    const pickupRange = CONFIG.interactRange * 0.8;
+    for (let i = room.entities.drops.length - 1; i >= 0; i -= 1) {
+      const drop = room.entities.drops[i];
+      if (!drop || !drop.itemId || !Number.isFinite(drop.x) || !Number.isFinite(drop.y)) continue;
+      const qty = Math.max(0, Math.floor(Number(drop.qty) || 0));
+      if (qty <= 0) {
+        room.entities.drops.splice(i, 1);
+        continue;
+      }
+      const dist = Math.hypot(drop.x - active.x, drop.y - active.y);
+      if (dist > pickupRange) continue;
+      const beforeQty = qty;
+      const remaining = addItem(state.inventory, drop.itemId, qty);
+      const added = beforeQty - remaining;
+      if (added <= 0) continue;
+      pickedAny = true;
+      inventoryChanged = true;
+      if (remaining > 0) {
+        drop.qty = remaining;
+      } else {
+        room.entities.drops.splice(i, 1);
+      }
+    }
+    if (inventoryChanged) {
+      updateAllSlotUI();
+      markDirty();
+    }
+    if (pickedAny) {
+      cave.lastPickupAt = performance.now ? performance.now() : Date.now();
+    }
+    return pickedAny;
+  }
+
+  function buildCaveV2RoomGraph(seedKey) {
+    const rng = makeRng(seedToInt(seedKey));
+    const targetCount = CAVE_V2_ROOM_CONFIG.roomCountMin
+      + Math.floor(rng() * (CAVE_V2_ROOM_CONFIG.roomCountMax - CAVE_V2_ROOM_CONFIG.roomCountMin + 1));
+    const radius = CAVE_V2_ROOM_CONFIG.gridRadius;
+    const occupied = new Map();
+    const edges = new Map();
+    const entryKey = "0,0";
+    occupied.set(entryKey, { gx: 0, gy: 0 });
+    const treeEdges = new Set();
+
+    function coordKey(x, y) { return `${x},${y}`; }
+    function neighborsOf(x, y) {
+      return [
+        { side: "N", x, y: y - 1 },
+        { side: "S", x, y: y + 1 },
+        { side: "W", x: x - 1, y },
+        { side: "E", x: x + 1, y },
+      ].filter((n) => Math.abs(n.x) <= radius && Math.abs(n.y) <= radius);
+    }
+    function edgeKey(a, b) {
+      return a < b ? `${a}|${b}` : `${b}|${a}`;
+    }
+    function connect(aKey, bKey) {
+      if (!edges.has(aKey)) edges.set(aKey, new Set());
+      if (!edges.has(bKey)) edges.set(bKey, new Set());
+      edges.get(aKey).add(bKey);
+      edges.get(bKey).add(aKey);
+    }
+
+    while (occupied.size < targetCount) {
+      const existing = Array.from(occupied.values());
+      const parent = existing[Math.floor(rng() * existing.length)];
+      const neighbors = neighborsOf(parent.gx, parent.gy);
+      for (let i = neighbors.length - 1; i > 0; i -= 1) {
+        const j = Math.floor(rng() * (i + 1));
+        [neighbors[i], neighbors[j]] = [neighbors[j], neighbors[i]];
+      }
+      let placed = false;
+      for (const n of neighbors) {
+        const key = coordKey(n.x, n.y);
+        if (occupied.has(key)) continue;
+        occupied.set(key, { gx: n.x, gy: n.y });
+        connect(coordKey(parent.gx, parent.gy), key);
+        treeEdges.add(edgeKey(coordKey(parent.gx, parent.gy), key));
+        placed = true;
+        break;
+      }
+      if (!placed) break;
+    }
+
+    const allAdjPairs = [];
+    for (const room of occupied.values()) {
+      const aKey = coordKey(room.gx, room.gy);
+      for (const n of neighborsOf(room.gx, room.gy)) {
+        const bKey = coordKey(n.x, n.y);
+        if (!occupied.has(bKey)) continue;
+        if (aKey >= bKey) continue;
+        allAdjPairs.push([aKey, bKey]);
+      }
+    }
+    for (let i = allAdjPairs.length - 1; i > 0; i -= 1) {
+      const j = Math.floor(rng() * (i + 1));
+      [allAdjPairs[i], allAdjPairs[j]] = [allAdjPairs[j], allAdjPairs[i]];
+    }
+    let loops = Math.max(0, allAdjPairs.length - (occupied.size - 1));
+    // Add at least one explicit loop edge if currently tree-like.
+    if (loops < 1) {
+      for (const [aKey, bKey] of allAdjPairs) {
+        if (edges.get(aKey)?.has(bKey)) continue;
+        connect(aKey, bKey);
+        loops += 1;
+        break;
+      }
+    }
+    // Keep a small number of extra loops for Step 1 without over-densifying,
+    // but prefer at least 2 loops when the graph can support it.
+    const maxLoopCount = Math.max(0, allAdjPairs.length - (occupied.size - 1));
+    let currentLoops = Math.max(
+      0,
+      (Array.from(edges.values()).reduce((sum, set) => sum + set.size, 0) / 2) - (occupied.size - 1)
+    );
+    const targetLoops = maxLoopCount > 0
+      ? Math.min(maxLoopCount, Math.max(2, 2 + Math.floor(rng() * 2)))
+      : 0;
+    for (const [aKey, bKey] of allAdjPairs) {
+      if (currentLoops >= targetLoops) break;
+      if (edges.get(aKey)?.has(bKey)) continue;
+      connect(aKey, bKey);
+      currentLoops += 1;
+    }
+
+    const roomsById = Object.create(null);
+    for (const [key, pos] of occupied.entries()) {
+      const roomId = `r${pos.gx}_${pos.gy}`;
+      roomsById[roomId] = {
+        roomId,
+        gridX: pos.gx,
+        gridY: pos.gy,
+        sizeW: CAVE_V2_ROOM_CONFIG.sizeW,
+        sizeH: CAVE_V2_ROOM_CONFIG.sizeH,
+        tiles: null,
+        shades: null,
+        exits: { N: null, S: null, E: null, W: null },
+        generated: false,
+        entities: { ores: [], mobs: [], drops: [] },
+        decorSeed: (seedToInt(`${seedKey}:${roomId}:decor`) >>> 0),
+      };
+    }
+    for (const room of Object.values(roomsById)) {
+      const aKey = `${room.gridX},${room.gridY}`;
+      const linked = edges.get(aKey) || new Set();
+      for (const bKey of linked) {
+        const target = occupied.get(bKey);
+        if (!target) continue;
+        const dx = target.gx - room.gridX;
+        const dy = target.gy - room.gridY;
+        const targetRoomId = `r${target.gx}_${target.gy}`;
+        if (dx === 1 && dy === 0) room.exits.E = targetRoomId;
+        else if (dx === -1 && dy === 0) room.exits.W = targetRoomId;
+        else if (dx === 0 && dy === 1) room.exits.S = targetRoomId;
+        else if (dx === 0 && dy === -1) room.exits.N = targetRoomId;
+      }
+    }
+    return {
+      roomsById,
+      entryRoomId: "r0_0",
+      roomCount: Object.keys(roomsById).length,
+    };
+  }
+
+  function chooseCaveV2SurfaceExitSideForEntryRoom(room) {
+    const missing = ["S", "N", "E", "W"].find((side) => !room.exits?.[side]);
+    return missing || "S";
+  }
+
+  function generateCaveV2Rooms(cave) {
+    const roomIds = Object.keys(cave.roomsById);
+    const distance = Object.create(null);
+    const queue = [cave.entryRoomId];
+    distance[cave.entryRoomId] = 0;
+    for (let i = 0; i < queue.length; i += 1) {
+      const roomId = queue[i];
+      const room = cave.roomsById[roomId];
+      if (!room) continue;
+      for (const side of ["N", "S", "E", "W"]) {
+        const nextId = room.exits?.[side];
+        if (!nextId || distance[nextId] != null) continue;
+        distance[nextId] = distance[roomId] + 1;
+        queue.push(nextId);
+      }
+    }
+    for (const roomId of roomIds) {
+      const room = cave.roomsById[roomId];
+      const rng = makeRng(seedToInt(`${cave.caveId}:${roomId}`));
+      generateCaveV2RoomTiles(room, rng);
+      populateCaveV2RoomEntities(cave, room, rng, distance[roomId] || 0);
+    }
+    cave.entrySurfaceSide = chooseCaveV2SurfaceExitSideForEntryRoom(cave.roomsById[cave.entryRoomId]);
+  }
+
+  function createCaveV2(surfaceWorld, entrance) {
+    const caveId = entrance.caveId || getCaveV2EntranceStableId(surfaceWorld, entrance.tx, entrance.ty);
+    const entrySurfaceKey = entrance.key || buildCaveV2EntranceSurfaceKey(surfaceWorld, entrance.tx, entrance.ty);
+    const graph = buildCaveV2RoomGraph(`${surfaceWorld?.seed || "island"}|${entrySurfaceKey}`);
+    const cave = {
+      caveId,
+      entrySurfaceKey,
+      entrySurfaceTx: entrance.tx,
+      entrySurfaceTy: entrance.ty,
+      roomsById: graph.roomsById,
+      entryRoomId: graph.entryRoomId,
+      activeRoomId: graph.entryRoomId,
+      nextDropSeq: 1,
+    };
+    generateCaveV2Rooms(cave);
+    return cave;
+  }
+
+  function resetCaveV2RuntimeState() {
+    const caveState = getCaveV2State();
+    caveState.cavesById = Object.create(null);
+    caveState.active = null;
+    caveState.transitioning = false;
+    caveState.transitionT = 0;
+    caveState.transition = null;
+    caveState.transitionCooldown = 0;
+    caveState.targetOreId = null;
+    caveState.targetDropId = null;
+    caveState.debugLastSummary = "";
+    caveState.debugLastRoomStatsKey = "";
+    state.nearCaveV2 = null;
+  }
+
+  function serializeCaveV2RoomForSave(room) {
+    if (!room || typeof room !== "object") return null;
+    const ores = Array.isArray(room.entities?.ores) ? room.entities.ores : [];
+    const drops = Array.isArray(room.entities?.drops) ? room.entities.drops : [];
+    return {
+      roomId: String(room.roomId || ""),
+      gridX: Math.floor(Number(room.gridX) || 0),
+      gridY: Math.floor(Number(room.gridY) || 0),
+      sizeW: Math.floor(Number(room.sizeW) || CAVE_V2_ROOM_CONFIG.sizeW),
+      sizeH: Math.floor(Number(room.sizeH) || CAVE_V2_ROOM_CONFIG.sizeH),
+      exits: {
+        N: room.exits?.N || null,
+        S: room.exits?.S || null,
+        E: room.exits?.E || null,
+        W: room.exits?.W || null,
+      },
+      generated: !!room.generated,
+      decorSeed: Number(room.decorSeed) || 0,
+      entities: {
+        ores: ores.map((ore) => ({
+          id: String(ore?.id || ""),
+          type: "ore",
+          oreKind: String(ore?.oreKind || "iron_ore"),
+          tx: Math.floor(Number(ore?.tx) || 0),
+          ty: Math.floor(Number(ore?.ty) || 0),
+          x: Number(ore?.x) || 0,
+          y: Number(ore?.y) || 0,
+          hp: Number(ore?.hp) || 0,
+          maxHp: Number(ore?.maxHp) || 0,
+          removed: !!ore?.removed,
+          destroyed: !!ore?.destroyed,
+          hitTimer: Math.max(0, Number(ore?.hitTimer) || 0),
+        })),
+        mobs: [],
+        drops: drops.map((drop) => ({
+          id: String(drop?.id || ""),
+          itemId: normalizeLegacyItemId(drop?.itemId),
+          qty: clamp(Math.floor(Number(drop?.qty) || 0), 1, MAX_STACK),
+          x: Number(drop?.x) || 0,
+          y: Number(drop?.y) || 0,
+        })).filter((drop) => isKnownItemId(drop.itemId)),
+      },
+    };
+  }
+
+  function serializeCaveV2ForSave() {
+    const caveState = getCaveV2State();
+    const caves = Object.values(caveState.cavesById || {});
+    if (caves.length <= 0 && !caveState.active) return null;
+    return {
+      version: 1,
+      seed: String(state.surfaceWorld?.seed || state.world?.seed || ""),
+      caves: caves.map((cave) => ({
+        caveId: String(cave?.caveId || ""),
+        entrySurfaceKey: String(cave?.entrySurfaceKey || ""),
+        entrySurfaceTx: Math.floor(Number(cave?.entrySurfaceTx) || 0),
+        entrySurfaceTy: Math.floor(Number(cave?.entrySurfaceTy) || 0),
+        entrySurfaceSide: normalizeCaveV2Direction(cave?.entrySurfaceSide) || "S",
+        entryRoomId: String(cave?.entryRoomId || "r0_0"),
+        activeRoomId: String(cave?.activeRoomId || cave?.entryRoomId || "r0_0"),
+        nextDropSeq: Math.max(1, Math.floor(Number(cave?.nextDropSeq) || 1)),
+        rooms: Object.values(cave?.roomsById || {})
+          .map((room) => serializeCaveV2RoomForSave(room))
+          .filter(Boolean)
+          .sort((a, b) => String(a.roomId).localeCompare(String(b.roomId))),
+      })).filter((entry) => entry.caveId).sort((a, b) => a.caveId.localeCompare(b.caveId)),
+      active: caveState.active
+        ? {
+            caveId: String(caveState.active.caveId || ""),
+            roomId: String(caveState.active.roomId || ""),
+            x: Number(caveState.active.x) || 0,
+            y: Number(caveState.active.y) || 0,
+            returnSurfacePos: caveState.active.returnSurfacePos && Number.isFinite(caveState.active.returnSurfacePos.x) && Number.isFinite(caveState.active.returnSurfacePos.y)
+              ? { x: caveState.active.returnSurfacePos.x, y: caveState.active.returnSurfacePos.y }
+              : null,
+            entrySurfaceKey: String(caveState.active.entrySurfaceKey || ""),
+            entrySurfaceTx: Math.floor(Number(caveState.active.entrySurfaceTx) || 0),
+            entrySurfaceTy: Math.floor(Number(caveState.active.entrySurfaceTy) || 0),
+          }
+        : null,
+    };
+  }
+
+  function createCaveV2RoomFromSave(cave, roomSave) {
+    const roomId = String(roomSave?.roomId || "");
+    if (!roomId) return null;
+    const room = {
+      roomId,
+      gridX: Math.floor(Number(roomSave?.gridX) || 0),
+      gridY: Math.floor(Number(roomSave?.gridY) || 0),
+      sizeW: Math.max(4, Math.floor(Number(roomSave?.sizeW) || CAVE_V2_ROOM_CONFIG.sizeW)),
+      sizeH: Math.max(4, Math.floor(Number(roomSave?.sizeH) || CAVE_V2_ROOM_CONFIG.sizeH)),
+      tiles: null,
+      shades: null,
+      exits: {
+        N: typeof roomSave?.exits?.N === "string" ? roomSave.exits.N : null,
+        S: typeof roomSave?.exits?.S === "string" ? roomSave.exits.S : null,
+        E: typeof roomSave?.exits?.E === "string" ? roomSave.exits.E : null,
+        W: typeof roomSave?.exits?.W === "string" ? roomSave.exits.W : null,
+      },
+      generated: !!roomSave?.generated,
+      entities: { ores: [], mobs: [], drops: [] },
+      decorSeed: Number(roomSave?.decorSeed) || (seedToInt(`${cave.caveId}:${roomId}:decor`) >>> 0),
+    };
+    const roomRng = makeRng(seedToInt(`${cave.caveId}:${roomId}`));
+    generateCaveV2RoomTiles(room, roomRng);
+    const oreSaves = Array.isArray(roomSave?.entities?.ores) ? roomSave.entities.ores : [];
+    room.entities.ores = oreSaves.map((ore) => {
+      const tx = Math.floor(Number(ore?.tx) || 0);
+      const ty = Math.floor(Number(ore?.ty) || 0);
+      const baseX = (tx + 0.5) * CONFIG.tileSize;
+      const baseY = (ty + 0.5) * CONFIG.tileSize;
+      const restored = {
+        id: String(ore?.id || `${cave.caveId}:${roomId}:ore:restored`),
+        type: "ore",
+        oreKind: String(ore?.oreKind || "iron_ore"),
+        tx,
+        ty,
+        x: Number.isFinite(ore?.x) ? Number(ore.x) : baseX,
+        y: Number.isFinite(ore?.y) ? Number(ore.y) : baseY,
+        hp: Number(ore?.hp),
+        maxHp: Number(ore?.maxHp),
+        removed: !!ore?.removed,
+        destroyed: !!ore?.destroyed,
+        hitTimer: Math.max(0, Number(ore?.hitTimer) || 0),
+      };
+      if (!isCaveV2FloorTile(room, restored.tx, restored.ty)) {
+        restored.x = baseX;
+        restored.y = baseY;
+      }
+      stabilizeCaveV2Ore(restored);
+      return restored;
+    });
+    const dropSaves = Array.isArray(roomSave?.entities?.drops) ? roomSave.entities.drops : [];
+    room.entities.drops = [];
+    for (const rawDrop of dropSaves) {
+      const itemId = normalizeLegacyItemId(rawDrop?.itemId);
+      if (!isKnownItemId(itemId)) continue;
+      const drop = {
+        id: String(rawDrop?.id || `${cave.caveId}:${roomId}:drop:restored:${room.entities.drops.length}`),
+        itemId,
+        qty: clamp(Math.floor(Number(rawDrop?.qty) || 0), 1, MAX_STACK),
+        x: Number(rawDrop?.x) || 0,
+        y: Number(rawDrop?.y) || 0,
+      };
+      if (drop.qty <= 0) continue;
+      if (!clampCaveV2DropToFloor(room, drop)) continue;
+      room.entities.drops.push(drop);
+    }
+    room.entities.mobs = [];
+    room.generated = !!roomSave?.generated;
+    return room;
+  }
+
+  function restoreCaveV2FromSave(savedCaveV2, surfaceWorld) {
+    resetCaveV2RuntimeState();
+    if (!CAVE_V2_ENABLED) return;
+    if (!savedCaveV2 || typeof savedCaveV2 !== "object") return;
+    const surfaceSeed = String(surfaceWorld?.seed || "");
+    if (surfaceSeed && savedCaveV2.seed && String(savedCaveV2.seed) !== surfaceSeed) {
+      return;
+    }
+    const caveState = getCaveV2State();
+    const caveSaves = Array.isArray(savedCaveV2.caves) ? savedCaveV2.caves : [];
+    for (const caveSave of caveSaves) {
+      const caveId = String(caveSave?.caveId || "");
+      if (!caveId) continue;
+      const roomsById = Object.create(null);
+      const roomSaves = Array.isArray(caveSave?.rooms) ? caveSave.rooms : [];
+      for (const roomSave of roomSaves) {
+        const room = createCaveV2RoomFromSave({ caveId }, roomSave);
+        if (!room) continue;
+        roomsById[room.roomId] = room;
+      }
+      const entryRoomId = String(caveSave?.entryRoomId || "r0_0");
+      if (!roomsById[entryRoomId]) continue;
+      const cave = {
+        caveId,
+        entrySurfaceKey: String(caveSave?.entrySurfaceKey || ""),
+        entrySurfaceTx: Math.floor(Number(caveSave?.entrySurfaceTx) || 0),
+        entrySurfaceTy: Math.floor(Number(caveSave?.entrySurfaceTy) || 0),
+        entrySurfaceSide: normalizeCaveV2Direction(caveSave?.entrySurfaceSide) || "S",
+        roomsById,
+        entryRoomId,
+        activeRoomId: roomsById[String(caveSave?.activeRoomId || entryRoomId)] ? String(caveSave.activeRoomId || entryRoomId) : entryRoomId,
+        nextDropSeq: Math.max(1, Math.floor(Number(caveSave?.nextDropSeq) || 1)),
+      };
+      caveState.cavesById[caveId] = cave;
+    }
+    const savedActive = savedCaveV2.active && typeof savedCaveV2.active === "object" ? savedCaveV2.active : null;
+    if (!savedActive) return;
+    const cave = caveState.cavesById[String(savedActive.caveId || "")];
+    const room = cave?.roomsById?.[String(savedActive.roomId || "")];
+    if (!cave || !room) return;
+    const roomPx = getCaveV2RoomPixelSize(room);
+    const minPos = CONFIG.tileSize * 0.5;
+    const maxX = roomPx.w - CONFIG.tileSize * 0.5;
+    const maxY = roomPx.h - CONFIG.tileSize * 0.5;
+    caveState.active = {
+      caveId: cave.caveId,
+      roomId: room.roomId,
+      x: clamp(Number(savedActive.x) || roomPx.w * 0.5, minPos, maxX),
+      y: clamp(Number(savedActive.y) || roomPx.h * 0.5, minPos, maxY),
+      returnSurfacePos: savedActive.returnSurfacePos && Number.isFinite(savedActive.returnSurfacePos.x) && Number.isFinite(savedActive.returnSurfacePos.y)
+        ? { x: savedActive.returnSurfacePos.x, y: savedActive.returnSurfacePos.y }
+        : null,
+      entrySurfaceKey: String(savedActive.entrySurfaceKey || cave.entrySurfaceKey || ""),
+      entrySurfaceTx: Math.floor(Number(savedActive.entrySurfaceTx) || cave.entrySurfaceTx || 0),
+      entrySurfaceTy: Math.floor(Number(savedActive.entrySurfaceTy) || cave.entrySurfaceTy || 0),
+    };
+    cave.activeRoomId = room.roomId;
+    caveState.transitioning = false;
+    caveState.transitionT = 0;
+    caveState.transition = null;
+    caveState.transitionCooldown = 0;
+    caveState.targetOreId = null;
+    caveState.targetDropId = null;
+  }
+
+  function getOrCreateCaveV2(surfaceWorld, entrance) {
+    const caveState = getCaveV2State();
+    const caveId = entrance.caveId || getCaveV2EntranceStableId(surfaceWorld, entrance.tx, entrance.ty);
+    if (!caveState.cavesById[caveId]) {
+      caveState.cavesById[caveId] = createCaveV2(surfaceWorld, { ...entrance, caveId });
+    }
+    return caveState.cavesById[caveId];
+  }
+
+  function getCaveV2ActiveRoom() {
+    if (!isCaveV2Active()) return null;
+    const caveState = getCaveV2State();
+    const active = caveState.active;
+    const cave = caveState.cavesById[active.caveId];
+    if (!cave) return null;
+    return cave.roomsById[active.roomId] || null;
+  }
+
+  function getCaveV2EntrySpawnPosition(room, side = "S") {
+    const roomPx = getCaveV2RoomPixelSize(room);
+    const inset = CAVE_V2_ROOM_CONFIG.spawnInsetTiles * CONFIG.tileSize;
+    const centerX = roomPx.w * 0.5;
+    const centerY = roomPx.h * 0.5;
+    if (side === "N") return { x: centerX, y: inset };
+    if (side === "S") return { x: centerX, y: roomPx.h - inset };
+    if (side === "W") return { x: inset, y: centerY };
+    if (side === "E") return { x: roomPx.w - inset, y: centerY };
+    return { x: centerX, y: roomPx.h - inset };
+  }
+
+  function enterCaveV2(entrance) {
+    if (!CAVE_V2_ENABLED || !state.surfaceWorld || !state.player || !entrance) return false;
+    if (net.enabled) {
+      setPrompt("CaveV2 multiplayer sync arrives in Step 2", 1.4);
+      return false;
+    }
+    const caveState = getCaveV2State();
+    const cave = getOrCreateCaveV2(state.surfaceWorld, entrance);
+    const entryRoom = cave.roomsById[cave.entryRoomId];
+    if (!entryRoom) return false;
+    const spawn = getCaveV2EntrySpawnPosition(entryRoom, cave.entrySurfaceSide || "S");
+    cave.activeRoomId = cave.entryRoomId;
+    caveState.active = {
+      caveId: cave.caveId,
+      roomId: cave.entryRoomId,
+      x: spawn.x,
+      y: spawn.y,
+      returnSurfacePos: { x: state.player.x, y: state.player.y },
+      entrySurfaceKey: cave.entrySurfaceKey,
+      entrySurfaceTx: cave.entrySurfaceTx,
+      entrySurfaceTy: cave.entrySurfaceTy,
+    };
+    caveState.transitioning = false;
+    caveState.transitionT = 0;
+    caveState.transition = null;
+    caveState.transitionCooldown = 0.12;
+    caveState.targetOreId = null;
+    caveState.targetDropId = null;
+    state.nearCaveV2 = null;
+    state.promptTimer = 0;
+    state.promptText = "";
+    return true;
+  }
+
+  function leaveCaveV2() {
+    const caveState = getCaveV2State();
+    if (!caveState.active || !state.player) return false;
+    const ret = caveState.active.returnSurfacePos;
+    caveState.active = null;
+    caveState.transitioning = false;
+    caveState.transition = null;
+    caveState.transitionT = 0;
+    caveState.transitionCooldown = 0.18;
+    caveState.targetOreId = null;
+    caveState.targetDropId = null;
+    if (ret && Number.isFinite(ret.x) && Number.isFinite(ret.y)) {
+      state.player.x = ret.x;
+      state.player.y = ret.y;
+      state.player.renderX = ret.x;
+      state.player.renderY = ret.y;
+    }
+    state.promptText = "";
+    state.promptTimer = 0;
+    return true;
+  }
+
+  function isCaveV2WalkableAt(room, px, py) {
+    if (!room || !Array.isArray(room.tiles)) return false;
+    const tx = Math.floor(px / CONFIG.tileSize);
+    const ty = Math.floor(py / CONFIG.tileSize);
+    return isCaveV2FloorTile(room, tx, ty);
+  }
+
+  function isCaveV2PointInExitLane(room, side, px, py) {
+    const info = getCaveV2ExitCenterTile(room, side);
+    if (!info) return false;
+    const tile = CONFIG.tileSize;
+    if (side === "N" || side === "S") {
+      const tx = px / tile;
+      return tx >= info.laneMin && tx <= (info.laneMax + 1);
+    }
+    const ty = py / tile;
+    return ty >= info.laneMin && ty <= (info.laneMax + 1);
+  }
+
+  function getCaveV2BoundaryTrigger(room, side) {
+    const roomPx = getCaveV2RoomPixelSize(room);
+    const halfTile = CONFIG.tileSize * 0.5;
+    const depth = halfTile + (CAVE_V2_ROOM_CONFIG.boundaryTriggerDepthTiles * CONFIG.tileSize);
+    if (side === "N") return { test: (x, y) => y <= depth };
+    if (side === "S") return { test: (x, y) => y >= roomPx.h - depth };
+    if (side === "W") return { test: (x, y) => x <= depth };
+    if (side === "E") return { test: (x, y) => x >= roomPx.w - depth };
+    return { test: () => false };
+  }
+
+  function getCaveV2TransitionSpawnTarget(room, fromSide, currentPos) {
+    const roomPx = getCaveV2RoomPixelSize(room);
+    const inset = CAVE_V2_ROOM_CONFIG.spawnInsetTiles * CONFIG.tileSize;
+    const tile = CONFIG.tileSize;
+    const cx = clamp(currentPos.x, inset, roomPx.w - inset);
+    const cy = clamp(currentPos.y, inset, roomPx.h - inset);
+    if (fromSide === "E") return { x: inset, y: cy };
+    if (fromSide === "W") return { x: roomPx.w - inset, y: cy };
+    if (fromSide === "N") return { x: cx, y: roomPx.h - inset };
+    if (fromSide === "S") return { x: cx, y: inset };
+    return { x: roomPx.w * 0.5, y: roomPx.h * 0.5 };
+  }
+
+  function startCaveV2RoomTransition(side) {
+    const caveState = getCaveV2State();
+    if (!caveState.active || caveState.transitioning) return false;
+    const cave = caveState.cavesById[caveState.active.caveId];
+    const room = cave?.roomsById?.[caveState.active.roomId];
+    if (!cave || !room) return false;
+    const dir = normalizeCaveV2Direction(side);
+    const nextRoomId = room.exits?.[dir] || null;
+    if (!nextRoomId) return false;
+    const nextRoom = cave.roomsById[nextRoomId];
+    if (!nextRoom) return false;
+    const vec = getCaveV2DirVec(dir);
+    const roomPx = getCaveV2RoomPixelSize(room);
+    const fromPos = { x: caveState.active.x, y: caveState.active.y };
+    const toLocal = getCaveV2TransitionSpawnTarget(nextRoom, dir, fromPos);
+    caveState.transitioning = true;
+    caveState.transitionT = 0;
+    caveState.transition = {
+      side: dir,
+      fromRoomId: room.roomId,
+      toRoomId: nextRoomId,
+      duration: CAVE_V2_ROOM_CONFIG.transitionDuration,
+      elapsed: 0,
+      roomPxW: roomPx.w,
+      roomPxH: roomPx.h,
+      vec,
+      fromPos,
+      toPos: toLocal,
+    };
+    caveState.transitionCooldown = CAVE_V2_ROOM_CONFIG.transitionCooldown;
+    return true;
+  }
+
+  function updateCaveV2Prompt() {
+    const caveState = getCaveV2State();
+    if (!caveState.active) return;
+    const cave = caveState.cavesById[caveState.active.caveId];
+    const room = cave?.roomsById?.[caveState.active.roomId];
+    if (!room) return;
+    const roomPx = getCaveV2RoomPixelSize(room);
+    const surfaceSide = cave.entrySurfaceSide || "S";
+    let nearSurfaceExit = false;
+    if (room.roomId === cave.entryRoomId) {
+      const lane = isCaveV2PointInExitLane(room, surfaceSide, caveState.active.x, caveState.active.y);
+      const depth = CAVE_V2_ROOM_CONFIG.boundaryTriggerDepthTiles * CONFIG.tileSize * 2;
+      if (lane) {
+        if (surfaceSide === "N") nearSurfaceExit = caveState.active.y <= depth + CONFIG.tileSize;
+        else if (surfaceSide === "S") nearSurfaceExit = caveState.active.y >= roomPx.h - (depth + CONFIG.tileSize);
+        else if (surfaceSide === "W") nearSurfaceExit = caveState.active.x <= depth + CONFIG.tileSize;
+        else if (surfaceSide === "E") nearSurfaceExit = caveState.active.x >= roomPx.w - (depth + CONFIG.tileSize);
+      }
+    }
+    if (nearSurfaceExit) {
+      setPrompt("Exit to Surface (E)");
+      return;
+    }
+    const targetOre = getCaveV2ActiveOre(room, caveState);
+    if (targetOre && !targetOre.removed && !targetOre.destroyed) {
+      const gate = canHarvestResource(targetOre);
+      if (!gate.ok) setPrompt(gate.reason);
+      else setPrompt(`Press Space / Tap Attack to ${getResourceActionName(targetOre)}`);
+      return;
+    }
+    setPrompt("Explore cave passages");
+  }
+
+  function updateCaveV2(dt) {
+    const caveState = getCaveV2State();
+    if (!caveState.active || !state.player) return;
+
+    state.targetResource = null;
+    state.targetMonster = null;
+    state.targetAnimal = null;
+    state.nearCave = null;
+    state.nearCaveV2 = null;
+    state.nearBench = false;
+    state.nearStation = null;
+    state.nearChest = null;
+    state.nearHouse = null;
+    state.nearBed = null;
+    state.nearDock = null;
+    state.nearShip = null;
+
+    caveState.transitionCooldown = Math.max(0, (Number(caveState.transitionCooldown) || 0) - dt);
+    const cave = caveState.cavesById[caveState.active.caveId];
+    const room = cave?.roomsById?.[caveState.active.roomId];
+    if (!cave || !room) {
+      leaveCaveV2();
+      return;
+    }
+
+    if (caveState.transitioning && caveState.transition) {
+      const tr = caveState.transition;
+      tr.elapsed += dt;
+      caveState.transitionT = clamp(tr.elapsed / Math.max(0.01, tr.duration), 0, 1);
+      if (caveState.transitionT >= 1) {
+        caveState.active.roomId = tr.toRoomId;
+        caveState.active.x = tr.toPos.x;
+        caveState.active.y = tr.toPos.y;
+        cave.activeRoomId = tr.toRoomId;
+        caveState.transitioning = false;
+        caveState.transition = null;
+        caveState.transitionT = 0;
+      }
+      updateCaveV2Prompt();
+      if (interactPressed) interactPressed = false;
+      attackPressed = false;
+      return;
+    }
+
+    for (const ore of room.entities?.ores || []) {
+      if (!ore) continue;
+      stabilizeCaveV2Ore(ore);
+      if (ore.hitTimer > 0) {
+        ore.hitTimer = Math.max(0, ore.hitTimer - dt);
+      }
+    }
+
+    const uiLock = inventoryOpen || !!state.activeStation || !!state.activeChest || !!state.activeShipRepair || state.gameWon;
+    const move = uiLock ? { x: 0, y: 0 } : getMoveVector();
+    const step = CONFIG.moveSpeed * dt * getDebugSpeedMultiplier();
+    if (move.x !== 0 || move.y !== 0) {
+      state.player.facing.x = move.x;
+      state.player.facing.y = move.y;
+    }
+
+    const roomPx = getCaveV2RoomPixelSize(room);
+    const minPos = CONFIG.tileSize * 0.5;
+    const maxX = roomPx.w - CONFIG.tileSize * 0.5;
+    const maxY = roomPx.h - CONFIG.tileSize * 0.5;
+
+    let nextX = caveState.active.x + move.x * step;
+    let nextY = caveState.active.y + move.y * step;
+
+    // simple axis collision against room floor tiles
+    const tryX = clamp(nextX, minPos, maxX);
+    if (isCaveV2WalkableAt(room, tryX, caveState.active.y)) caveState.active.x = tryX;
+    const tryY = clamp(nextY, minPos, maxY);
+    if (isCaveV2WalkableAt(room, caveState.active.x, tryY)) caveState.active.y = tryY;
+
+    if (!uiLock && caveState.transitionCooldown <= 0) {
+      for (const side of ["N", "S", "E", "W"]) {
+        if (!room.exits?.[side]) continue;
+        if (!isCaveV2PointInExitLane(room, side, caveState.active.x, caveState.active.y)) continue;
+        const trigger = getCaveV2BoundaryTrigger(room, side);
+        if (!trigger.test(caveState.active.x, caveState.active.y)) continue;
+        const vec = getCaveV2DirVec(side);
+        const toward = (move.x * vec.x) + (move.y * vec.y);
+        if (toward <= 0.15) continue;
+        if (startCaveV2RoomTransition(side)) break;
+      }
+    }
+
+    const nearestOre = uiLock ? null : findNearestCaveV2Ore(room, caveState.active.x, caveState.active.y, CONFIG.interactRange);
+    caveState.targetOreId = nearestOre?.ore?.id || null;
+    caveState.targetDropId = null;
+    if (!uiLock) {
+      let bestDrop = null;
+      let bestDropDist = Infinity;
+      for (const drop of room.entities?.drops || []) {
+        if (!drop || !Number.isFinite(drop.x) || !Number.isFinite(drop.y) || !drop.itemId) continue;
+        const dist = Math.hypot(drop.x - caveState.active.x, drop.y - caveState.active.y);
+        if (dist < CONFIG.interactRange * 0.8 && dist < bestDropDist) {
+          bestDrop = drop;
+          bestDropDist = dist;
+        }
+      }
+      caveState.targetDropId = bestDrop?.id || null;
+      pickupCaveV2RoomDrops(cave, room, caveState.active);
+    }
+
+    updateCaveV2Prompt();
+
+    if (interactPressed) {
+      if (room.roomId === cave.entryRoomId) {
+        const surfaceSide = cave.entrySurfaceSide || "S";
+        const lane = isCaveV2PointInExitLane(room, surfaceSide, caveState.active.x, caveState.active.y);
+        if (lane) {
+          leaveCaveV2();
+        }
+      }
+      interactPressed = false;
+    }
+    if (attackPressed) {
+      if (!uiLock && caveState.targetOreId) {
+        const targetOre = getCaveV2ActiveOre(room, caveState);
+        if (targetOre) {
+          attemptHarvestCaveV2Ore(cave, room, targetOre);
+        }
+      }
+      attackPressed = false;
+    }
+  }
+
+  function easeInOutCaveV2(t) {
+    const x = clamp(t, 0, 1);
+    return x * x * (3 - (2 * x));
+  }
+
+  function getCaveV2RoomDrawOrigin(room) {
+    const roomPx = getCaveV2RoomPixelSize(room);
+    return {
+      x: Math.floor((viewWidth - roomPx.w) * 0.5),
+      y: Math.floor((viewHeight - roomPx.h) * 0.5),
+    };
+  }
+
+  function drawCaveV2Room(room, drawX, drawY, cave, isActive = false) {
+    if (!room) return;
+    const roomPx = getCaveV2RoomPixelSize(room);
+    ctx.fillStyle = "rgba(18, 14, 12, 0.96)";
+    ctx.fillRect(drawX - 8, drawY - 8, roomPx.w + 16, roomPx.h + 16);
+    const tintJitter = ((room.decorSeed || 0) % 7) - 3;
+    for (let y = 0; y < room.sizeH; y += 1) {
+      for (let x = 0; x < room.sizeW; x += 1) {
+        const idx = caveV2RoomTileIndex(x, y, room);
+        const sx = drawX + x * CONFIG.tileSize;
+        const sy = drawY + y * CONFIG.tileSize;
+        if (room.tiles[idx]) {
+          const shade = Number.isFinite(room.shades?.[idx]) ? room.shades[idx] : 0.9;
+          const r = Math.floor(54 * shade + 8 + tintJitter);
+          const g = Math.floor(44 * shade + 8);
+          const b = Math.floor(38 * shade + 10);
+          ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
+          ctx.fillRect(sx, sy, CONFIG.tileSize, CONFIG.tileSize);
+          const n = ((x * 92821) ^ (y * 68917) ^ (room.decorSeed || 0)) >>> 0;
+          if ((n & 31) === 5) {
+            ctx.fillStyle = "rgba(255,255,255,0.03)";
+            ctx.fillRect(sx + 4 + (n % 5), sy + 5 + ((n >> 3) % 5), 2, 1);
+          }
+          if ((n & 63) === 11) {
+            ctx.strokeStyle = "rgba(0,0,0,0.1)";
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(sx + 4, sy + 6);
+            ctx.lineTo(sx + 10, sy + 10);
+            ctx.stroke();
+          }
+          const leftWall = x > 0 && !room.tiles[caveV2RoomTileIndex(x - 1, y, room)];
+          const upWall = y > 0 && !room.tiles[caveV2RoomTileIndex(x, y - 1, room)];
+          const rightWall = x < room.sizeW - 1 && !room.tiles[caveV2RoomTileIndex(x + 1, y, room)];
+          const downWall = y < room.sizeH - 1 && !room.tiles[caveV2RoomTileIndex(x, y + 1, room)];
+          if (upWall) {
+            ctx.fillStyle = "rgba(255,255,255,0.03)";
+            ctx.fillRect(sx, sy, CONFIG.tileSize, 2);
+          }
+          if (leftWall) {
+            ctx.fillStyle = "rgba(255,255,255,0.018)";
+            ctx.fillRect(sx, sy, 2, CONFIG.tileSize);
+          }
+          if (downWall) {
+            ctx.fillStyle = "rgba(0,0,0,0.07)";
+            ctx.fillRect(sx, sy + CONFIG.tileSize - 2, CONFIG.tileSize, 2);
+          }
+          if (rightWall) {
+            ctx.fillStyle = "rgba(0,0,0,0.06)";
+            ctx.fillRect(sx + CONFIG.tileSize - 2, sy, 2, CONFIG.tileSize);
+          }
+        } else {
+          ctx.fillStyle = "rgba(22, 18, 16, 0.98)";
+          ctx.fillRect(sx, sy, CONFIG.tileSize, CONFIG.tileSize);
+        }
+      }
+    }
+
+    // Entry room daylight spill
+    if (cave && room.roomId === cave.entryRoomId) {
+      const side = cave.entrySurfaceSide || "S";
+      const grad = side === "N" || side === "S"
+        ? ctx.createLinearGradient(0, side === "N" ? drawY : drawY + roomPx.h, 0, side === "N" ? drawY + 90 : drawY + roomPx.h - 90)
+        : ctx.createLinearGradient(side === "W" ? drawX : drawX + roomPx.w, 0, side === "W" ? drawX + 90 : drawX + roomPx.w - 90, 0);
+      grad.addColorStop(0, "rgba(255, 225, 160, 0.14)");
+      grad.addColorStop(1, "rgba(255, 225, 160, 0)");
+      ctx.fillStyle = grad;
+      if (side === "N") ctx.fillRect(drawX, drawY, roomPx.w, 120);
+      else if (side === "S") ctx.fillRect(drawX, drawY + roomPx.h - 120, roomPx.w, 120);
+      else if (side === "W") ctx.fillRect(drawX, drawY, 120, roomPx.h);
+      else ctx.fillRect(drawX + roomPx.w - 120, drawY, 120, roomPx.h);
+    }
+
+    // Surface entrance marker in entry room (simple cave mouth light)
+    if (cave && room.roomId === cave.entryRoomId) {
+      const side = cave.entrySurfaceSide || "S";
+      const c = getCaveV2ExitCenterTile(room, side);
+      if (c) {
+        const mx = drawX + (c.tx + 0.5) * CONFIG.tileSize;
+        const my = drawY + (c.ty + 0.5) * CONFIG.tileSize;
+        ctx.save();
+        ctx.fillStyle = "rgba(0,0,0,0.22)";
+        ctx.beginPath();
+        ctx.ellipse(mx, my + 5, 9, 3, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = "rgba(11, 13, 18, 0.9)";
+        ctx.beginPath();
+        ctx.ellipse(mx, my, 6.8, 4.8, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = "rgba(255, 228, 170, 0.18)";
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
+
+    const caveState = state.caveV2;
+    const activeTargetOreId = isActive ? (caveState?.targetOreId || null) : null;
+    for (const ore of room.entities?.ores || []) {
+      if (!ore || ore.removed || ore.destroyed) continue;
+      const ox = drawX + ore.x;
+      const oy = drawY + ore.y;
+      ctx.fillStyle = "rgba(0,0,0,0.2)";
+      ctx.beginPath();
+      ctx.ellipse(ox, oy + 7, 8, 3, 0, 0, Math.PI * 2);
+      ctx.fill();
+      const color = ORE_COLORS[ore.oreKind] || "#a0a4b1";
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(ox, oy, 10.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "rgba(255,255,255,0.22)";
+      ctx.beginPath();
+      ctx.arc(ox - 3, oy - 3, 3.2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "rgba(0,0,0,0.28)";
+      ctx.lineWidth = 1.2;
+      ctx.stroke();
+      if (ore.hitTimer > 0) {
+        const alpha = clamp(ore.hitTimer / 0.18, 0, 1) * 0.35;
+        ctx.fillStyle = `rgba(255,255,255,${alpha})`;
+        ctx.beginPath();
+        ctx.arc(ox, oy, 12, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      if (activeTargetOreId && ore.id === activeTargetOreId) {
+        ctx.strokeStyle = "rgba(240,248,255,0.7)";
+        ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        ctx.arc(ox, oy, 13.8, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    }
+
+    for (const drop of room.entities?.drops || []) {
+      if (!drop || !drop.itemId || !Number.isFinite(drop.x) || !Number.isFinite(drop.y)) continue;
+      const dx = drawX + drop.x;
+      const dy = drawY + drop.y;
+      const itemVisual = ITEM_VISUALS[drop.itemId];
+      const dropColor = ORE_COLORS[drop.itemId] || itemVisual?.bg || "#8bb0d8";
+      ctx.fillStyle = "rgba(0,0,0,0.17)";
+      ctx.beginPath();
+      ctx.ellipse(dx, dy + 5, 6, 2.4, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = dropColor;
+      ctx.beginPath();
+      ctx.arc(dx, dy, 6.1, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "rgba(255,255,255,0.22)";
+      ctx.beginPath();
+      ctx.arc(dx - 2, dy - 2, 1.8, 0, Math.PI * 2);
+      ctx.fill();
+      if (drop.qty > 1) {
+        ctx.fillStyle = "rgba(240,248,255,0.9)";
+        ctx.font = "10px Trebuchet MS";
+        ctx.textAlign = "center";
+        ctx.fillText(String(drop.qty), dx, dy - 9);
+      }
+    }
+
+    if (isActive) {
+      ctx.strokeStyle = "rgba(255,255,255,0.06)";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(drawX - 1, drawY - 1, roomPx.w + 2, roomPx.h + 2);
+    }
+  }
+
+  function drawCaveV2PlayerAt(screenX, screenY) {
+    const fauxPlayer = {
+      ...state.player,
+      x: screenX,
+      y: screenY,
+      renderX: screenX,
+      renderY: screenY,
+    };
+    drawPlayerAvatar(fauxPlayer, { x: 0, y: 0, scale: 1 }, getLocalPlayerBodyColor(), net.localName);
+  }
+
+  function renderCaveV2() {
+    const caveState = getCaveV2State();
+    const active = caveState.active;
+    if (!active || !state.player) return;
+    const cave = caveState.cavesById[active.caveId];
+    const activeRoom = cave?.roomsById?.[active.roomId];
+    if (!cave || !activeRoom) return;
+
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, viewWidth, viewHeight);
+
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const bg = ctx.createLinearGradient(0, 0, 0, viewHeight);
+    bg.addColorStop(0, "#130f0d");
+    bg.addColorStop(1, "#09090b");
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, viewWidth, viewHeight);
+
+    const base = getCaveV2RoomDrawOrigin(activeRoom);
+    if (caveState.transitioning && caveState.transition) {
+      const tr = caveState.transition;
+      const fromRoom = cave.roomsById[tr.fromRoomId];
+      const toRoom = cave.roomsById[tr.toRoomId];
+      const e = easeInOutCaveV2(caveState.transitionT);
+      const panX = tr.vec.x * tr.roomPxW * e;
+      const panY = tr.vec.y * tr.roomPxH * e;
+      if (fromRoom) drawCaveV2Room(fromRoom, base.x - panX, base.y - panY, cave, false);
+      if (toRoom) drawCaveV2Room(toRoom, base.x + (tr.vec.x * tr.roomPxW) - panX, base.y + (tr.vec.y * tr.roomPxH) - panY, cave, true);
+      const px = lerp(tr.fromPos.x, tr.toPos.x + (tr.vec.x * tr.roomPxW), e) - panX;
+      const py = lerp(tr.fromPos.y, tr.toPos.y + (tr.vec.y * tr.roomPxH), e) - panY;
+      drawCaveV2PlayerAt(base.x + px, base.y + py);
+      const overlayAlpha = (1 - Math.abs((e * 2) - 1)) * 0.08;
+      if (overlayAlpha > 0.005) {
+        ctx.fillStyle = `rgba(0,0,0,${overlayAlpha})`;
+        ctx.fillRect(0, 0, viewWidth, viewHeight);
+      }
+    } else {
+      drawCaveV2Room(activeRoom, base.x, base.y, cave, true);
+      drawCaveV2PlayerAt(base.x + active.x, base.y + active.y);
+    }
+
+    // Mild cave vignette centered on room/player area, still very playable
+    const vx = base.x + (caveState.transitioning && caveState.transition ? (caveState.transition.fromPos.x || active.x) : active.x);
+    const vy = base.y + (caveState.transitioning && caveState.transition ? (caveState.transition.fromPos.y || active.y) : active.y);
+    const vignette = ctx.createRadialGradient(vx, vy, 50, vx, vy, Math.max(viewWidth, viewHeight) * 0.6);
+    vignette.addColorStop(0, "rgba(0,0,0,0)");
+    vignette.addColorStop(1, "rgba(0,0,0,0.28)");
+    ctx.fillStyle = vignette;
+    ctx.fillRect(0, 0, viewWidth, viewHeight);
+
+    if (state.debugUnlocked) {
+      const exits = activeRoom.exits || {};
+      const roomOres = Array.isArray(activeRoom.entities?.ores) ? activeRoom.entities.ores : [];
+      const roomDrops = Array.isArray(activeRoom.entities?.drops) ? activeRoom.entities.drops : [];
+      const remainingOreCount = roomOres.reduce((n, ore) => n + Number(!!ore && !ore.removed && !ore.destroyed), 0);
+      const destroyedOreCount = roomOres.reduce((n, ore) => n + Number(!!ore && (ore.removed || ore.destroyed)), 0);
+      const caveStateText = `CaveV2 ${active.caveId} | ${active.roomId} | exits: ${exits.N ? "N" : "-"}${exits.E ? "E" : "-"}${exits.S ? "S" : "-"}${exits.W ? "W" : "-"} | ores ${remainingOreCount}/${roomOres.length} (x ${destroyedOreCount}) | drops ${roomDrops.length} | transitioning=${caveState.transitioning ? "1" : "0"} cd=${(caveState.transitionCooldown || 0).toFixed(2)}`;
+      caveState.debugLastSummary = caveStateText;
+      ctx.fillStyle = "rgba(5,8,12,0.78)";
+      ctx.fillRect(14, 86, Math.min(viewWidth - 28, 760), 28);
+      ctx.strokeStyle = "rgba(171, 203, 232, 0.22)";
+      ctx.strokeRect(14.5, 86.5, Math.min(viewWidth - 29, 759), 27);
+      ctx.font = "12px Trebuchet MS";
+      ctx.fillStyle = "rgba(230,240,255,0.9)";
+      ctx.textAlign = "left";
+      ctx.fillText(caveStateText, 24, 105);
+    }
+  }
+
+  function hasStaleDisabledCaveState() {
+    if (CAVES_ENABLED) return false;
+    return !!(
+      state.inCave
+      || state.activeCave
+      || (
+        state.world
+        && state.world !== state.surfaceWorld
+        && isCaveWorldInstance(state.world)
+      )
+    );
+  }
+
+  function requestCaveDisableRecovery(reason = "unspecified", options = null) {
+    if (CAVES_ENABLED) return;
+    const windowSeconds = Number.isFinite(options?.windowSeconds)
+      ? clamp(Number(options.windowSeconds), 0, 3)
+      : 1.0;
+    state.caveDisableRecoveryPending = true;
+    state.caveDisableRecoveryReason = String(reason || "unspecified");
+    state.caveDisableRecoveryWindow = Math.max(Number(state.caveDisableRecoveryWindow) || 0, windowSeconds);
+  }
+
+  function runCaveDisableRecoveryTick(dt = 0) {
+    if (CAVES_ENABLED) return;
+    const hadWindow = (Number(state.caveDisableRecoveryWindow) || 0) > 0;
+    if (hadWindow) {
+      state.caveDisableRecoveryWindow = Math.max(0, (Number(state.caveDisableRecoveryWindow) || 0) - Math.max(0, Number(dt) || 0));
+    }
+    const stale = hasStaleDisabledCaveState();
+    if (!state.caveDisableRecoveryPending && !stale && !hadWindow) return;
+    if (!stale) {
+      if (!hadWindow) state.caveDisableRecoveryPending = false;
+      return;
+    }
+    const reason = state.caveDisableRecoveryReason || "stale-disabled-cave-state";
+    const triggered = forceSurfaceFromDisabledCaves();
+    state.caveDisableRecoveryPending = false;
+    if (triggered) {
+      state.caveDisableRecoveryTriggered = true;
+      state.caveDisableRecoveryRunCount = (Number(state.caveDisableRecoveryRunCount) || 0) + 1;
+      state.caveDisableRecoveryLastReason = reason;
+      if (state.surfaceWorld) refreshRuntimeCaveEntranceCache(state.surfaceWorld);
+      if (state.debugUnlocked) {
+        console.info("[QA][CaveDisableRecovery] triggered", {
+          reason,
+          runCount: state.caveDisableRecoveryRunCount,
+          resetWorldToSurface: state.world === state.surfaceWorld,
+          playerInCave: !!state.inCave,
+          activeCave: state.activeCave?.id ?? null,
+        });
+      }
+    }
+  }
+
   function forceSurfaceFromDisabledCaves() {
     if (CAVES_ENABLED) return;
-    if (!state.inCave && !state.activeCave) return;
+    const currentWorldLooksLikeCave = !!(
+      state.world
+      && state.world !== state.surfaceWorld
+      && Number.isInteger(state.world.layerIndex)
+      && Array.isArray(state.world.depthEntrances)
+    );
+    if (!state.inCave && !state.activeCave && !currentWorldLooksLikeCave) return false;
     const surface = state.surfaceWorld || state.world;
     const fallbackPos = state.returnPosition && Number.isFinite(state.returnPosition.x) && Number.isFinite(state.returnPosition.y)
       ? { x: state.returnPosition.x, y: state.returnPosition.y }
@@ -14922,6 +17027,12 @@
     state.caveTransition = null;
     state.cavePassageCooldown = 0;
     state.cavePassageLock = null;
+    state.nearCave = null;
+    state.targetResource = null;
+    state.targetMonster = null;
+    state.targetAnimal = null;
+    state.promptText = "";
+    state.promptTimer = 0;
     if (state.surfaceWorld) state.world = state.surfaceWorld;
     if (state.player && surface) {
       if (fallbackPos) {
@@ -14936,6 +17047,7 @@
         state.player.renderY = state.player.y;
       }
     }
+    return true;
   }
 
   function clampPositionToWorldBounds(world, x, y, fallbackX = null, fallbackY = null) {
@@ -19156,7 +21268,31 @@
       monsters: surfaceState.monsters,
       animals: surfaceState.animals,
       villagers: surfaceState.villagers,
+      caveV2: serializeCaveV2ForSave(),
       caves: surface.caves?.map((cave) => {
+        if (!CAVES_ENABLED) {
+          const preserved = cave?.persistedSavePayload && typeof cave.persistedSavePayload === "object"
+            ? JSON.parse(JSON.stringify(cave.persistedSavePayload))
+            : {};
+          const preservedLayers = Array.isArray(preserved.layers)
+            ? preserved.layers
+            : [];
+          const preservedWorld = preserved.world && typeof preserved.world === "object"
+            ? preserved.world
+            : null;
+          return {
+            ...preserved,
+            id: cave.id,
+            tx: cave.tx,
+            ty: cave.ty,
+            spawnedByPlayer: !!cave.spawnedByPlayer,
+            hostileBlocked: !!cave.hostileBlocked,
+            surfaceLinkTargetCaveId: Number.isInteger(cave.surfaceLinkTargetCaveId) ? cave.surfaceLinkTargetCaveId : null,
+            linkConfig: getNormalizedCaveLinkConfig(cave, surface),
+            world: preservedWorld,
+            layers: preservedLayers,
+          };
+        }
         const generatedEntries = getGeneratedCaveLayerWorldEntries(cave);
         const fallbackLayerZero = ensureCaveLayerWorld(cave, 0, surface);
         const layerPayloads = generatedEntries.map((entry) => ({
@@ -19262,6 +21398,7 @@
         version: SAVE_VERSION,
         seed: normalizeSeedValue(data.seed),
         islandLayout,
+        caveV2: data.caveV2 && typeof data.caveV2 === "object" ? data.caveV2 : null,
         player: {
           ...player,
           inCave: !!player.inCave,
@@ -19300,6 +21437,7 @@
         monsters: Array.isArray(data.monsters) ? data.monsters : [],
         animals: Array.isArray(data.animals) ? data.animals : [],
         villagers: [],
+        caveV2: null,
         caves: [],
       };
     }
@@ -19329,6 +21467,7 @@
         monsters: Array.isArray(data.monsters) ? data.monsters : [],
         animals: Array.isArray(data.animals) ? data.animals : [],
         villagers: [],
+        caveV2: null,
         caves: [],
       };
     }
@@ -19358,6 +21497,7 @@
         monsters: Array.isArray(data.monsters) ? data.monsters : [],
         animals: Array.isArray(data.animals) ? data.animals : [],
         villagers: [],
+        caveV2: null,
         caves: Array.isArray(data.caves) ? data.caves : [],
       };
     }
@@ -19392,6 +21532,7 @@
         monsters: Array.isArray(data.monsters) ? data.monsters : [],
         animals: Array.isArray(data.animals) ? data.animals : [],
         villagers: [],
+        caveV2: null,
         caves: Array.isArray(data.caves) ? data.caves : [],
       };
     }
@@ -19427,6 +21568,7 @@
       monsters: Array.isArray(data.monsters) ? data.monsters : [],
       animals: Array.isArray(data.animals) ? data.animals : [],
       villagers: Array.isArray(data.villagers) ? data.villagers : [],
+      caveV2: data.caveV2 && typeof data.caveV2 === "object" ? data.caveV2 : null,
       caves: Array.isArray(data.caves) ? data.caves : [],
     };
   }
@@ -22595,6 +24737,7 @@
     normalizeSurfaceResources(world);
     state.surfaceWorld = world;
     state.world = world;
+    resetCaveV2RuntimeState();
     state.structures = [];
     state.structureGrid = new Array(world.size * world.size).fill(null);
     state.inCave = false;
@@ -22703,6 +24846,11 @@
     updateTimeUI();
     updateObjectiveUI();
     updateAllSlotUI();
+    refreshRuntimeCaveEntranceCache(world);
+    if (!CAVES_ENABLED) {
+      requestCaveDisableRecovery("new-game", { windowSeconds: 0.8 });
+      runCaveDisableRecoveryTick(0);
+    }
   }
 
   function loadOrCreateGame(preferredSeed = null) {
@@ -22745,8 +24893,25 @@
         seedSurfaceAnimals(world, passiveTargets.baselineAnimals, { rng: restoreAnimalRng, minSpacingTiles: 5.6 });
       }
       ensureSurfaceCaves(world, preparedSave.caves);
+      resetCaveV2RuntimeState();
+      restoreCaveV2FromSave(preparedSave.caveV2, world);
+      const caveV2SavedReturnPos = state.caveV2?.active?.returnSurfacePos
+        && Number.isFinite(state.caveV2.active.returnSurfacePos.x)
+        && Number.isFinite(state.caveV2.active.returnSurfacePos.y)
+        ? { x: state.caveV2.active.returnSurfacePos.x, y: state.caveV2.active.returnSurfacePos.y }
+        : null;
+      // Safer Phase 2 behavior: restore CaveV2 world state, but place the player on surface after load.
+      if (state.caveV2) {
+        state.caveV2.active = null;
+        state.caveV2.transitioning = false;
+        state.caveV2.transition = null;
+        state.caveV2.transitionT = 0;
+        state.caveV2.transitionCooldown = 0;
+        state.caveV2.targetOreId = null;
+        state.caveV2.targetDropId = null;
+      }
 
-      if (Array.isArray(world.caves)) {
+      if (CAVES_ENABLED && Array.isArray(world.caves)) {
         for (const cave of world.caves) {
           const savedCave = preparedSave.caves?.find((entry) => entry.id === cave.id);
           cave.hostileBlocked = savedCave && typeof savedCave.hostileBlocked === "boolean"
@@ -22814,6 +24979,7 @@
           }
         }
       }
+      refreshRuntimeCaveEntranceCache(world);
 
       state.surfaceWorld = world;
       state.world = world;
@@ -22860,8 +25026,8 @@
         restoreAnimalRng
       );
       state.player = {
-        x: preparedSave.player?.x ?? (spawnTile.x + 0.5) * CONFIG.tileSize,
-        y: preparedSave.player?.y ?? (spawnTile.y + 0.5) * CONFIG.tileSize,
+        x: caveV2SavedReturnPos?.x ?? preparedSave.player?.x ?? (spawnTile.x + 0.5) * CONFIG.tileSize,
+        y: caveV2SavedReturnPos?.y ?? preparedSave.player?.y ?? (spawnTile.y + 0.5) * CONFIG.tileSize,
         toolTier: preparedSave.player?.toolTier ?? 1,
         unlocks: normalizeUnlocks(preparedSave.player?.unlocks),
         checkpoint: normalizeCheckpoint(preparedSave.player?.checkpoint) ?? {
@@ -22920,6 +25086,7 @@
       }
 
       if (!CAVES_ENABLED) {
+        requestCaveDisableRecovery("load-save", { windowSeconds: 1.25 });
         state.inCave = false;
         state.activeCave = null;
         state.activeCaveLayer = 0;
@@ -22998,6 +25165,9 @@
         startWinSequence();
       }
       updateAllSlotUI();
+      if (!CAVES_ENABLED) {
+        runCaveDisableRecoveryTick(0);
+      }
       return;
     }
 
@@ -23730,8 +25900,8 @@
   }
 
   function getCaveAt(world, tx, ty) {
-    if (!world?.caves) return null;
-    return world.caves.find((cave) => cave.tx === tx && cave.ty === ty) ?? null;
+    const caves = getRuntimeCaveEntrances(world);
+    return caves.find((cave) => cave.tx === tx && cave.ty === ty) ?? null;
   }
 
   function findOpenSurfaceTileNear(world, startTx, startTy, maxRadius = 8) {
@@ -24155,9 +26325,11 @@
       linkConfig,
       layers: [layerZeroWorld],
       world: layerZeroWorld,
+      persistedSavePayload: null,
     };
     world.caves.push(cave);
     assignSurfaceCaveTunnelLinks(world);
+    refreshRuntimeCaveEntranceCache(world);
     return cave;
   }
 
@@ -33409,7 +35581,12 @@
   }
 
   function enterCave(cave) {
-    if (!CAVES_ENABLED) return;
+    if (!CAVES_ENABLED) {
+      requestCaveDisableRecovery("enter-cave-attempt-disabled", { windowSeconds: 0.5 });
+      runCaveDisableRecoveryTick(0);
+      setPrompt("Caves disabled", 0.9);
+      return;
+    }
     if (!cave || state.inCave) return;
     state.sleepSequence = null;
     const surfaceWorld = state.surfaceWorld || state.world;
@@ -33820,6 +35997,7 @@
       state.nearBench = false;
       state.nearBenchStructure = null;
       state.nearCave = null;
+      state.nearCaveV2 = null;
       state.nearDock = null;
       state.nearShip = null;
       state.nearHouse = state.activeHouse;
@@ -33856,6 +36034,7 @@
       state.nearDock = findNearestStructure(state.player, (structure) => structure.type === "dock");
       state.nearShip = findNearestStructure(state.player, (structure) => structure.type === "abandoned_ship");
       state.nearCave = findNearestCave(state.surfaceWorld, state.player);
+      state.nearCaveV2 = findNearestCaveV2Entrance(state.surfaceWorld, state.player);
       state.nearHouse = findNearestStructure(state.player, (structure) => isHouseType(structure.type));
       state.nearBed = findNearestStructure(state.player, (structure) => structure.type === "bed");
       state.nearInteriorMoveTarget = null;
@@ -33867,6 +36046,7 @@
       state.nearDock = null;
       state.nearShip = null;
       state.nearCave = null;
+      state.nearCaveV2 = null;
       state.nearHouse = null;
       state.nearBed = null;
       state.nearInteriorMoveTarget = null;
@@ -34000,6 +36180,8 @@
         setPrompt("Press E to set dock checkpoint");
       } else if (state.nearBed && state.isNight) {
         setPrompt("Press E to sleep");
+      } else if (state.nearCaveV2) {
+        setPrompt("Enter Cave (E)");
       } else if (state.nearCave) {
         setPrompt("Enter Cave (E)");
       } else if (state.nearHouse) {
@@ -34083,6 +36265,8 @@
         } else {
           setPrompt("Checkpoint unchanged", 0.8);
         }
+      } else if (state.nearCaveV2) {
+        enterCaveV2(state.nearCaveV2);
       } else if (state.nearCave) {
         enterCave(state.nearCave);
       } else if (state.nearHouse) {
@@ -34145,6 +36329,24 @@
       runDebugQaSelfTests(dt);
       runMultiplayerAutotest(dt);
       updatePrompt(dt);
+      return;
+    }
+    if (!CAVES_ENABLED) {
+      runCaveDisableRecoveryTick(dt);
+      if (state.surfaceWorld) refreshRuntimeCaveEntranceCache(state.surfaceWorld);
+    }
+    if (isCaveV2Active()) {
+      updateCaveV2(dt);
+      updatePlayerCombatTimers(dt);
+      updatePlayerEffects(dt);
+      updateRemoteRender(dt);
+      updateAudio(dt);
+      netTick(dt);
+      runDebugSyncAudit(dt);
+      runMultiplayerAutotest(dt);
+      updatePrompt(dt);
+      updateSave(dt);
+      runDebugQaSelfTests(dt);
       return;
     }
     if (net.enabled && !net.isHost && !net.ready) {
@@ -37073,6 +39275,11 @@
   function render() {
     if (!state.world || !state.player) return;
 
+    if (isCaveV2Active()) {
+      renderCaveV2();
+      return;
+    }
+
     if (state.player.inHut && state.activeHouse) {
       renderHouseInterior();
       return;
@@ -37182,8 +39389,8 @@
       }
     }
 
-    if (!state.inCave && state.surfaceWorld?.caves) {
-      for (const cave of state.surfaceWorld.caves) {
+    if (!state.inCave && state.surfaceWorld) {
+      for (const cave of getRuntimeCaveEntrances(state.surfaceWorld)) {
         const screenX = cave.tx * CONFIG.tileSize - camera.x;
         const screenY = cave.ty * CONFIG.tileSize - camera.y;
         if (
@@ -37223,6 +39430,41 @@
         ctx.beginPath();
         ctx.ellipse(cx, cy - 1, 4.5, 2.3, 0, 0, Math.PI * 2);
         ctx.fill();
+      }
+      if (CAVE_V2_ENABLED) {
+        for (const cave of getRuntimeCaveV2Entrances(state.surfaceWorld)) {
+          const screenX = cave.tx * CONFIG.tileSize - camera.x;
+          const screenY = cave.ty * CONFIG.tileSize - camera.y;
+          if (
+            screenX < -CONFIG.tileSize ||
+            screenY < -CONFIG.tileSize ||
+            screenX > cameraViewWidth + CONFIG.tileSize ||
+            screenY > cameraViewHeight + CONFIG.tileSize
+          ) continue;
+          const cx = screenX + CONFIG.tileSize / 2;
+          const cy = screenY + CONFIG.tileSize / 2;
+          ctx.fillStyle = "rgba(0,0,0,0.22)";
+          ctx.beginPath();
+          ctx.ellipse(cx, cy + 7, 10, 4, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillStyle = "rgba(106, 96, 88, 0.95)";
+          ctx.beginPath();
+          ctx.arc(cx, cy, 10, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillStyle = "rgba(135, 123, 112, 0.62)";
+          ctx.beginPath();
+          ctx.arc(cx - 2, cy - 2, 6.2, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = "rgba(255,255,255,0.14)";
+          ctx.lineWidth = 1.2;
+          ctx.beginPath();
+          ctx.arc(cx, cy, 10, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.fillStyle = "rgba(8, 10, 14, 0.92)";
+          ctx.beginPath();
+          ctx.ellipse(cx, cy + 1.4, 5.8, 4.4, 0, 0, Math.PI * 2);
+          ctx.fill();
+        }
       }
     }
 
