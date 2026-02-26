@@ -30,3 +30,7 @@ Original prompt: Fix CaveV2 so caves use Zelda-style screen-to-screen room trans
 - House art pass: tropical texture/theme upgrade for shared house render block (hut/small/medium/large, village + player-built) using bamboo/woven wall detail, stronger thatch roof fringe, tropical palettes, and island porch accents.
 
 - Four-pass code-level QA sweep (integrity -> gameplay/state -> save/load+MP -> UI/render) completed. Fixed MP autotest harvest false failures by making dedicated harvest actions fully reliable (including the positioning payload), filtering autotest harvest targets to only harvestable resources, and extending harvest assertion timeout window. Runtime browser/mp validation still pending in a live environment.
+
+- CaveV2 exit visual cleanup: removed dark oval/circle exit marker in cave rooms; kept light-only spill/rays so surface exits read as light openings instead of objects.
+
+- CaveV2 passage freeze fix: bumped passage repair version and strengthened room passage recarve (wider doorway throats + central hub). Added runtime floor-snap fallback in updateCaveV2 if player ends up on a blocked tile.

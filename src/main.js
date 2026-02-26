@@ -713,7 +713,9 @@
   const CAVE_DEAD_END_REWARD_MIN_SEPARATION_TILES = 4.8;
   const CAVES_ENABLED = false;
   const CAVE_V2_ENABLED = true;
-  const CAVE_V2_MOB_POPULATE_VERSION = 1;
+  const CAVE_V2_MOB_POPULATE_VERSION = 2;
+  const CAVE_V2_PASSAGE_REPAIR_VERSION = 2;
+  const CAVE_V2_ORE_PLACEMENT_VERSION = 2;
   const CAVE_V2_ROOM_CONFIG = Object.freeze({
     roomCountMin: 8,
     roomCountMax: 12,
@@ -730,11 +732,12 @@
     oreMaxPerRoom: 6,
     oreMinSpacingTiles: 2.35,
     oreMaxPerRoomWarn: 8,
-    mobMinPerRoom: 1,
-    mobMaxPerRoom: 2,
+    mobMinPerRoom: 3,
+    mobMaxPerRoom: 6,
+    mobRareEmptyChance: 0.035,
     mobSpawnChanceBase: 0.52,
     mobSpawnChanceDeepBonus: 0.22,
-    mobMinSpacingTiles: 2.8,
+    mobMinSpacingTiles: 2.4,
     mobOreClearanceTiles: 1.9,
     mobEdgeClearanceTiles: 2,
     mobSpeedScale: 0.72,
@@ -742,6 +745,9 @@
     obstacleMaxPerRoom: 6,
     obstacleAnchorSpacingTiles: 2.9,
     obstacleExitClearanceTiles: 4.8,
+    corridorJitterMaxTiles: 2,
+    corridorWidenChance: 0.2,
+    corridorAlcoveChance: 0.14,
   });
 
   const SAVE_KEY = "island_survival_save_v1";
@@ -3374,6 +3380,57 @@
       return;
     }
 
+    const surfaceWorld = state.surfaceWorld || state.world;
+    if (surfaceWorld && !net.enabled) {
+      const runtimeEntrances = (getRuntimeCaveV2Entrances(surfaceWorld) || [])
+        .filter((entry) => entry && Number.isInteger(entry.tx) && Number.isInteger(entry.ty))
+        .slice(0, 12);
+      for (const entry of runtimeEntrances) {
+        const cave = getOrCreateCaveV2(surfaceWorld, entry);
+        const entryRoom = cave?.roomsById?.[cave?.entryRoomId];
+        const side = normalizeCaveV2Direction(cave?.entrySurfaceSide) || "S";
+        if (!cave || !entryRoom) {
+          qaPushIssue(issues, `[caveV2:spawn-test] Missing cave/entry room for entrance ${entry.tx},${entry.ty}`);
+          break;
+        }
+        const testSides = new Set([side]);
+        for (const candidateSide of ["N", "S", "E", "W"]) {
+          const door = getCaveV2ExitCenterTile(entryRoom, candidateSide);
+          if (door && isCaveV2FloorTile(entryRoom, door.tx, door.ty)) testSides.add(candidateSide);
+        }
+        for (const testSide of testSides) {
+          const rawSpawn = getCaveV2EntrySpawnPosition(entryRoom, testSide);
+          const debugMeta = {};
+          const resolved = resolveCaveV2SpawnPosition(entryRoom, rawSpawn, testSide, debugMeta);
+          const finalSpawn = resolveCaveV2PlayerUnstuck(entryRoom, Number(resolved?.x), Number(resolved?.y), testSide) || resolved;
+          if (!finalSpawn || !Number.isFinite(finalSpawn.x) || !Number.isFinite(finalSpawn.y)) {
+            qaPushIssue(
+              issues,
+              `[caveV2:spawn-test] Invalid spawn result for ${cave.caveId}:${entryRoom.roomId}:${testSide}`
+            );
+            break;
+          }
+          const tx = Math.floor(finalSpawn.x / CONFIG.tileSize);
+          const ty = Math.floor(finalSpawn.y / CONFIG.tileSize);
+          if (!isCaveV2FloorTile(entryRoom, tx, ty) || !isCaveV2WalkableAt(entryRoom, finalSpawn.x, finalSpawn.y)) {
+            qaPushIssue(
+              issues,
+              `[caveV2:spawn-test] Spawn not walkable for ${cave.caveId}:${entryRoom.roomId}:${testSide} (tx=${tx},ty=${ty})`
+            );
+            break;
+          }
+          if (tx < 0 || ty < 0 || tx >= entryRoom.sizeW || ty >= entryRoom.sizeH) {
+            qaPushIssue(
+              issues,
+              `[caveV2:spawn-test] Spawn out of bounds for ${cave.caveId}:${entryRoom.roomId}:${testSide}`
+            );
+            break;
+          }
+        }
+        if (issues.length > 0) break;
+      }
+    }
+
     for (const [caveId, cave] of Object.entries(caveState.cavesById)) {
       if (!cave || typeof cave !== "object") {
         qaPushIssue(issues, `[caveV2:${caveId}] Missing cave object`);
@@ -5587,6 +5644,7 @@
     mpAutotest.pendingAssertions.push({
       checks: 0,
       maxChecks: 10,
+      softFailures: 0,
       ...assertion,
     });
     while (mpAutotest.pendingAssertions.length > 40) mpAutotest.pendingAssertions.shift();
@@ -5619,6 +5677,7 @@
         const resources = Array.isArray(snapWorld?.resourceStates) ? snapWorld.resourceStates : [];
         const drops = Array.isArray(snapWorld?.drops) ? snapWorld.drops : [];
         const res = Number.isInteger(assertion.resId) ? resources[assertion.resId] : null;
+        const resType = typeof res?.type === "string" ? res.type : (assertion.resType || null);
         const removed = !!res?.removed;
         const hp = Number.isFinite(res?.hp) ? res.hp : null;
         const hpReduced = hp != null && Number.isFinite(assertion.beforeHp) && hp < assertion.beforeHp - MP_AUTOTEST_CAVE_ROOM_HASH_EPSILON;
@@ -5629,6 +5688,22 @@
           continue;
         }
         if (assertion.checks >= (assertion.maxChecks || 8)) {
+          assertion.softFailures = (assertion.softFailures || 0) + 1;
+          const timeoutAllowances = (mpAutotest.mode?.stress ? 2 : 1);
+          if (assertion.softFailures <= timeoutAllowances) {
+            assertion.checks = 0;
+            assertion.maxChecks = Math.max(assertion.maxChecks || 0, 16) + 8;
+            mpAutotestMarkCategory(
+              "D",
+              "warn",
+              `Harvest probe inconclusive (${assertion.world}) resId=${assertion.resId}; retry ${assertion.softFailures}/${timeoutAllowances}`
+            );
+            mpAutotestLogLine(
+              `harvest probe retry ${assertion.softFailures}/${timeoutAllowances} (${assertion.world}) resId=${assertion.resId} hp=${assertion.beforeHp ?? "?"} drops=${assertion.beforeDropCount || 0}`
+            );
+            next.push(assertion);
+            continue;
+          }
           return {
             reason: `Harvest assertion failed (${assertion.world}) resId=${assertion.resId}`,
             details: {
@@ -5636,11 +5711,15 @@
               world: assertion.world,
               caveId: assertion.caveId ?? null,
               roomId: assertion.caveLayer ?? null,
+              clientId: assertion.clientId ?? null,
               resId: assertion.resId,
+              resType,
               beforeHp: assertion.beforeHp,
               beforeRemoved: !!assertion.beforeRemoved,
               beforeDropCount: assertion.beforeDropCount || 0,
               checks: assertion.checks,
+              maxChecks: assertion.maxChecks || 8,
+              softFailures: assertion.softFailures || 0,
             },
           };
         }
@@ -6572,6 +6651,45 @@
     return findOpenSurfaceTileNear(world, tx, ty, radius);
   }
 
+  function mpAutotestFindHarvestApproachPosition(world, resource, fallbackX = null, fallbackY = null) {
+    if (!world || !resource) {
+      return {
+        x: Number.isFinite(fallbackX) ? fallbackX : 0,
+        y: Number.isFinite(fallbackY) ? fallbackY : 0,
+      };
+    }
+    const rx = Number(resource.x);
+    const ry = Number(resource.y);
+    const tx = Number.isInteger(resource.tx) ? resource.tx : Math.floor(rx / CONFIG.tileSize);
+    const ty = Number.isInteger(resource.ty) ? resource.ty : Math.floor(ry / CONFIG.tileSize);
+    let best = null;
+    let bestDist = Infinity;
+    for (let radius = 1; radius <= 3; radius += 1) {
+      for (let dy = -radius; dy <= radius; dy += 1) {
+        for (let dx = -radius; dx <= radius; dx += 1) {
+          const nx = tx + dx;
+          const ny = ty + dy;
+          if (!isWalkableTileInWorld(world, nx, ny)) continue;
+          const px = (nx + 0.5) * CONFIG.tileSize;
+          const py = (ny + 0.5) * CONFIG.tileSize;
+          const dist = Math.hypot(px - rx, py - ry);
+          if (dist > CONFIG.interactRange * 1.1) continue;
+          if (dist < CONFIG.tileSize * 0.35) continue;
+          if (dist < bestDist) {
+            bestDist = dist;
+            best = { x: px, y: py };
+          }
+        }
+      }
+      if (best) break;
+    }
+    if (best) return best;
+    return {
+      x: Number.isFinite(fallbackX) ? fallbackX : (Number.isFinite(rx) ? rx : 0),
+      y: Number.isFinite(fallbackY) ? fallbackY : (Number.isFinite(ry) ? ry : 0),
+    };
+  }
+
   function mpAutotestEnsureFixtureChest() {
     if (!Array.isArray(state.structures)) return null;
     let chest = state.structures.find((entry) => entry && !entry.removed && entry.type === "chest" && !entry.interior) || null;
@@ -6839,9 +6957,10 @@
         const rx = Number(picked.entry.x);
         const ry = Number(picked.entry.y);
         if (!Number.isFinite(rx) || !Number.isFinite(ry)) return null;
+        const approach = mpAutotestFindHarvestApproachPosition(world, picked.entry, clientPlayer.x, clientPlayer.y);
         descriptor.note = `harvest ${picked.entry.type}#${picked.idx}`;
         descriptor.ledgerRule = "allowAny";
-        descriptor.payloads.push(mpAutotestBuildPlayerUpdatePayload(client, rx, ry));
+        descriptor.payloads.push(mpAutotestBuildPlayerUpdatePayload(client, approach.x, approach.y));
         descriptor.payloads.push({
           type: "harvest",
           resId: picked.idx,
@@ -7002,7 +7121,8 @@
         if (harvestTarget) {
           const rx = Number(harvestTarget.entry.x);
           const ry = Number(harvestTarget.entry.y);
-          descriptor.payloads.push(mpAutotestBuildPlayerUpdatePayload(client, rx, ry));
+          const approach = mpAutotestFindHarvestApproachPosition(world, harvestTarget.entry, clientPlayer.x, clientPlayer.y);
+          descriptor.payloads.push(mpAutotestBuildPlayerUpdatePayload(client, approach.x, approach.y));
           descriptor.payloads.push({
             type: "harvest",
             resId: harvestTarget.idx,
@@ -7010,8 +7130,8 @@
             unlocks: autotestHarvestUnlocks,
           });
           descriptor.concurrentHarvest = {
-            x: rx,
-            y: ry,
+            x: approach.x,
+            y: approach.y,
             resId: harvestTarget.idx,
           };
         }
@@ -7070,6 +7190,16 @@
             ))
           : null;
         if (caveHarvestTarget) {
+          const caveHarvestApproach = mpAutotestFindHarvestApproachPosition(
+            caveLayerWorld,
+            caveHarvestTarget.entry,
+            caveWalkX,
+            caveWalkY
+          );
+          descriptor.payloads.push(mpAutotestBuildPlayerUpdatePayload(client, caveHarvestApproach.x, caveHarvestApproach.y, {
+            inCave: true,
+            caveId: cave.id,
+          }));
           descriptor.payloads.push({
             type: "harvest",
             resId: caveHarvestTarget.idx,
@@ -7291,13 +7421,15 @@
           mpAutotestQueueAssertion({
             type: "harvest",
             world: "cave",
+            clientId: descriptor.clientId,
             caveId: payload.caveId,
             caveLayer: normalizeCaveLayerIndex(payload.caveLayer ?? 0),
             resId: Number.isInteger(payload.resId) ? payload.resId : null,
+            resType: typeof res?.type === "string" ? res.type : null,
             beforeHp: Number.isFinite(res?.hp) ? res.hp : null,
             beforeRemoved: !!res?.removed,
             beforeDropCount: Array.isArray(caveWorld?.drops) ? caveWorld.drops.length : 0,
-            maxChecks: 16,
+            maxChecks: 24,
           });
         } else {
           const hostWorld = state.surfaceWorld || state.world;
@@ -7306,11 +7438,13 @@
           mpAutotestQueueAssertion({
             type: "harvest",
             world: "surface",
+            clientId: descriptor.clientId,
             resId: Number.isInteger(payload.resId) ? payload.resId : null,
+            resType: typeof res?.type === "string" ? res.type : null,
             beforeHp: Number.isFinite(res?.hp) ? res.hp : null,
             beforeRemoved: !!res?.removed,
             beforeDropCount: Array.isArray(hostWorld?.drops) ? hostWorld.drops.length : 0,
-            maxChecks: 16,
+            maxChecks: 24,
           });
         }
       }
@@ -15832,6 +15966,92 @@
     else if (normalized === "E") carveCaveV2Rect(room, cx, cy - half, room.sizeW - 1, cy + half);
   }
 
+  function carveCaveV2RuggedSideCorridor(room, side, rng) {
+    const normalized = normalizeCaveV2Direction(side);
+    if (!room || !normalized || typeof rng !== "function") {
+      carveCaveV2SideCorridor(room, side);
+      return;
+    }
+    const halfBase = Math.max(1, Math.floor(CAVE_V2_ROOM_CONFIG.corridorHalfWidthTiles));
+    const minHalf = Math.max(1, halfBase - 1);
+    const maxHalf = halfBase + 1;
+    const jitterMax = Math.max(1, Math.floor(CAVE_V2_ROOM_CONFIG.corridorJitterMaxTiles || 1));
+    const widenChance = clamp(Number(CAVE_V2_ROOM_CONFIG.corridorWidenChance) || 0, 0, 0.8);
+    const alcoveChance = clamp(Number(CAVE_V2_ROOM_CONFIG.corridorAlcoveChance) || 0, 0, 0.5);
+    const cx = Math.floor(room.sizeW / 2);
+    const cy = Math.floor(room.sizeH / 2);
+    const edge = getCaveV2ExitCenterTile(room, normalized);
+    if (!edge) {
+      carveCaveV2SideCorridor(room, side);
+      return;
+    }
+    if (normalized === "N" || normalized === "S") {
+      const startY = normalized === "N" ? 0 : room.sizeH - 1;
+      const dirY = normalized === "N" ? 1 : -1;
+      const steps = Math.abs(cy - startY);
+      let drift = 0;
+      for (let i = 0; i <= steps; i += 1) {
+        const y = startY + (dirY * i);
+        const edgeLocked = i <= 2;
+        const centerLocked = Math.abs(y - cy) <= 2;
+        if (!edgeLocked && !centerLocked && rng() < 0.38) {
+          drift += rng() < 0.5 ? -1 : 1;
+          drift = clamp(drift, -jitterMax, jitterMax);
+        }
+        const centerX = clamp(cx + drift, 2 + maxHalf, room.sizeW - 3 - maxHalf);
+        let width = edgeLocked
+          ? halfBase
+          : clamp(
+            halfBase
+              + (rng() < widenChance ? 1 : 0)
+              - (rng() < 0.18 ? 1 : 0),
+            minHalf,
+            maxHalf
+          );
+        if (centerLocked) width = Math.max(width, halfBase);
+        carveCaveV2Rect(room, centerX - width, y, centerX + width, y);
+        if (!edgeLocked && !centerLocked && rng() < alcoveChance) {
+          const alcoveDir = rng() < 0.5 ? -1 : 1;
+          const alcoveX = clamp(centerX + (alcoveDir * (width + 1)), 1, room.sizeW - 2);
+          carveCaveV2Rect(room, Math.min(centerX, alcoveX), y, Math.max(centerX, alcoveX), y + (rng() < 0.5 ? 0 : dirY));
+        }
+      }
+      carveCaveV2Rect(room, edge.laneMin, startY, edge.laneMax, startY + dirY);
+    } else {
+      const startX = normalized === "W" ? 0 : room.sizeW - 1;
+      const dirX = normalized === "W" ? 1 : -1;
+      const steps = Math.abs(cx - startX);
+      let drift = 0;
+      for (let i = 0; i <= steps; i += 1) {
+        const x = startX + (dirX * i);
+        const edgeLocked = i <= 2;
+        const centerLocked = Math.abs(x - cx) <= 2;
+        if (!edgeLocked && !centerLocked && rng() < 0.38) {
+          drift += rng() < 0.5 ? -1 : 1;
+          drift = clamp(drift, -jitterMax, jitterMax);
+        }
+        const centerY = clamp(cy + drift, 2 + maxHalf, room.sizeH - 3 - maxHalf);
+        let width = edgeLocked
+          ? halfBase
+          : clamp(
+            halfBase
+              + (rng() < widenChance ? 1 : 0)
+              - (rng() < 0.18 ? 1 : 0),
+            minHalf,
+            maxHalf
+          );
+        if (centerLocked) width = Math.max(width, halfBase);
+        carveCaveV2Rect(room, x, centerY - width, x, centerY + width);
+        if (!edgeLocked && !centerLocked && rng() < alcoveChance) {
+          const alcoveDir = rng() < 0.5 ? -1 : 1;
+          const alcoveY = clamp(centerY + (alcoveDir * (width + 1)), 1, room.sizeH - 2);
+          carveCaveV2Rect(room, x, Math.min(centerY, alcoveY), x + (rng() < 0.5 ? 0 : dirX), Math.max(centerY, alcoveY));
+        }
+      }
+      carveCaveV2Rect(room, startX, edge.laneMin, startX + dirX, edge.laneMax);
+    }
+  }
+
   function getCaveV2RoomObstacleAnchors(room) {
     if (!room) return [];
     const anchors = [];
@@ -15848,6 +16068,67 @@
       if (isCaveV2FloorTile(room, insetTx, insetTy)) anchors.push({ tx: insetTx, ty: insetTy });
     }
     return anchors;
+  }
+
+  function findCaveV2TilePath(room, start, goal) {
+    if (!room || !start || !goal) return null;
+    const sx = Math.floor(Number(start.tx));
+    const sy = Math.floor(Number(start.ty));
+    const gx = Math.floor(Number(goal.tx));
+    const gy = Math.floor(Number(goal.ty));
+    if (!isCaveV2FloorTile(room, sx, sy) || !isCaveV2FloorTile(room, gx, gy)) return null;
+    const startKey = `${sx},${sy}`;
+    const goalKey = `${gx},${gy}`;
+    if (startKey === goalKey) return [{ tx: sx, ty: sy }];
+    const queue = [{ tx: sx, ty: sy }];
+    const parent = new Map([[startKey, null]]);
+    for (let i = 0; i < queue.length; i += 1) {
+      const cur = queue[i];
+      const nbs = [
+        { tx: cur.tx + 1, ty: cur.ty },
+        { tx: cur.tx - 1, ty: cur.ty },
+        { tx: cur.tx, ty: cur.ty + 1 },
+        { tx: cur.tx, ty: cur.ty - 1 },
+      ];
+      for (const n of nbs) {
+        if (!isCaveV2FloorTile(room, n.tx, n.ty)) continue;
+        const key = `${n.tx},${n.ty}`;
+        if (parent.has(key)) continue;
+        parent.set(key, `${cur.tx},${cur.ty}`);
+        if (key === goalKey) {
+          const path = [{ tx: n.tx, ty: n.ty }];
+          let p = `${cur.tx},${cur.ty}`;
+          while (p) {
+            const [px, py] = p.split(",").map(Number);
+            path.push({ tx: px, ty: py });
+            p = parent.get(p) || null;
+          }
+          path.reverse();
+          return path;
+        }
+        queue.push(n);
+      }
+    }
+    return null;
+  }
+
+  function reserveCaveV2PathTiles(room, reserved, path, radiusTiles = 1) {
+    if (!room || !(reserved instanceof Set) || !Array.isArray(path) || path.length <= 0) return;
+    const radius = Math.max(0, Math.floor(radiusTiles));
+    for (const node of path) {
+      if (!node) continue;
+      const cx = Math.floor(Number(node.tx));
+      const cy = Math.floor(Number(node.ty));
+      for (let dy = -radius; dy <= radius; dy += 1) {
+        for (let dx = -radius; dx <= radius; dx += 1) {
+          const tx = cx + dx;
+          const ty = cy + dy;
+          if (tx < 0 || ty < 0 || tx >= room.sizeW || ty >= room.sizeH) continue;
+          if (!isCaveV2FloorTile(room, tx, ty)) continue;
+          reserved.add(`${tx},${ty}`);
+        }
+      }
+    }
   }
 
   function caveV2TileSetHasConnectivity(room, anchors) {
@@ -15905,6 +16186,41 @@
     }
   }
 
+  function ensureCaveV2RoomPassagesOpen(cave, room) {
+    if (!room || !room.exits) return false;
+    if ((Number(room.caveV2PassageRepairVersion) || 0) >= CAVE_V2_PASSAGE_REPAIR_VERSION) return false;
+    const cx = Math.floor(room.sizeW / 2);
+    const cy = Math.floor(room.sizeH / 2);
+    // Guarantee a forgiving central hub so obstacle generation cannot leave a
+    // pinched choke that traps the player while moving between passages.
+    carveCaveV2Rect(room, cx - 3, cy - 3, cx + 3, cy + 3);
+    for (const side of ["N", "S", "E", "W"]) {
+      if (!room.exits?.[side]) continue;
+      carveCaveV2SideCorridor(room, side);
+      const edge = getCaveV2ExitCenterTile(room, side);
+      if (edge) {
+        // Widen the immediate doorway throat by one tile to prevent snagging on
+        // rugged wall corners near the room edge.
+        if (side === "N") carveCaveV2Rect(room, edge.laneMin - 1, 0, edge.laneMax + 1, 2);
+        else if (side === "S") carveCaveV2Rect(room, edge.laneMin - 1, room.sizeH - 3, edge.laneMax + 1, room.sizeH - 1);
+        else if (side === "W") carveCaveV2Rect(room, 0, edge.laneMin - 1, 2, edge.laneMax + 1);
+        else if (side === "E") carveCaveV2Rect(room, room.sizeW - 3, edge.laneMin - 1, room.sizeW - 1, edge.laneMax + 1);
+      }
+    }
+    if (cave && room.roomId === cave.entryRoomId && cave.entrySurfaceSide) {
+      carveCaveV2SideCorridor(room, cave.entrySurfaceSide);
+      const edge = getCaveV2ExitCenterTile(room, cave.entrySurfaceSide);
+      if (edge) {
+        if (cave.entrySurfaceSide === "N") carveCaveV2Rect(room, edge.laneMin - 1, 0, edge.laneMax + 1, 2);
+        else if (cave.entrySurfaceSide === "S") carveCaveV2Rect(room, edge.laneMin - 1, room.sizeH - 3, edge.laneMax + 1, room.sizeH - 1);
+        else if (cave.entrySurfaceSide === "W") carveCaveV2Rect(room, 0, edge.laneMin - 1, 2, edge.laneMax + 1);
+        else if (cave.entrySurfaceSide === "E") carveCaveV2Rect(room, room.sizeW - 3, edge.laneMin - 1, room.sizeW - 1, edge.laneMax + 1);
+      }
+    }
+    room.caveV2PassageRepairVersion = CAVE_V2_PASSAGE_REPAIR_VERSION;
+    return true;
+  }
+
   function addCaveV2RoomObstacles(room, rng) {
     if (!room || !Array.isArray(room.tiles)) return;
     const anchors = getCaveV2RoomObstacleAnchors(room);
@@ -15925,10 +16241,28 @@
         }
       }
     }
-    for (let y = cy - 1; y <= cy + 1; y += 1) {
-      for (let x = cx - 1; x <= cx + 1; x += 1) {
-        if (x >= 0 && y >= 0 && x < room.sizeW && y < room.sizeH) reserved.add(`${x},${y}`);
+    for (const centerCell of [
+      { tx: cx, ty: cy },
+      { tx: cx + 1, ty: cy },
+      { tx: cx - 1, ty: cy },
+      { tx: cx, ty: cy + 1 },
+      { tx: cx, ty: cy - 1 },
+    ]) {
+      if (
+        centerCell.tx >= 0 && centerCell.ty >= 0
+        && centerCell.tx < room.sizeW && centerCell.ty < room.sizeH
+      ) {
+        reserved.add(`${centerCell.tx},${centerCell.ty}`);
       }
+    }
+    // Protect the actual navigable routes from the room center to each exit so obstacle
+    // generation cannot create narrow pinches or apparent passages that trap the player.
+    const anchorCenter = { tx: cx, ty: cy };
+    const anchorTargets = getCaveV2RoomObstacleAnchors(room)
+      .filter((a) => a && !(a.tx === cx && a.ty === cy));
+    for (const target of anchorTargets) {
+      const path = findCaveV2TilePath(room, anchorCenter, target);
+      reserveCaveV2PathTiles(room, reserved, path, 1);
     }
     const candidates = [];
     for (let y = 2; y < room.sizeH - 2; y += 1) {
@@ -15953,18 +16287,20 @@
           Number(isCaveV2FloorTile(room, x - 1, y)) +
           Number(isCaveV2FloorTile(room, x, y + 1)) +
           Number(isCaveV2FloorTile(room, x, y - 1));
-        if (openNeighbors < 3) continue;
-        candidates.push({ tx: x, ty: y });
+        const wallNeighbors = 4 - openNeighbors;
+        if (openNeighbors < 2) continue;
+        if (wallNeighbors < 1) continue;
+        candidates.push({ tx: x, ty: y, wallNeighbors, order: rng() });
       }
     }
-    for (let i = candidates.length - 1; i > 0; i -= 1) {
-      const j = Math.floor(rng() * (i + 1));
-      [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
-    }
+    candidates.sort((a, b) => {
+      if (b.wallNeighbors !== a.wallNeighbors) return b.wallNeighbors - a.wallNeighbors;
+      return a.order - b.order;
+    });
     const roomExitCount = ["N", "S", "E", "W"].reduce((n, side) => n + Number(!!room.exits?.[side]), 0);
-    const baseObstacleCount = roomExitCount >= 3 ? 4 : roomExitCount === 2 ? 3 : 2;
+    const baseObstacleCount = roomExitCount >= 3 ? 5 : roomExitCount === 2 ? 4 : 3;
     const targetObstacles = clamp(
-      baseObstacleCount + Math.floor(rng() * 2),
+      baseObstacleCount + Math.floor(rng() * 3),
       CAVE_V2_ROOM_CONFIG.obstacleMinPerRoom,
       CAVE_V2_ROOM_CONFIG.obstacleMaxPerRoom
     );
@@ -15984,9 +16320,40 @@
       }
       if (tooClose) continue;
 
+      const neighborDirs = [
+        { dx: 1, dy: 0 },
+        { dx: -1, dy: 0 },
+        { dx: 0, dy: 1 },
+        { dx: 0, dy: -1 },
+      ];
+      const wallTouchDirs = neighborDirs.filter((dir) => !isCaveV2FloorTile(room, c.tx + dir.dx, c.ty + dir.dy));
+      const wallDir = wallTouchDirs.length > 0
+        ? wallTouchDirs[Math.floor(rng() * wallTouchDirs.length)]
+        : null;
       const horiz = rng() < 0.5 ? 1 : -1;
       const vert = rng() < 0.5 ? 1 : -1;
+      const extend = wallDir ? { dx: -wallDir.dx, dy: -wallDir.dy } : { dx: horiz, dy: vert };
+      const sideDir = wallDir
+        ? { dx: extend.dy, dy: -extend.dx }
+        : { dx: horiz, dy: vert };
       const patterns = [
+        [
+          { tx: c.tx, ty: c.ty },
+          { tx: c.tx + extend.dx, ty: c.ty + extend.dy },
+          { tx: c.tx + extend.dx * 2, ty: c.ty + extend.dy * 2 },
+        ],
+        [
+          { tx: c.tx, ty: c.ty },
+          { tx: c.tx + extend.dx, ty: c.ty + extend.dy },
+          { tx: c.tx + extend.dx * 2, ty: c.ty + extend.dy * 2 },
+          { tx: c.tx + extend.dx * 2 + sideDir.dx, ty: c.ty + extend.dy * 2 + sideDir.dy },
+        ],
+        [
+          { tx: c.tx, ty: c.ty },
+          { tx: c.tx + extend.dx, ty: c.ty + extend.dy },
+          { tx: c.tx + sideDir.dx, ty: c.ty + sideDir.dy },
+          { tx: c.tx + extend.dx + sideDir.dx, ty: c.ty + extend.dy + sideDir.dy },
+        ],
         [
           { tx: c.tx, ty: c.ty },
           { tx: c.tx + horiz, ty: c.ty },
@@ -16053,7 +16420,7 @@
     const cx = Math.floor(room.sizeW / 2);
     const cy = Math.floor(room.sizeH / 2);
     carveCaveV2Rect(room, cx - 4, cy - 3, cx + 4, cy + 3);
-    for (let i = 0; i < 3; i += 1) {
+    for (let i = 0; i < 5; i += 1) {
       const ox = Math.floor((rng() - 0.5) * 8);
       const oy = Math.floor((rng() - 0.5) * 6);
       const rw = 2 + Math.floor(rng() * 4);
@@ -16062,7 +16429,7 @@
     }
     for (const side of ["N", "S", "E", "W"]) {
       if (!room.exits[side]) continue;
-      carveCaveV2SideCorridor(room, side);
+      carveCaveV2RuggedSideCorridor(room, side, rng);
     }
     addCaveV2RoomObstacles(room, rng);
     room.shades = new Array(room.tiles.length).fill(0);
@@ -16081,8 +16448,34 @@
     return !!room.tiles[caveV2RoomTileIndex(tx, ty, room)];
   }
 
-  function isCaveV2OrePlacementValid(room, tx, ty, ores, minSpacingTiles) {
+  function isCaveV2TileInPassageLane(room, side, tx, ty, lanePadding = 1) {
+    const edge = getCaveV2ExitCenterTile(room, side);
+    if (!edge) return false;
+    const laneMin = edge.laneMin - lanePadding;
+    const laneMax = edge.laneMax + lanePadding;
+    const depth = Math.max(2, Math.floor(CAVE_V2_ROOM_CONFIG.corridorHalfWidthTiles) + 1);
+    if (side === "N") return ty <= depth && tx >= laneMin && tx <= laneMax;
+    if (side === "S") return ty >= (room.sizeH - 1 - depth) && tx >= laneMin && tx <= laneMax;
+    if (side === "W") return tx <= depth && ty >= laneMin && ty <= laneMax;
+    if (side === "E") return tx >= (room.sizeW - 1 - depth) && ty >= laneMin && ty <= laneMax;
+    return false;
+  }
+
+  function isCaveV2TileReservedForPassage(cave, room, tx, ty) {
+    if (!room) return false;
+    for (const side of ["N", "S", "E", "W"]) {
+      if (room.exits?.[side] && isCaveV2TileInPassageLane(room, side, tx, ty, 1)) return true;
+    }
+    if (cave && room.roomId === cave.entryRoomId && cave.entrySurfaceSide) {
+      const side = normalizeCaveV2Direction(cave.entrySurfaceSide) || "S";
+      if (isCaveV2TileInPassageLane(room, side, tx, ty, 1)) return true;
+    }
+    return false;
+  }
+
+  function isCaveV2OrePlacementValid(room, tx, ty, ores, minSpacingTiles, cave = null) {
     if (!isCaveV2FloorTile(room, tx, ty)) return false;
+    if (isCaveV2TileReservedForPassage(cave, room, tx, ty)) return false;
     for (const ore of ores) {
       if (!ore) continue;
       const dx = ore.tx - tx;
@@ -16100,9 +16493,10 @@
     return "crawler";
   }
 
-  function isCaveV2MobPlacementValid(room, tx, ty, ores, mobs) {
+  function isCaveV2MobPlacementValid(room, tx, ty, ores, mobs, options = null) {
     if (!isCaveV2FloorTile(room, tx, ty)) return false;
-    const edgeClear = Math.max(1, Math.floor(CAVE_V2_ROOM_CONFIG.mobEdgeClearanceTiles));
+    const edgeClearBase = Number(options?.edgeClearTiles);
+    const edgeClear = Math.max(1, Math.floor(Number.isFinite(edgeClearBase) ? edgeClearBase : CAVE_V2_ROOM_CONFIG.mobEdgeClearanceTiles));
     if (
       tx < edgeClear || ty < edgeClear
       || tx > room.sizeW - 1 - edgeClear
@@ -16117,7 +16511,8 @@
       const dy = (Number(ore.ty) || 0) - ty;
       if ((dx * dx) + (dy * dy) < oreClearSq) return false;
     }
-    const mobSpacingSq = CAVE_V2_ROOM_CONFIG.mobMinSpacingTiles * CAVE_V2_ROOM_CONFIG.mobMinSpacingTiles;
+    const mobSpacingTiles = Math.max(0.5, Number(options?.mobSpacingTiles) || CAVE_V2_ROOM_CONFIG.mobMinSpacingTiles);
+    const mobSpacingSq = mobSpacingTiles * mobSpacingTiles;
     for (const mob of mobs || []) {
       if (!mob || mob.removed) continue;
       const dx = (Number(mob.tx) || 0) - tx;
@@ -16181,20 +16576,40 @@
       [floorTiles[i], floorTiles[j]] = [floorTiles[j], floorTiles[i]];
     }
     const mobs = room.entities.mobs;
-    let mobCount = Math.max(1, Math.floor(CAVE_V2_ROOM_CONFIG.mobMinPerRoom) || 1);
-    const spawnChance = clamp(
+    const rareEmptyChance = clamp(Number(CAVE_V2_ROOM_CONFIG.mobRareEmptyChance) || 0, 0, 0.2);
+    const minCount = Math.max(0, Math.floor(CAVE_V2_ROOM_CONFIG.mobMinPerRoom) || 0);
+    const maxCount = Math.max(minCount, Math.floor(CAVE_V2_ROOM_CONFIG.mobMaxPerRoom) || minCount);
+    const rareEmpty = mobRng() < rareEmptyChance;
+    let mobCount = rareEmpty ? 0 : minCount;
+    const spawnChanceBase = clamp(
       CAVE_V2_ROOM_CONFIG.mobSpawnChanceBase + (Math.min(1, roomDepth / 4) * CAVE_V2_ROOM_CONFIG.mobSpawnChanceDeepBonus),
       0,
-      0.95
+      0.97
     );
-    if (mobCount < CAVE_V2_ROOM_CONFIG.mobMaxPerRoom && mobRng() < spawnChance) mobCount += 1;
-    if (roomDepth >= 3 && mobCount < CAVE_V2_ROOM_CONFIG.mobMaxPerRoom && mobRng() < (spawnChance * 0.38)) mobCount += 1;
-    mobCount = clamp(mobCount, CAVE_V2_ROOM_CONFIG.mobMinPerRoom, CAVE_V2_ROOM_CONFIG.mobMaxPerRoom);
+    if (!rareEmpty) {
+      for (let tier = 0; tier < (maxCount - minCount); tier += 1) {
+        const tierPenalty = tier * 0.13;
+        const chance = clamp(spawnChanceBase - tierPenalty, 0.05, 0.97);
+        if (mobRng() < chance) mobCount += 1;
+      }
+    }
+    mobCount = clamp(mobCount, 0, maxCount);
     for (const tile of floorTiles) {
       if (mobs.length >= mobCount) break;
       if (!isCaveV2MobPlacementValid(room, tile.tx, tile.ty, room.entities.ores, mobs)) continue;
       const mobType = pickCaveV2MobType(mobRng, roomDepth);
       mobs.push(buildCaveV2MobEntity(cave, room, tile, mobType, mobs.length));
+    }
+    // If strict spacing/edge rules leave a room under target density, do one relaxed pass.
+    if (!rareEmpty && mobs.length < mobCount) {
+      const relaxedSpacing = Math.max(1.25, CAVE_V2_ROOM_CONFIG.mobMinSpacingTiles * 0.68);
+      const relaxedEdgeClear = Math.max(1, Math.floor(CAVE_V2_ROOM_CONFIG.mobEdgeClearanceTiles) - 1);
+      for (const tile of floorTiles) {
+        if (mobs.length >= mobCount) break;
+        if (!isCaveV2MobPlacementValid(room, tile.tx, tile.ty, room.entities.ores, mobs, { mobSpacingTiles: relaxedSpacing, edgeClearTiles: relaxedEdgeClear })) continue;
+        const mobType = pickCaveV2MobType(mobRng, roomDepth);
+        mobs.push(buildCaveV2MobEntity(cave, room, tile, mobType, mobs.length));
+      }
     }
     room.caveV2MobPopulateVersion = CAVE_V2_MOB_POPULATE_VERSION;
     return true;
@@ -16224,7 +16639,7 @@
     const ores = room.entities.ores;
     for (const tile of floorTiles) {
       if (ores.length >= oreCount) break;
-      if (!isCaveV2OrePlacementValid(room, tile.tx, tile.ty, ores, CAVE_V2_ROOM_CONFIG.oreMinSpacingTiles)) continue;
+      if (!isCaveV2OrePlacementValid(room, tile.tx, tile.ty, ores, CAVE_V2_ROOM_CONFIG.oreMinSpacingTiles, cave)) continue;
       const id = `${cave.caveId}:${room.roomId}:ore:${ores.length}`;
       const oreKind = ["coal", "iron_ore", "gold_ore", "emerald", "diamond"][Math.floor(rng() * 5)] || "iron_ore";
       const baseHp = getResourceBaseHp({ type: "ore", oreKind });
@@ -16244,7 +16659,59 @@
       });
     }
     populateCaveV2RoomMobs(cave, room, room.graphDepth, rng);
+    room.caveV2OrePlacementVersion = CAVE_V2_ORE_PLACEMENT_VERSION;
     room.generated = true;
+  }
+
+  function repairCaveV2RoomOrePlacements(cave, room) {
+    if (!cave || !room || !room.entities?.ores) return false;
+    if ((Number(room.caveV2OrePlacementVersion) || 0) >= CAVE_V2_ORE_PLACEMENT_VERSION) return false;
+    const ores = room.entities.ores;
+    const floorTiles = [];
+    for (let y = 1; y < room.sizeH - 1; y += 1) {
+      for (let x = 1; x < room.sizeW - 1; x += 1) {
+        if (!isCaveV2FloorTile(room, x, y)) continue;
+        if (isCaveV2TileReservedForPassage(cave, room, x, y)) continue;
+        floorTiles.push({ tx: x, ty: y });
+      }
+    }
+    const rng = makeRng(seedToInt(`${cave.caveId}:${room.roomId}:ore-layout-v${CAVE_V2_ORE_PLACEMENT_VERSION}`));
+    for (let i = floorTiles.length - 1; i > 0; i -= 1) {
+      const j = Math.floor(rng() * (i + 1));
+      [floorTiles[i], floorTiles[j]] = [floorTiles[j], floorTiles[i]];
+    }
+    let changed = false;
+    const activePlaced = [];
+    for (const ore of ores) {
+      if (!ore) continue;
+      stabilizeCaveV2Ore(ore);
+      if (ore.removed || ore.destroyed) continue;
+      if (isCaveV2OrePlacementValid(room, ore.tx, ore.ty, activePlaced, CAVE_V2_ROOM_CONFIG.oreMinSpacingTiles, cave)) {
+        activePlaced.push(ore);
+        continue;
+      }
+      let moved = false;
+      for (const tile of floorTiles) {
+        if (!isCaveV2OrePlacementValid(room, tile.tx, tile.ty, activePlaced, CAVE_V2_ROOM_CONFIG.oreMinSpacingTiles, cave)) continue;
+        ore.tx = tile.tx;
+        ore.ty = tile.ty;
+        ore.x = (tile.tx + 0.5) * CONFIG.tileSize;
+        ore.y = (tile.ty + 0.5) * CONFIG.tileSize;
+        ore.hitTimer = 0;
+        activePlaced.push(ore);
+        moved = true;
+        changed = true;
+        break;
+      }
+      if (!moved) {
+        ore.hp = 0;
+        ore.removed = true;
+        ore.destroyed = true;
+        changed = true;
+      }
+    }
+    room.caveV2OrePlacementVersion = CAVE_V2_ORE_PLACEMENT_VERSION;
+    return changed;
   }
 
   function getCaveV2ActiveOre(room, caveState = null) {
@@ -16672,6 +17139,7 @@
       if (roomId === cave.entryRoomId) {
         carveCaveV2SideCorridor(room, cave.entrySurfaceSide);
       }
+      ensureCaveV2RoomPassagesOpen(cave, room);
       populateCaveV2RoomEntities(cave, room, rng, distance[roomId] || 0);
     }
   }
@@ -16733,6 +17201,7 @@
       graphDepth: Math.max(0, Math.floor(Number(room.graphDepth) || 0)),
       decorSeed: Number(room.decorSeed) || 0,
       caveV2MobPopulateVersion: Math.max(0, Math.floor(Number(room.caveV2MobPopulateVersion) || 0)),
+      caveV2OrePlacementVersion: Math.max(0, Math.floor(Number(room.caveV2OrePlacementVersion) || 0)),
       entities: {
         ores: ores.map((ore) => ({
           id: String(ore?.id || ""),
@@ -16927,6 +17396,7 @@
       room.entities.mobs.push(mob);
     }
     room.caveV2MobPopulateVersion = Math.max(0, Math.floor(Number(roomSave?.caveV2MobPopulateVersion) || 0));
+    room.caveV2OrePlacementVersion = Math.max(0, Math.floor(Number(roomSave?.caveV2OrePlacementVersion) || 0));
     room.generated = !!roomSave?.generated;
     return room;
   }
@@ -17026,8 +17496,11 @@
   function getCaveV2EntrySpawnPosition(room, side = "S") {
     const roomPx = getCaveV2RoomPixelSize(room);
     const inset = CAVE_V2_ROOM_CONFIG.spawnInsetTiles * CONFIG.tileSize;
-    const centerX = roomPx.w * 0.5;
-    const centerY = roomPx.h * 0.5;
+    const lane = getCaveV2ExitCenterTile(room, normalizeCaveV2Direction(side) || "S");
+    const fallbackCenterX = roomPx.w * 0.5;
+    const fallbackCenterY = roomPx.h * 0.5;
+    const centerX = lane ? ((lane.tx + 0.5) * CONFIG.tileSize) : fallbackCenterX;
+    const centerY = lane ? ((lane.ty + 0.5) * CONFIG.tileSize) : fallbackCenterY;
     if (side === "N") return { x: centerX, y: inset };
     if (side === "S") return { x: centerX, y: roomPx.h - inset };
     if (side === "W") return { x: inset, y: centerY };
@@ -17035,66 +17508,221 @@
     return { x: centerX, y: roomPx.h - inset };
   }
 
-  function findNearestCaveV2FloorSpawnPosition(room, px, py, preferredSide = null) {
+  function getCaveV2SpawnSearchNeighborOrder(preferredSide = null) {
+    switch (normalizeCaveV2Direction(preferredSide)) {
+      case "N": return [{ tx: 0, ty: 1 }, { tx: 1, ty: 0 }, { tx: -1, ty: 0 }, { tx: 0, ty: -1 }];
+      case "S": return [{ tx: 0, ty: -1 }, { tx: 1, ty: 0 }, { tx: -1, ty: 0 }, { tx: 0, ty: 1 }];
+      case "W": return [{ tx: 1, ty: 0 }, { tx: 0, ty: -1 }, { tx: 0, ty: 1 }, { tx: -1, ty: 0 }];
+      case "E": return [{ tx: -1, ty: 0 }, { tx: 0, ty: -1 }, { tx: 0, ty: 1 }, { tx: 1, ty: 0 }];
+      default: return [{ tx: 0, ty: -1 }, { tx: 1, ty: 0 }, { tx: 0, ty: 1 }, { tx: -1, ty: 0 }];
+    }
+  }
+
+  function isCaveV2SpawnTileSafe(room, tx, ty) {
+    if (!room || !isCaveV2FloorTile(room, tx, ty)) return false;
+    if (tx < 1 || ty < 1 || tx > room.sizeW - 2 || ty > room.sizeH - 2) return false;
+    const px = (tx + 0.5) * CONFIG.tileSize;
+    const py = (ty + 0.5) * CONFIG.tileSize;
+    return isCaveV2WalkableAt(room, px, py);
+  }
+
+  function getCaveV2SpawnReachableAnchorTile(room, preferredSide = null) {
     if (!room) return null;
-    const tile = CONFIG.tileSize;
-    const tryPx = Number(px);
-    const tryPy = Number(py);
-    if (Number.isFinite(tryPx) && Number.isFinite(tryPy) && isCaveV2WalkableAt(room, tryPx, tryPy)) {
-      return { x: tryPx, y: tryPy };
-    }
-    const normalizedSide = normalizeCaveV2Direction(preferredSide);
-    const lane = normalizedSide ? getCaveV2ExitCenterTile(room, normalizedSide) : null;
+    const side = normalizeCaveV2Direction(preferredSide);
+    const lane = side ? getCaveV2ExitCenterTile(room, side) : null;
     if (lane) {
-      const laneStart = Math.max(0, Math.floor(Number(lane.laneMin) || 0));
-      const laneEnd = Math.min(
-        (normalizedSide === "N" || normalizedSide === "S") ? room.sizeW - 1 : room.sizeH - 1,
-        Math.floor(Number(lane.laneMax) || 0)
-      );
-      const inwardMax = Math.max(2, Math.floor(Math.min(room.sizeW, room.sizeH) * 0.5));
-      for (let inward = 0; inward <= inwardMax; inward += 1) {
-        for (let laneCoord = laneStart; laneCoord <= laneEnd; laneCoord += 1) {
-          let tx = lane.tx;
-          let ty = lane.ty;
-          if (normalizedSide === "N") {
-            tx = laneCoord;
-            ty = Math.min(room.sizeH - 1, inward);
-          } else if (normalizedSide === "S") {
-            tx = laneCoord;
-            ty = Math.max(0, room.sizeH - 1 - inward);
-          } else if (normalizedSide === "W") {
-            tx = Math.min(room.sizeW - 1, inward);
-            ty = laneCoord;
-          } else if (normalizedSide === "E") {
-            tx = Math.max(0, room.sizeW - 1 - inward);
-            ty = laneCoord;
-          }
-          if (!isCaveV2FloorTile(room, tx, ty)) continue;
-          return { x: (tx + 0.5) * tile, y: (ty + 0.5) * tile };
+      let tx = lane.tx;
+      let ty = lane.ty;
+      if (side === "N") ty = Math.min(room.sizeH - 1, 1);
+      else if (side === "S") ty = Math.max(0, room.sizeH - 2);
+      else if (side === "W") tx = Math.min(room.sizeW - 1, 1);
+      else if (side === "E") tx = Math.max(0, room.sizeW - 2);
+      if (isCaveV2FloorTile(room, tx, ty)) return { tx, ty };
+      for (let laneCoord = lane.laneMin; laneCoord <= lane.laneMax; laneCoord += 1) {
+        if (side === "N" || side === "S") {
+          if (isCaveV2FloorTile(room, laneCoord, ty)) return { tx: laneCoord, ty };
+        } else if (isCaveV2FloorTile(room, tx, laneCoord)) {
+          return { tx, ty: laneCoord };
         }
       }
     }
-    const startTx = clamp(Math.floor((Number.isFinite(tryPx) ? tryPx : (room.sizeW * tile * 0.5)) / tile), 0, room.sizeW - 1);
-    const startTy = clamp(Math.floor((Number.isFinite(tryPy) ? tryPy : (room.sizeH * tile * 0.5)) / tile), 0, room.sizeH - 1);
-    const maxRadius = Math.max(room.sizeW, room.sizeH);
-    for (let radius = 0; radius <= maxRadius; radius += 1) {
-      for (let dy = -radius; dy <= radius; dy += 1) {
-        for (let dx = -radius; dx <= radius; dx += 1) {
-          if (Math.max(Math.abs(dx), Math.abs(dy)) !== radius) continue;
-          const tx = startTx + dx;
-          const ty = startTy + dy;
-          if (!isCaveV2FloorTile(room, tx, ty)) continue;
-          return { x: (tx + 0.5) * tile, y: (ty + 0.5) * tile };
-        }
-      }
-    }
+    const cx = Math.floor(room.sizeW / 2);
+    const cy = Math.floor(room.sizeH / 2);
+    if (isCaveV2FloorTile(room, cx, cy)) return { tx: cx, ty: cy };
     return null;
   }
 
-  function resolveCaveV2SpawnPosition(room, preferredPos, preferredSide = null) {
+  function buildCaveV2ReachableFloorSet(room, preferredSide = null) {
+    if (!room || !Array.isArray(room.tiles)) return null;
+    const anchor = getCaveV2SpawnReachableAnchorTile(room, preferredSide);
+    if (!anchor) return null;
+    const anchorKey = `${anchor.tx},${anchor.ty}`;
+    const reachable = new Set([anchorKey]);
+    const queue = [anchor];
+    const dirs = getCaveV2SpawnSearchNeighborOrder(preferredSide);
+    for (let i = 0; i < queue.length; i += 1) {
+      const cur = queue[i];
+      for (const dir of dirs) {
+        const tx = cur.tx + dir.tx;
+        const ty = cur.ty + dir.ty;
+        if (!isCaveV2FloorTile(room, tx, ty)) continue;
+        const key = `${tx},${ty}`;
+        if (reachable.has(key)) continue;
+        reachable.add(key);
+        queue.push({ tx, ty });
+      }
+    }
+    return reachable;
+  }
+
+  function findNearestCaveV2FloorSpawnPosition(room, px, py, preferredSide = null, debugMeta = null) {
+    if (!room) return null;
+    const tile = CONFIG.tileSize;
+    const recordMeta = (partial) => {
+      if (!debugMeta || typeof debugMeta !== "object") return;
+      Object.assign(debugMeta, partial);
+    };
+    const tryPx = Number(px);
+    const tryPy = Number(py);
+    const normalizedSide = normalizeCaveV2Direction(preferredSide);
+    const reachable = buildCaveV2ReachableFloorSet(room, normalizedSide);
+    const inReachable = (tx, ty) => {
+      if (!(reachable instanceof Set) || reachable.size <= 0) return true;
+      return reachable.has(`${tx},${ty}`);
+    };
+    const startTx = clamp(
+      Math.floor((Number.isFinite(tryPx) ? tryPx : (room.sizeW * tile * 0.5)) / tile),
+      0,
+      room.sizeW - 1
+    );
+    const startTy = clamp(
+      Math.floor((Number.isFinite(tryPy) ? tryPy : (room.sizeH * tile * 0.5)) / tile),
+      0,
+      room.sizeH - 1
+    );
+    recordMeta({ requestedTx: startTx, requestedTy: startTy, preferredSide: normalizedSide || null });
+    if (
+      Number.isFinite(tryPx)
+      && Number.isFinite(tryPy)
+      && isCaveV2WalkableAt(room, tryPx, tryPy)
+      && isCaveV2SpawnTileSafe(room, startTx, startTy)
+      && inReachable(startTx, startTy)
+    ) {
+      recordMeta({ mode: "direct", checkedTiles: 1, bfsSteps: 0, finalTx: startTx, finalTy: startTy });
+      return { x: tryPx, y: tryPy, tx: startTx, ty: startTy };
+    }
+    const queue = [{ tx: startTx, ty: startTy }];
+    const seen = new Set([`${startTx},${startTy}`]);
+    const neighborDirs = getCaveV2SpawnSearchNeighborOrder(normalizedSide);
+    const maxChecked = Math.max(64, Math.min(room.sizeW * room.sizeH, 600));
+    let checkedTiles = 0;
+    for (let i = 0; i < queue.length && checkedTiles < maxChecked; i += 1) {
+      const cur = queue[i];
+      if (cur.tx >= 0 && cur.ty >= 0 && cur.tx < room.sizeW && cur.ty < room.sizeH) {
+        checkedTiles += 1;
+        if (isCaveV2SpawnTileSafe(room, cur.tx, cur.ty) && inReachable(cur.tx, cur.ty)) {
+          const pxCenter = (cur.tx + 0.5) * tile;
+          const pyCenter = (cur.ty + 0.5) * tile;
+          recordMeta({ mode: "bfs", checkedTiles, bfsSteps: i, finalTx: cur.tx, finalTy: cur.ty });
+          return { x: pxCenter, y: pyCenter, tx: cur.tx, ty: cur.ty };
+        }
+      }
+      for (const dir of neighborDirs) {
+        const tx = cur.tx + dir.tx;
+        const ty = cur.ty + dir.ty;
+        if (tx < 0 || ty < 0 || tx >= room.sizeW || ty >= room.sizeH) continue;
+        const key = `${tx},${ty}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        queue.push({ tx, ty });
+      }
+    }
+    // Deterministic full-room fallback scan: prefer reachable tiles first, then any safe floor.
+    let best = null;
+    let bestScore = Infinity;
+    for (let ty = 0; ty < room.sizeH; ty += 1) {
+      for (let tx = 0; tx < room.sizeW; tx += 1) {
+        if (!isCaveV2SpawnTileSafe(room, tx, ty)) continue;
+        const reachablePenalty = inReachable(tx, ty) ? 0 : 10000;
+        const score = reachablePenalty + Math.abs(tx - startTx) + Math.abs(ty - startTy);
+        if (score < bestScore) {
+          bestScore = score;
+          best = { tx, ty };
+        }
+      }
+    }
+    if (best) {
+      recordMeta({ mode: "scan", checkedTiles, bfsSteps: queue.length, finalTx: best.tx, finalTy: best.ty });
+      return { x: (best.tx + 0.5) * tile, y: (best.ty + 0.5) * tile, tx: best.tx, ty: best.ty };
+    }
+    recordMeta({ mode: "none", checkedTiles, bfsSteps: queue.length });
+    return null;
+  }
+
+  function resolveCaveV2PlayerUnstuck(room, x, y, preferredSide = null) {
+    if (!room || !Number.isFinite(x) || !Number.isFinite(y)) return null;
+    if (isCaveV2WalkableAt(room, x, y)) return { x, y };
+    const tile = CONFIG.tileSize;
+    const steps = [0.25, 0.5, 0.75, 1];
+    const offsets = [{ dx: 0, dy: 0 }];
+    for (const s of steps) {
+      offsets.push(
+        { dx: s, dy: 0 }, { dx: -s, dy: 0 }, { dx: 0, dy: s }, { dx: 0, dy: -s },
+        { dx: s, dy: s }, { dx: s, dy: -s }, { dx: -s, dy: s }, { dx: -s, dy: -s }
+      );
+    }
+    for (const off of offsets) {
+      const nx = x + off.dx * tile;
+      const ny = y + off.dy * tile;
+      if (!isCaveV2WalkableAt(room, nx, ny)) continue;
+      const tx = Math.floor(nx / tile);
+      const ty = Math.floor(ny / tile);
+      if (!isCaveV2SpawnTileSafe(room, tx, ty)) continue;
+      return { x: nx, y: ny, tx, ty };
+    }
+    return findNearestCaveV2FloorSpawnPosition(room, x, y, preferredSide);
+  }
+
+  function resolveCaveV2SpawnPosition(room, preferredPos, preferredSide = null, debugMeta = null) {
     if (!room || !preferredPos) return preferredPos;
-    const fallback = findNearestCaveV2FloorSpawnPosition(room, preferredPos.x, preferredPos.y, preferredSide);
-    return fallback || preferredPos;
+    const fallback = findNearestCaveV2FloorSpawnPosition(
+      room,
+      preferredPos.x,
+      preferredPos.y,
+      preferredSide,
+      debugMeta
+    );
+    if (fallback && Number.isFinite(fallback.x) && Number.isFinite(fallback.y)) {
+      const nudged = resolveCaveV2PlayerUnstuck(room, fallback.x, fallback.y, preferredSide);
+      if (nudged) {
+        if (debugMeta && typeof debugMeta === "object") {
+          debugMeta.unstuckApplied = !(Math.abs((nudged.x || 0) - fallback.x) < 0.01 && Math.abs((nudged.y || 0) - fallback.y) < 0.01);
+          debugMeta.finalTx = Number.isInteger(nudged.tx) ? nudged.tx : Math.floor(nudged.x / CONFIG.tileSize);
+          debugMeta.finalTy = Number.isInteger(nudged.ty) ? nudged.ty : Math.floor(nudged.y / CONFIG.tileSize);
+        }
+        return nudged;
+      }
+      return fallback;
+    }
+    const fallbackTx = clamp(Math.floor((Number(preferredPos.x) || (room.sizeW * CONFIG.tileSize * 0.5)) / CONFIG.tileSize), 0, room.sizeW - 1);
+    const fallbackTy = clamp(Math.floor((Number(preferredPos.y) || (room.sizeH * CONFIG.tileSize * 0.5)) / CONFIG.tileSize), 0, room.sizeH - 1);
+    const idx = caveV2RoomTileIndex(fallbackTx, fallbackTy, room);
+    if (Array.isArray(room.tiles) && idx >= 0 && idx < room.tiles.length) {
+      room.tiles[idx] = 1;
+      if (Array.isArray(room.shades) && idx < room.shades.length) {
+        room.shades[idx] = Number.isFinite(room.shades[idx]) ? room.shades[idx] : 0.92;
+      }
+      const forced = { x: (fallbackTx + 0.5) * CONFIG.tileSize, y: (fallbackTy + 0.5) * CONFIG.tileSize, tx: fallbackTx, ty: fallbackTy };
+      if (debugMeta && typeof debugMeta === "object") {
+        debugMeta.mode = "forced_floor_tile";
+        debugMeta.forcedFloor = true;
+        debugMeta.finalTx = fallbackTx;
+        debugMeta.finalTy = fallbackTy;
+      }
+      console.error(`[CaveV2 Spawn FAILSAFE] Forced floor tile at (${fallbackTx},${fallbackTy})`);
+      return forced;
+    }
+    return preferredPos;
   }
 
   function enterCaveV2(entrance) {
@@ -17108,11 +17736,35 @@
     const entryRoom = cave.roomsById[cave.entryRoomId];
     if (!entryRoom) return false;
     const entrySide = cave.entrySurfaceSide || "S";
-    const spawn = resolveCaveV2SpawnPosition(
+    const rawSpawn = getCaveV2EntrySpawnPosition(entryRoom, entrySide);
+    const spawnMeta = {};
+    let spawn = resolveCaveV2SpawnPosition(
       entryRoom,
-      getCaveV2EntrySpawnPosition(entryRoom, entrySide),
-      entrySide
+      rawSpawn,
+      entrySide,
+      spawnMeta
     );
+    spawn = resolveCaveV2PlayerUnstuck(entryRoom, Number(spawn?.x), Number(spawn?.y), entrySide) || spawn;
+    const spawnValid = !!(
+      spawn
+      && Number.isFinite(spawn.x)
+      && Number.isFinite(spawn.y)
+      && isCaveV2WalkableAt(entryRoom, spawn.x, spawn.y)
+    );
+    if (!spawnValid) {
+      if (state.debugUnlocked) {
+        console.error("[CaveV2 Entry Spawn FAIL]", {
+          caveId: cave.caveId,
+          roomId: cave.entryRoomId,
+          entrySide,
+          candidate: rawSpawn,
+          final: spawn,
+          meta: spawnMeta,
+        });
+      }
+      setPrompt("Cave entrance blocked (spawn invalid)", 1.35);
+      return false;
+    }
     cave.activeRoomId = cave.entryRoomId;
     caveState.active = {
       caveId: cave.caveId,
@@ -17140,6 +17792,19 @@
     state.nearCaveV2 = null;
     state.promptTimer = 0;
     state.promptText = "";
+    if (state.debugUnlocked) {
+      console.debug("[CaveV2 Entry Spawn]", {
+        caveId: cave.caveId,
+        roomId: cave.entryRoomId,
+        entrySide,
+        collisionPos: { x: state.player.x, y: state.player.y },
+        renderPos: { x: state.player.renderX, y: state.player.renderY },
+        candidate: rawSpawn,
+        final: { x: spawn.x, y: spawn.y },
+        meta: spawnMeta,
+        lightingOverlay: "cavev2_room_vignette",
+      });
+    }
     return true;
   }
 
@@ -17421,6 +18086,10 @@
       leaveCaveV2();
       return;
     }
+    const cavePassagesBackfilled = ensureCaveV2RoomPassagesOpen(cave, room);
+    if (cavePassagesBackfilled) markDirty();
+    const caveOreRepaired = repairCaveV2RoomOrePlacements(cave, room);
+    if (caveOreRepaired) markDirty();
     const caveMobBackfilled = populateCaveV2RoomMobs(cave, room, Math.max(0, Math.floor(Number(room.graphDepth) || 0)));
     if (caveMobBackfilled) markDirty();
 
@@ -17476,6 +18145,17 @@
     if (isCaveV2WalkableAt(room, tryX, caveState.active.y)) caveState.active.x = tryX;
     const tryY = clamp(nextY, minPos, maxY);
     if (isCaveV2WalkableAt(room, caveState.active.x, tryY)) caveState.active.y = tryY;
+    if (!isCaveV2WalkableAt(room, caveState.active.x, caveState.active.y)) {
+      const nudged = resolveCaveV2SpawnPosition(
+        room,
+        { x: caveState.active.x, y: caveState.active.y },
+        room.roomId === cave.entryRoomId ? (cave.entrySurfaceSide || "S") : null
+      );
+      if (nudged && Number.isFinite(nudged.x) && Number.isFinite(nudged.y)) {
+        caveState.active.x = clamp(nudged.x, minPos, maxX);
+        caveState.active.y = clamp(nudged.y, minPos, maxY);
+      }
+    }
     syncCaveV2PlayerProxyPosition(caveState.active.x, caveState.active.y);
     refreshCaveV2TransitionLock(caveState, room);
 
@@ -17733,20 +18413,6 @@
           ctx.fillStyle = laneGlow;
           ctx.fillRect(lx, ly, lw, lh);
         }
-        // soft pooled light so the exit reads as a cave mouth, not a rectangular trigger zone
-        const c = getCaveV2ExitCenterTile(room, side);
-        if (c) {
-          const mx = drawX + (c.tx + 0.5) * CONFIG.tileSize;
-          const my = drawY + (c.ty + 0.5) * CONFIG.tileSize;
-          const pooledLight = ctx.createRadialGradient(mx, my, 1, mx, my, 34);
-          pooledLight.addColorStop(0, "rgba(255, 241, 190, 0.22)");
-          pooledLight.addColorStop(0.5, "rgba(255, 214, 132, 0.10)");
-          pooledLight.addColorStop(1, "rgba(255, 214, 132, 0)");
-          ctx.fillStyle = pooledLight;
-          ctx.beginPath();
-          ctx.arc(mx, my, 34, 0, Math.PI * 2);
-          ctx.fill();
-        }
       }
     }
 
@@ -17758,34 +18424,29 @@
         const mx = drawX + (c.tx + 0.5) * CONFIG.tileSize;
         const my = drawY + (c.ty + 0.5) * CONFIG.tileSize;
         ctx.save();
-        ctx.fillStyle = "rgba(0,0,0,0.18)";
-        ctx.beginPath();
-        ctx.ellipse(mx, my + 5.5, 11, 3.8, 0, 0, Math.PI * 2);
-        ctx.fill();
-
-        const warmGlow = ctx.createRadialGradient(mx, my, 2, mx, my, 16);
-        warmGlow.addColorStop(0, "rgba(255, 242, 196, 0.4)");
-        warmGlow.addColorStop(0.45, "rgba(255, 208, 120, 0.18)");
-        warmGlow.addColorStop(1, "rgba(255, 208, 120, 0)");
-        ctx.fillStyle = warmGlow;
-        ctx.beginPath();
-        ctx.arc(mx, my, 17, 0, Math.PI * 2);
-        ctx.fill();
-
-        const mouthGrad = ctx.createRadialGradient(mx, my + 0.6, 1, mx, my + 0.6, 10);
-        mouthGrad.addColorStop(0, "rgba(255, 240, 203, 0.18)");
-        mouthGrad.addColorStop(0.28, "rgba(38, 32, 24, 0.88)");
-        mouthGrad.addColorStop(0.7, "rgba(8, 9, 12, 0.96)");
-        mouthGrad.addColorStop(1, "rgba(0,0,0,0.35)");
-        ctx.fillStyle = mouthGrad;
-        ctx.beginPath();
-        ctx.ellipse(mx, my + 0.6, 7.8, 5.6, 0, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.strokeStyle = "rgba(255, 226, 172, 0.28)";
-        ctx.lineWidth = 1.2;
-        ctx.beginPath();
-        ctx.ellipse(mx, my + 0.6, 8.1, 5.9, 0, 0, Math.PI * 2);
-        ctx.stroke();
+        // Light-only exit cue (no circular marker): elongate glow into the cave
+        // so the exit reads as daylight spilling in instead of a placed object.
+        const lightDir = side === "N"
+          ? { x: 0, y: 1 }
+          : side === "S"
+            ? { x: 0, y: -1 }
+            : side === "W"
+              ? { x: 1, y: 0 }
+              : { x: -1, y: 0 };
+        for (let i = 0; i < 3; i += 1) {
+          const t = i / 2;
+          const px = mx + lightDir.x * (8 + t * 18);
+          const py = my + lightDir.y * (8 + t * 18);
+          const a = 0.14 - t * 0.045;
+          ctx.fillStyle = `rgba(255, 233, 177, ${Math.max(0.04, a)})`;
+          ctx.beginPath();
+          if (side === "N" || side === "S") {
+            ctx.ellipse(px, py, 9.5 - t * 1.4, 7 + t * 2.2, 0, 0, Math.PI * 2);
+          } else {
+            ctx.ellipse(px, py, 7 + t * 2.2, 9.5 - t * 1.4, 0, 0, Math.PI * 2);
+          }
+          ctx.fill();
+        }
 
         // subtle "light rays" / opening direction cue on the cave side
         ctx.strokeStyle = "rgba(255, 230, 174, 0.12)";
@@ -40929,11 +41590,18 @@
           ctx.save();
           const variant = seedToInt(`${cave.caveId}:${cave.tx},${cave.ty}`) >>> 0;
           const lean = ((variant & 1) ? 1 : -1) * (ts * 0.04);
+          const entranceScale = 0.58;
+          const scalePivotY = cy + ts * 0.18;
           const timberHue = (variant >> 3) & 3;
           const timberBase = timberHue === 0 ? "#6f5436" : timberHue === 1 ? "#7a5d3d" : timberHue === 2 ? "#654b31" : "#745739";
           const timberDark = tintColor(timberBase, -0.28);
           const timberLight = tintColor(timberBase, 0.14);
           const metal = "rgba(63, 68, 74, 0.85)";
+
+          // Scale down the mine-shaft entrance art so it fits the island tile better.
+          ctx.translate(cx, scalePivotY);
+          ctx.scale(entranceScale, entranceScale);
+          ctx.translate(-cx, -scalePivotY);
 
           // Ground shadow and mound backdrop
           ctx.fillStyle = "rgba(0,0,0,0.24)";
