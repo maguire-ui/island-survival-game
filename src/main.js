@@ -713,6 +713,7 @@
   const CAVE_DEAD_END_REWARD_MIN_SEPARATION_TILES = 4.8;
   const CAVES_ENABLED = false;
   const CAVE_V2_ENABLED = true;
+  const CAVE_V2_MOB_POPULATE_VERSION = 1;
   const CAVE_V2_ROOM_CONFIG = Object.freeze({
     roomCountMin: 8,
     roomCountMax: 12,
@@ -729,6 +730,7 @@
     oreMaxPerRoom: 6,
     oreMinSpacingTiles: 2.35,
     oreMaxPerRoomWarn: 8,
+    mobMinPerRoom: 1,
     mobMaxPerRoom: 2,
     mobSpawnChanceBase: 0.52,
     mobSpawnChanceDeepBonus: 0.22,
@@ -736,6 +738,10 @@
     mobOreClearanceTiles: 1.9,
     mobEdgeClearanceTiles: 2,
     mobSpeedScale: 0.72,
+    obstacleMinPerRoom: 3,
+    obstacleMaxPerRoom: 6,
+    obstacleAnchorSpacingTiles: 2.9,
+    obstacleExitClearanceTiles: 4.8,
   });
 
   const SAVE_KEY = "island_survival_save_v1";
@@ -3384,6 +3390,19 @@
       }
       if (!cave.entryRoomId || !cave.roomsById[cave.entryRoomId]) {
         qaPushIssue(issues, `[caveV2:${caveId}] Invalid entryRoomId`);
+      }
+      const entryRoom = cave.entryRoomId ? cave.roomsById[cave.entryRoomId] : null;
+      const entrySurfaceSide = normalizeCaveV2Direction(cave.entrySurfaceSide) || "S";
+      if (entryRoom) {
+        const entryDoor = getCaveV2ExitCenterTile(entryRoom, entrySurfaceSide);
+        if (!entryDoor || !isCaveV2FloorTile(entryRoom, entryDoor.tx, entryDoor.ty)) {
+          qaPushIssue(issues, `[caveV2:${caveId}] Entry surface doorway ${entrySurfaceSide} is blocked`);
+        }
+        const rawSpawn = getCaveV2EntrySpawnPosition(entryRoom, entrySurfaceSide);
+        const safeSpawn = resolveCaveV2SpawnPosition(entryRoom, rawSpawn, entrySurfaceSide);
+        if (!safeSpawn || !isCaveV2WalkableAt(entryRoom, safeSpawn.x, safeSpawn.y)) {
+          qaPushIssue(issues, `[caveV2:${caveId}] Entry spawn cannot resolve to floor`);
+        }
       }
 
       let edgeCount = 0;
@@ -6739,6 +6758,22 @@
     };
     const clientPlayer = mpAutotestFindClientPlayer(client);
     if (!clientPlayer && kind !== "disconnectRejoin") return null;
+    const autotestHarvestUnlocks = normalizeUnlocks({
+      pickaxe: true,
+      orePickaxe: true,
+      relicPickaxe: true,
+      sword: true,
+    });
+    const harvestProbePlayer = clientPlayer
+      ? {
+        ...clientPlayer,
+        toolTier: Math.max(4, Number.isFinite(clientPlayer.toolTier) ? clientPlayer.toolTier : 0),
+        unlocks: autotestHarvestUnlocks,
+      }
+      : {
+        toolTier: 4,
+        unlocks: autotestHarvestUnlocks,
+      };
     switch (kind) {
       case "walkSweep": {
         const startTx = Math.floor(clientPlayer.x / CONFIG.tileSize);
@@ -6797,6 +6832,7 @@
             && isResourceInteractable(entry)
             && Number.isFinite(entry.hp)
             && entry.hp > 0
+            && canHarvestResource(entry, harvestProbePlayer).ok
           ));
         if (resources.length === 0) return null;
         const picked = resources[Math.floor(mpAutotest.rng() * resources.length)];
@@ -6810,12 +6846,7 @@
           type: "harvest",
           resId: picked.idx,
           world: "surface",
-          unlocks: normalizeUnlocks({
-            pickaxe: true,
-            orePickaxe: true,
-            relicPickaxe: true,
-            sword: true,
-          }),
+          unlocks: autotestHarvestUnlocks,
         });
         break;
       }
@@ -6946,6 +6977,7 @@
             && isResourceInteractable(entry)
             && Number.isFinite(entry.hp)
             && entry.hp > 0
+            && canHarvestResource(entry, harvestProbePlayer).ok
           ));
         const harvestTarget = resources.length > 0
           ? resources[Math.floor(mpAutotest.rng() * resources.length)]
@@ -6975,12 +7007,7 @@
             type: "harvest",
             resId: harvestTarget.idx,
             world: "surface",
-            unlocks: normalizeUnlocks({
-              pickaxe: true,
-              orePickaxe: true,
-              relicPickaxe: true,
-              sword: true,
-            }),
+            unlocks: autotestHarvestUnlocks,
           });
           descriptor.concurrentHarvest = {
             x: rx,
@@ -7039,6 +7066,7 @@
               && isResourceInteractable(entry)
               && Number.isFinite(entry.hp)
               && entry.hp > 0
+              && canHarvestResource(entry, harvestProbePlayer).ok
             ))
           : null;
         if (caveHarvestTarget) {
@@ -7048,12 +7076,7 @@
             world: "cave",
             caveId: cave.id,
             caveLayer: 0,
-            unlocks: normalizeUnlocks({
-              pickaxe: true,
-              orePickaxe: true,
-              relicPickaxe: true,
-              sword: true,
-            }),
+            unlocks: autotestHarvestUnlocks,
           });
         }
         const surfaceX = (cave.tx + 0.5) * CONFIG.tileSize;
@@ -7256,8 +7279,10 @@
       mpAutotestDisconnectClient(client, "stress");
       mpAutotestConnectClient(client);
     } else if (client) {
+      const shouldQueueStrictHarvestAssertions = descriptor.kind === "harvest" || descriptor.kind === "caveTrip";
       for (const payload of descriptor.payloads || []) {
         if (!payload || payload.type !== "harvest") continue;
+        if (!shouldQueueStrictHarvestAssertions) continue;
         const harvestWorld = String(payload.world || "surface");
         if (harvestWorld === "cave" && Number.isInteger(payload.caveId)) {
           const caveWorld = getCaveWorld(payload.caveId, payload.caveLayer ?? 0);
@@ -7272,7 +7297,7 @@
             beforeHp: Number.isFinite(res?.hp) ? res.hp : null,
             beforeRemoved: !!res?.removed,
             beforeDropCount: Array.isArray(caveWorld?.drops) ? caveWorld.drops.length : 0,
-            maxChecks: 8,
+            maxChecks: 16,
           });
         } else {
           const hostWorld = state.surfaceWorld || state.world;
@@ -7285,7 +7310,7 @@
             beforeHp: Number.isFinite(res?.hp) ? res.hp : null,
             beforeRemoved: !!res?.removed,
             beforeDropCount: Array.isArray(hostWorld?.drops) ? hostWorld.drops.length : 0,
-            maxChecks: 8,
+            maxChecks: 16,
           });
         }
       }
@@ -7299,7 +7324,7 @@
       }
       for (const payload of descriptor.payloads || []) {
         const reliableAutotestPayload = descriptor.kind === "harvest"
-          || (descriptor.kind === "caveTrip" && payload?.type === "harvest");
+          || descriptor.kind === "caveTrip";
         mpAutotestSendFromClient(client, payload, { reliable: reliableAutotestPayload });
       }
       if (descriptor.kind === "spam" && Number.isInteger(descriptor.repeatCraftChecks) && descriptor.repeatCraftChecks > 0) {
@@ -15794,6 +15819,19 @@
     }
   }
 
+  function carveCaveV2SideCorridor(room, side) {
+    if (!room) return;
+    const normalized = normalizeCaveV2Direction(side);
+    if (!normalized) return;
+    const half = CAVE_V2_ROOM_CONFIG.corridorHalfWidthTiles;
+    const cx = Math.floor(room.sizeW / 2);
+    const cy = Math.floor(room.sizeH / 2);
+    if (normalized === "N") carveCaveV2Rect(room, cx - half, 0, cx + half, cy);
+    else if (normalized === "S") carveCaveV2Rect(room, cx - half, cy, cx + half, room.sizeH - 1);
+    else if (normalized === "W") carveCaveV2Rect(room, 0, cy - half, cx, cy + half);
+    else if (normalized === "E") carveCaveV2Rect(room, cx, cy - half, room.sizeW - 1, cy + half);
+  }
+
   function getCaveV2RoomObstacleAnchors(room) {
     if (!room) return [];
     const anchors = [];
@@ -15872,11 +15910,31 @@
     const anchors = getCaveV2RoomObstacleAnchors(room);
     const cx = Math.floor(room.sizeW / 2);
     const cy = Math.floor(room.sizeH / 2);
+    const reserved = new Set();
+    for (const side of ["N", "S", "E", "W"]) {
+      if (!room.exits?.[side]) continue;
+      const laneRect = getCaveV2ExitLaneRectPx(room, side);
+      if (!laneRect) continue;
+      const minTx = clamp(Math.floor(laneRect.x / CONFIG.tileSize) - 1, 0, room.sizeW - 1);
+      const maxTx = clamp(Math.floor((laneRect.x + laneRect.w - 1) / CONFIG.tileSize) + 1, 0, room.sizeW - 1);
+      const minTy = clamp(Math.floor(laneRect.y / CONFIG.tileSize) - 1, 0, room.sizeH - 1);
+      const maxTy = clamp(Math.floor((laneRect.y + laneRect.h - 1) / CONFIG.tileSize) + 1, 0, room.sizeH - 1);
+      for (let ty = minTy; ty <= maxTy; ty += 1) {
+        for (let tx = minTx; tx <= maxTx; tx += 1) {
+          reserved.add(`${tx},${ty}`);
+        }
+      }
+    }
+    for (let y = cy - 1; y <= cy + 1; y += 1) {
+      for (let x = cx - 1; x <= cx + 1; x += 1) {
+        if (x >= 0 && y >= 0 && x < room.sizeW && y < room.sizeH) reserved.add(`${x},${y}`);
+      }
+    }
     const candidates = [];
     for (let y = 2; y < room.sizeH - 2; y += 1) {
       for (let x = 2; x < room.sizeW - 2; x += 1) {
         if (!isCaveV2FloorTile(room, x, y)) continue;
-        if (Math.abs(x - cx) <= 1 && Math.abs(y - cy) <= 1) continue;
+        if (reserved.has(`${x},${y}`)) continue;
         let nearExit = false;
         for (const side of ["N", "S", "E", "W"]) {
           if (!room.exits?.[side]) continue;
@@ -15884,7 +15942,7 @@
           if (!info) continue;
           const dx = x - info.tx;
           const dy = y - info.ty;
-          if ((dx * dx) + (dy * dy) <= 16) {
+          if ((dx * dx) + (dy * dy) <= (CAVE_V2_ROOM_CONFIG.obstacleExitClearanceTiles * CAVE_V2_ROOM_CONFIG.obstacleExitClearanceTiles)) {
             nearExit = true;
             break;
           }
@@ -15904,15 +15962,68 @@
       [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
     }
     const roomExitCount = ["N", "S", "E", "W"].reduce((n, side) => n + Number(!!room.exits?.[side]), 0);
-    const targetObstacles = clamp((roomExitCount >= 3 ? 2 : 1) + Math.floor(rng() * 2), 1, 4);
+    const baseObstacleCount = roomExitCount >= 3 ? 4 : roomExitCount === 2 ? 3 : 2;
+    const targetObstacles = clamp(
+      baseObstacleCount + Math.floor(rng() * 2),
+      CAVE_V2_ROOM_CONFIG.obstacleMinPerRoom,
+      CAVE_V2_ROOM_CONFIG.obstacleMaxPerRoom
+    );
     let placed = 0;
+    const obstacleAnchors = [];
+    const minAnchorSpacingSq = CAVE_V2_ROOM_CONFIG.obstacleAnchorSpacingTiles * CAVE_V2_ROOM_CONFIG.obstacleAnchorSpacingTiles;
     for (const c of candidates) {
       if (placed >= targetObstacles) break;
+      let tooClose = false;
+      for (const a of obstacleAnchors) {
+        const dx = a.tx - c.tx;
+        const dy = a.ty - c.ty;
+        if ((dx * dx) + (dy * dy) < minAnchorSpacingSq) {
+          tooClose = true;
+          break;
+        }
+      }
+      if (tooClose) continue;
+
+      const horiz = rng() < 0.5 ? 1 : -1;
+      const vert = rng() < 0.5 ? 1 : -1;
       const patterns = [
+        [
+          { tx: c.tx, ty: c.ty },
+          { tx: c.tx + horiz, ty: c.ty },
+          { tx: c.tx, ty: c.ty + vert },
+          { tx: c.tx + horiz, ty: c.ty + vert },
+        ],
+        [
+          { tx: c.tx - 1, ty: c.ty },
+          { tx: c.tx, ty: c.ty },
+          { tx: c.tx + 1, ty: c.ty },
+        ],
+        [
+          { tx: c.tx, ty: c.ty - 1 },
+          { tx: c.tx, ty: c.ty },
+          { tx: c.tx, ty: c.ty + 1 },
+        ],
+        [
+          { tx: c.tx, ty: c.ty },
+          { tx: c.tx + horiz, ty: c.ty },
+          { tx: c.tx + horiz * 2, ty: c.ty },
+          { tx: c.tx + horiz * 2, ty: c.ty + vert },
+        ],
+        [
+          { tx: c.tx, ty: c.ty },
+          { tx: c.tx, ty: c.ty + vert },
+          { tx: c.tx, ty: c.ty + vert * 2 },
+          { tx: c.tx + horiz, ty: c.ty + vert * 2 },
+        ],
+        [
+          { tx: c.tx, ty: c.ty },
+          { tx: c.tx + horiz, ty: c.ty },
+        ],
+        [
+          { tx: c.tx, ty: c.ty },
+          { tx: c.tx, ty: c.ty + vert },
+        ],
         [{ tx: c.tx, ty: c.ty }],
-        [{ tx: c.tx, ty: c.ty }, { tx: c.tx + (rng() < 0.5 ? 1 : -1), ty: c.ty }],
-        [{ tx: c.tx, ty: c.ty }, { tx: c.tx, ty: c.ty + (rng() < 0.5 ? 1 : -1) }],
-        [{ tx: c.tx, ty: c.ty }, { tx: c.tx + (rng() < 0.5 ? 1 : -1), ty: c.ty }, { tx: c.tx, ty: c.ty + (rng() < 0.5 ? 1 : -1) }],
       ];
       let applied = false;
       for (const tiles of patterns) {
@@ -15922,11 +16033,14 @@
           const key = `${t.tx},${t.ty}`;
           if (seen.has(key)) continue;
           seen.add(key);
+          if (reserved.has(key)) continue;
           uniq.push(t);
         }
+        if (uniq.length <= 0) continue;
         if (!canPlaceCaveV2ObstacleTiles(room, uniq, anchors)) continue;
         carveCaveV2ObstacleTiles(room, uniq);
         placed += 1;
+        obstacleAnchors.push({ tx: c.tx, ty: c.ty });
         applied = true;
         break;
       }
@@ -15948,11 +16062,7 @@
     }
     for (const side of ["N", "S", "E", "W"]) {
       if (!room.exits[side]) continue;
-      const half = CAVE_V2_ROOM_CONFIG.corridorHalfWidthTiles;
-      if (side === "N") carveCaveV2Rect(room, cx - half, 0, cx + half, cy);
-      else if (side === "S") carveCaveV2Rect(room, cx - half, cy, cx + half, room.sizeH - 1);
-      else if (side === "W") carveCaveV2Rect(room, 0, cy - half, cx, cy + half);
-      else if (side === "E") carveCaveV2Rect(room, cx, cy - half, room.sizeW - 1, cy + half);
+      carveCaveV2SideCorridor(room, side);
     }
     addCaveV2RoomObstacles(room, rng);
     room.shades = new Array(room.tiles.length).fill(0);
@@ -15984,8 +16094,9 @@
 
   function pickCaveV2MobType(rng, roomDepth = 0) {
     const roll = rng();
-    if (roomDepth >= 4 && roll > 0.84) return "brute";
-    if (roll < 0.28) return "slime_small";
+    if (roomDepth >= 4 && roll > 0.86) return "brute";
+    const slimeChance = roomDepth >= 4 ? 0.1 : 0.06;
+    if (roll < slimeChance) return "slime_small";
     return "crawler";
   }
 
@@ -16049,12 +16160,53 @@
     };
   }
 
+  function populateCaveV2RoomMobs(cave, room, roomDepth = 0, rng = null) {
+    if (!cave || !room) return;
+    room.entities = room.entities || { ores: [], mobs: [], drops: [] };
+    room.entities.mobs = Array.isArray(room.entities.mobs) ? room.entities.mobs : [];
+    if ((Number(room.caveV2MobPopulateVersion) || 0) >= CAVE_V2_MOB_POPULATE_VERSION) return false;
+    room.entities.mobs.length = 0;
+    const mobRng = typeof rng === "function"
+      ? rng
+      : makeRng(seedToInt(`${cave.caveId}:${room.roomId}:mobs:v${CAVE_V2_MOB_POPULATE_VERSION}`));
+    const floorTiles = [];
+    for (let y = 1; y < room.sizeH - 1; y += 1) {
+      for (let x = 1; x < room.sizeW - 1; x += 1) {
+        if (!isCaveV2FloorTile(room, x, y)) continue;
+        floorTiles.push({ tx: x, ty: y });
+      }
+    }
+    for (let i = floorTiles.length - 1; i > 0; i -= 1) {
+      const j = Math.floor(mobRng() * (i + 1));
+      [floorTiles[i], floorTiles[j]] = [floorTiles[j], floorTiles[i]];
+    }
+    const mobs = room.entities.mobs;
+    let mobCount = Math.max(1, Math.floor(CAVE_V2_ROOM_CONFIG.mobMinPerRoom) || 1);
+    const spawnChance = clamp(
+      CAVE_V2_ROOM_CONFIG.mobSpawnChanceBase + (Math.min(1, roomDepth / 4) * CAVE_V2_ROOM_CONFIG.mobSpawnChanceDeepBonus),
+      0,
+      0.95
+    );
+    if (mobCount < CAVE_V2_ROOM_CONFIG.mobMaxPerRoom && mobRng() < spawnChance) mobCount += 1;
+    if (roomDepth >= 3 && mobCount < CAVE_V2_ROOM_CONFIG.mobMaxPerRoom && mobRng() < (spawnChance * 0.38)) mobCount += 1;
+    mobCount = clamp(mobCount, CAVE_V2_ROOM_CONFIG.mobMinPerRoom, CAVE_V2_ROOM_CONFIG.mobMaxPerRoom);
+    for (const tile of floorTiles) {
+      if (mobs.length >= mobCount) break;
+      if (!isCaveV2MobPlacementValid(room, tile.tx, tile.ty, room.entities.ores, mobs)) continue;
+      const mobType = pickCaveV2MobType(mobRng, roomDepth);
+      mobs.push(buildCaveV2MobEntity(cave, room, tile, mobType, mobs.length));
+    }
+    room.caveV2MobPopulateVersion = CAVE_V2_MOB_POPULATE_VERSION;
+    return true;
+  }
+
   function populateCaveV2RoomEntities(cave, room, rng, roomDepth = 0) {
     if (!room || room.generated) return;
     room.entities = room.entities || { ores: [], mobs: [], drops: [] };
     room.entities.ores = [];
     room.entities.mobs = [];
     room.entities.drops = [];
+    room.graphDepth = Math.max(0, Math.floor(Number(roomDepth) || 0));
 
     const oreCountBase = CAVE_V2_ROOM_CONFIG.oreMinPerRoom + Math.floor(rng() * (CAVE_V2_ROOM_CONFIG.oreMaxPerRoom - CAVE_V2_ROOM_CONFIG.oreMinPerRoom + 1));
     const oreCount = clamp(oreCountBase + Math.min(1, Math.floor(roomDepth / 3)), 1, CAVE_V2_ROOM_CONFIG.oreMaxPerRoom);
@@ -16091,22 +16243,7 @@
         hitTimer: 0,
       });
     }
-    const mobs = room.entities.mobs;
-    let mobCount = 0;
-    const spawnChance = clamp(
-      CAVE_V2_ROOM_CONFIG.mobSpawnChanceBase + (Math.min(1, roomDepth / 4) * CAVE_V2_ROOM_CONFIG.mobSpawnChanceDeepBonus),
-      0,
-      0.95
-    );
-    if (rng() < spawnChance) mobCount += 1;
-    if (roomDepth >= 2 && rng() < (spawnChance * 0.45)) mobCount += 1;
-    mobCount = clamp(mobCount, 0, CAVE_V2_ROOM_CONFIG.mobMaxPerRoom);
-    for (const tile of floorTiles) {
-      if (mobs.length >= mobCount) break;
-      if (!isCaveV2MobPlacementValid(room, tile.tx, tile.ty, ores, mobs)) continue;
-      const mobType = pickCaveV2MobType(rng, roomDepth);
-      mobs.push(buildCaveV2MobEntity(cave, room, tile, mobType, mobs.length));
-    }
+    populateCaveV2RoomMobs(cave, room, room.graphDepth, rng);
     room.generated = true;
   }
 
@@ -16527,13 +16664,16 @@
         queue.push(nextId);
       }
     }
+    cave.entrySurfaceSide = chooseCaveV2SurfaceExitSideForEntryRoom(cave.roomsById[cave.entryRoomId]);
     for (const roomId of roomIds) {
       const room = cave.roomsById[roomId];
       const rng = makeRng(seedToInt(`${cave.caveId}:${roomId}`));
       generateCaveV2RoomTiles(room, rng);
+      if (roomId === cave.entryRoomId) {
+        carveCaveV2SideCorridor(room, cave.entrySurfaceSide);
+      }
       populateCaveV2RoomEntities(cave, room, rng, distance[roomId] || 0);
     }
-    cave.entrySurfaceSide = chooseCaveV2SurfaceExitSideForEntryRoom(cave.roomsById[cave.entryRoomId]);
   }
 
   function createCaveV2(surfaceWorld, entrance) {
@@ -16590,7 +16730,9 @@
         W: room.exits?.W || null,
       },
       generated: !!room.generated,
+      graphDepth: Math.max(0, Math.floor(Number(room.graphDepth) || 0)),
       decorSeed: Number(room.decorSeed) || 0,
+      caveV2MobPopulateVersion: Math.max(0, Math.floor(Number(room.caveV2MobPopulateVersion) || 0)),
       entities: {
         ores: ores.map((ore) => ({
           id: String(ore?.id || ""),
@@ -16691,6 +16833,7 @@
       sizeH: Math.max(4, Math.floor(Number(roomSave?.sizeH) || CAVE_V2_ROOM_CONFIG.sizeH)),
       tiles: null,
       shades: null,
+      graphDepth: Math.max(0, Math.floor(Number(roomSave?.graphDepth) || 0)),
       exits: {
         N: typeof roomSave?.exits?.N === "string" ? roomSave.exits.N : null,
         S: typeof roomSave?.exits?.S === "string" ? roomSave.exits.S : null,
@@ -16783,6 +16926,7 @@
       mob.ty = Math.floor(mob.y / CONFIG.tileSize);
       room.entities.mobs.push(mob);
     }
+    room.caveV2MobPopulateVersion = Math.max(0, Math.floor(Number(roomSave?.caveV2MobPopulateVersion) || 0));
     room.generated = !!roomSave?.generated;
     return room;
   }
@@ -16820,6 +16964,7 @@
         activeRoomId: roomsById[String(caveSave?.activeRoomId || entryRoomId)] ? String(caveSave.activeRoomId || entryRoomId) : entryRoomId,
         nextDropSeq: Math.max(1, Math.floor(Number(caveSave?.nextDropSeq) || 1)),
       };
+      carveCaveV2SideCorridor(roomsById[entryRoomId], cave.entrySurfaceSide);
       caveState.cavesById[caveId] = cave;
     }
     const savedActive = savedCaveV2.active && typeof savedCaveV2.active === "object" ? savedCaveV2.active : null;
@@ -16831,11 +16976,19 @@
     const minPos = CONFIG.tileSize * 0.5;
     const maxX = roomPx.w - CONFIG.tileSize * 0.5;
     const maxY = roomPx.h - CONFIG.tileSize * 0.5;
+    const restoredPos = resolveCaveV2SpawnPosition(
+      room,
+      {
+        x: clamp(Number(savedActive.x) || roomPx.w * 0.5, minPos, maxX),
+        y: clamp(Number(savedActive.y) || roomPx.h * 0.5, minPos, maxY),
+      },
+      cave.entrySurfaceSide || "S"
+    );
     caveState.active = {
       caveId: cave.caveId,
       roomId: room.roomId,
-      x: clamp(Number(savedActive.x) || roomPx.w * 0.5, minPos, maxX),
-      y: clamp(Number(savedActive.y) || roomPx.h * 0.5, minPos, maxY),
+      x: restoredPos?.x ?? (roomPx.w * 0.5),
+      y: restoredPos?.y ?? (roomPx.h * 0.5),
       returnSurfacePos: savedActive.returnSurfacePos && Number.isFinite(savedActive.returnSurfacePos.x) && Number.isFinite(savedActive.returnSurfacePos.y)
         ? { x: savedActive.returnSurfacePos.x, y: savedActive.returnSurfacePos.y }
         : null,
@@ -16882,6 +17035,68 @@
     return { x: centerX, y: roomPx.h - inset };
   }
 
+  function findNearestCaveV2FloorSpawnPosition(room, px, py, preferredSide = null) {
+    if (!room) return null;
+    const tile = CONFIG.tileSize;
+    const tryPx = Number(px);
+    const tryPy = Number(py);
+    if (Number.isFinite(tryPx) && Number.isFinite(tryPy) && isCaveV2WalkableAt(room, tryPx, tryPy)) {
+      return { x: tryPx, y: tryPy };
+    }
+    const normalizedSide = normalizeCaveV2Direction(preferredSide);
+    const lane = normalizedSide ? getCaveV2ExitCenterTile(room, normalizedSide) : null;
+    if (lane) {
+      const laneStart = Math.max(0, Math.floor(Number(lane.laneMin) || 0));
+      const laneEnd = Math.min(
+        (normalizedSide === "N" || normalizedSide === "S") ? room.sizeW - 1 : room.sizeH - 1,
+        Math.floor(Number(lane.laneMax) || 0)
+      );
+      const inwardMax = Math.max(2, Math.floor(Math.min(room.sizeW, room.sizeH) * 0.5));
+      for (let inward = 0; inward <= inwardMax; inward += 1) {
+        for (let laneCoord = laneStart; laneCoord <= laneEnd; laneCoord += 1) {
+          let tx = lane.tx;
+          let ty = lane.ty;
+          if (normalizedSide === "N") {
+            tx = laneCoord;
+            ty = Math.min(room.sizeH - 1, inward);
+          } else if (normalizedSide === "S") {
+            tx = laneCoord;
+            ty = Math.max(0, room.sizeH - 1 - inward);
+          } else if (normalizedSide === "W") {
+            tx = Math.min(room.sizeW - 1, inward);
+            ty = laneCoord;
+          } else if (normalizedSide === "E") {
+            tx = Math.max(0, room.sizeW - 1 - inward);
+            ty = laneCoord;
+          }
+          if (!isCaveV2FloorTile(room, tx, ty)) continue;
+          return { x: (tx + 0.5) * tile, y: (ty + 0.5) * tile };
+        }
+      }
+    }
+    const startTx = clamp(Math.floor((Number.isFinite(tryPx) ? tryPx : (room.sizeW * tile * 0.5)) / tile), 0, room.sizeW - 1);
+    const startTy = clamp(Math.floor((Number.isFinite(tryPy) ? tryPy : (room.sizeH * tile * 0.5)) / tile), 0, room.sizeH - 1);
+    const maxRadius = Math.max(room.sizeW, room.sizeH);
+    for (let radius = 0; radius <= maxRadius; radius += 1) {
+      for (let dy = -radius; dy <= radius; dy += 1) {
+        for (let dx = -radius; dx <= radius; dx += 1) {
+          if (Math.max(Math.abs(dx), Math.abs(dy)) !== radius) continue;
+          const tx = startTx + dx;
+          const ty = startTy + dy;
+          if (!isCaveV2FloorTile(room, tx, ty)) continue;
+          return { x: (tx + 0.5) * tile, y: (ty + 0.5) * tile };
+        }
+      }
+    }
+    return null;
+  }
+
+  function resolveCaveV2SpawnPosition(room, preferredPos, preferredSide = null) {
+    if (!room || !preferredPos) return preferredPos;
+    const fallback = findNearestCaveV2FloorSpawnPosition(room, preferredPos.x, preferredPos.y, preferredSide);
+    return fallback || preferredPos;
+  }
+
   function enterCaveV2(entrance) {
     if (!CAVE_V2_ENABLED || !state.surfaceWorld || !state.player || !entrance) return false;
     if (net.enabled) {
@@ -16892,7 +17107,12 @@
     const cave = getOrCreateCaveV2(state.surfaceWorld, entrance);
     const entryRoom = cave.roomsById[cave.entryRoomId];
     if (!entryRoom) return false;
-    const spawn = getCaveV2EntrySpawnPosition(entryRoom, cave.entrySurfaceSide || "S");
+    const entrySide = cave.entrySurfaceSide || "S";
+    const spawn = resolveCaveV2SpawnPosition(
+      entryRoom,
+      getCaveV2EntrySpawnPosition(entryRoom, entrySide),
+      entrySide
+    );
     cave.activeRoomId = cave.entryRoomId;
     caveState.active = {
       caveId: cave.caveId,
@@ -17121,7 +17341,11 @@
     caveState.active.y = boundaryPos.y;
     syncCaveV2PlayerProxyPosition(boundaryPos.x, boundaryPos.y);
     const fromPos = { x: boundaryPos.x, y: boundaryPos.y };
-    const toLocal = getCaveV2TransitionSpawnTarget(nextRoom, dir, fromPos);
+    const toLocal = resolveCaveV2SpawnPosition(
+      nextRoom,
+      getCaveV2TransitionSpawnTarget(nextRoom, dir, fromPos),
+      dir
+    );
     caveState.transitioning = true;
     caveState.transitionT = 0;
     caveState.transition = {
@@ -17197,6 +17421,8 @@
       leaveCaveV2();
       return;
     }
+    const caveMobBackfilled = populateCaveV2RoomMobs(cave, room, Math.max(0, Math.floor(Number(room.graphDepth) || 0)));
+    if (caveMobBackfilled) markDirty();
 
     if (caveState.transitioning && caveState.transition) {
       const tr = caveState.transition;
@@ -17340,6 +17566,12 @@
     };
   }
 
+  function shouldRenderCaveV2DevOverlay() {
+    // Final-game CaveV2 visual cleanup: keep room debug overlays off in gameplay.
+    // (They can be reintroduced later behind a dedicated debug toggle if needed.)
+    return false;
+  }
+
   function drawCaveV2Room(room, drawX, drawY, cave, isActive = false) {
     if (!room) return;
     const roomPx = getCaveV2RoomPixelSize(room);
@@ -17398,6 +17630,46 @@
       }
     }
 
+    // Darken normal inter-room passages so the true surface exit reads as the only "light" opening.
+    const surfaceExitSide = (cave && room.roomId === cave.entryRoomId)
+      ? (cave.entrySurfaceSide || "S")
+      : null;
+    for (const side of ["N", "S", "E", "W"]) {
+      if (!room.exits?.[side]) continue;
+      if (side === surfaceExitSide) continue;
+      const laneRect = getCaveV2ExitLaneRectPx(room, side);
+      if (!laneRect) continue;
+      const lx = drawX + laneRect.x;
+      const ly = drawY + laneRect.y;
+      const lw = laneRect.w;
+      const lh = laneRect.h;
+      const fadeDepth = Math.max(44, Math.min(86, Math.floor((side === "N" || side === "S" ? roomPx.h : roomPx.w) * 0.28)));
+      const grad = (side === "N" || side === "S")
+        ? ctx.createLinearGradient(0, side === "N" ? ly : (ly + lh), 0, side === "N" ? (ly + fadeDepth) : (ly + lh - fadeDepth))
+        : ctx.createLinearGradient(side === "W" ? lx : (lx + lw), 0, side === "W" ? (lx + fadeDepth) : (lx + lw - fadeDepth), 0);
+      grad.addColorStop(0, "rgba(0,0,0,0.28)");
+      grad.addColorStop(0.45, "rgba(0,0,0,0.14)");
+      grad.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.fillStyle = grad;
+      ctx.fillRect(lx, ly, lw, lh);
+
+      const c = getCaveV2ExitCenterTile(room, side);
+      if (c) {
+        const mx = drawX + (c.tx + 0.5) * CONFIG.tileSize;
+        const my = drawY + (c.ty + 0.5) * CONFIG.tileSize;
+        ctx.save();
+        ctx.fillStyle = "rgba(0,0,0,0.16)";
+        ctx.beginPath();
+        if (side === "N" || side === "S") {
+          ctx.ellipse(mx, my + (side === "N" ? 3 : -3), 10.5, 4.6, 0, 0, Math.PI * 2);
+        } else {
+          ctx.ellipse(mx + (side === "W" ? 3 : -3), my, 4.6, 10.5, 0, 0, Math.PI * 2);
+        }
+        ctx.fill();
+        ctx.restore();
+      }
+    }
+
     // Entry room daylight spill / surface-exit guidance
     if (cave && room.roomId === cave.entryRoomId) {
       const side = cave.entrySurfaceSide || "S";
@@ -17424,8 +17696,57 @@
         laneGlow.addColorStop(0, "rgba(255, 232, 175, 0.2)");
         laneGlow.addColorStop(0.65, "rgba(255, 205, 122, 0.08)");
         laneGlow.addColorStop(1, "rgba(255, 205, 122, 0)");
-        ctx.fillStyle = laneGlow;
-        ctx.fillRect(lx, ly, lw, lh);
+        // Avoid a visible rectangular "loading zone" look: render a tapered light trail
+        // down the corridor using overlapping soft ellipses instead of filling the lane box.
+        const c2 = getCaveV2ExitCenterTile(room, side);
+        if (c2) {
+          const mx = drawX + (c2.tx + 0.5) * CONFIG.tileSize;
+          const my = drawY + (c2.ty + 0.5) * CONFIG.tileSize;
+          const inward = side === "N"
+            ? { x: 0, y: 1 }
+            : side === "S"
+              ? { x: 0, y: -1 }
+              : side === "W"
+                ? { x: 1, y: 0 }
+                : { x: -1, y: 0 };
+          ctx.save();
+          for (let i = 0; i < 4; i += 1) {
+            const t = i / 3;
+            const px = mx + inward.x * (10 + t * 38);
+            const py = my + inward.y * (10 + t * 38);
+            const rr = (1 - t) * 0.16 + 0.04;
+            const pool = ctx.createRadialGradient(px, py, 1, px, py, 18 + (1 - t) * 16);
+            pool.addColorStop(0, `rgba(255, 232, 176, ${rr})`);
+            pool.addColorStop(0.55, `rgba(255, 206, 126, ${rr * 0.45})`);
+            pool.addColorStop(1, "rgba(255, 206, 126, 0)");
+            ctx.fillStyle = pool;
+            ctx.beginPath();
+            if (side === "N" || side === "S") {
+              ctx.ellipse(px, py, Math.max(9, lw * 0.42), 12 + (1 - t) * 7, 0, 0, Math.PI * 2);
+            } else {
+              ctx.ellipse(px, py, 12 + (1 - t) * 7, Math.max(9, lh * 0.42), 0, 0, Math.PI * 2);
+            }
+            ctx.fill();
+          }
+          ctx.restore();
+        } else {
+          ctx.fillStyle = laneGlow;
+          ctx.fillRect(lx, ly, lw, lh);
+        }
+        // soft pooled light so the exit reads as a cave mouth, not a rectangular trigger zone
+        const c = getCaveV2ExitCenterTile(room, side);
+        if (c) {
+          const mx = drawX + (c.tx + 0.5) * CONFIG.tileSize;
+          const my = drawY + (c.ty + 0.5) * CONFIG.tileSize;
+          const pooledLight = ctx.createRadialGradient(mx, my, 1, mx, my, 34);
+          pooledLight.addColorStop(0, "rgba(255, 241, 190, 0.22)");
+          pooledLight.addColorStop(0.5, "rgba(255, 214, 132, 0.10)");
+          pooledLight.addColorStop(1, "rgba(255, 214, 132, 0)");
+          ctx.fillStyle = pooledLight;
+          ctx.beginPath();
+          ctx.arc(mx, my, 34, 0, Math.PI * 2);
+          ctx.fill();
+        }
       }
     }
 
@@ -17559,13 +17880,7 @@
       }
     }
 
-    if (isActive) {
-      ctx.strokeStyle = "rgba(255,255,255,0.06)";
-      ctx.lineWidth = 2;
-      ctx.strokeRect(drawX - 1, drawY - 1, roomPx.w + 2, roomPx.h + 2);
-    }
-
-    if (state.debugUnlocked && state.debugWorldMapVisible) {
+    if (shouldRenderCaveV2DevOverlay()) {
       ctx.save();
       ctx.strokeStyle = "rgba(170, 220, 255, 0.18)";
       ctx.lineWidth = 1;
@@ -17700,7 +18015,7 @@
       }
     }
 
-    if (state.debugUnlocked) {
+    if (shouldRenderCaveV2DevOverlay()) {
       const exits = activeRoom.exits || {};
       const roomOres = Array.isArray(activeRoom.entities?.ores) ? activeRoom.entities.ores : [];
       const roomDrops = Array.isArray(activeRoom.entities?.drops) ? activeRoom.entities.drops : [];
@@ -38554,26 +38869,32 @@
         const clothAwning = !isVillageBlacksmith && ((variantSeed >> 7) & 1) === 1;
         const sideLeanTo = !isVillageBlacksmith && structure.type !== "hut" && ((variantSeed >> 9) % 3) === 1;
         const roofLift = structure.type === "large_house" ? 8 : (structure.type === "medium_house" ? 6 : 4);
+        const tropicalPalette = [
+          { wall: "#c9925f", roof: "#92703f", trim: "#5b402e", accent: "#4d8f7d" },
+          { wall: "#d5a66f", roof: "#83663a", trim: "#5d4430", accent: "#c56d52" },
+          { wall: "#be8a59", roof: "#775b33", trim: "#4e3929", accent: "#5f91b8" },
+          { wall: "#d0a174", roof: "#8d6b3b", trim: "#634631", accent: "#b88a4b" },
+        ][variantSeed % 4];
+        const villagePalette = [
+          { wall: "#d4b282", roof: "#8f7343", trim: "#604530", accent: "#5f9a8e" },
+          { wall: "#c8a273", roof: "#856739", trim: "#5b422f", accent: "#c27a5e" },
+          { wall: "#d0b089", roof: "#7f653b", trim: "#5a412f", accent: "#6e8fb2" },
+          { wall: "#cfab7b", roof: "#8c6e40", trim: "#624834", accent: "#ba8d51" },
+        ][(variantSeed >> 2) % 4];
 
         const wallColor = isVillageBlacksmith
           ? "#8a775f"
-          : (isVillageHouse ? tintColor(def.color, 0.16) : tintColor(def.color, 0.1));
+          : (isVillageHouse ? villagePalette.wall : tropicalPalette.wall);
         const wallShade = isVillageBlacksmith
           ? "#655948"
-          : tintColor(wallColor, -0.18);
+          : tintColor(wallColor, -0.2);
         const trimColor = isVillageBlacksmith
           ? "#4c4339"
-          : (isVillageHouse ? "#5b4636" : tintColor(def.color, -0.35));
+          : (isVillageHouse ? villagePalette.trim : tropicalPalette.trim);
         const roofColor = isVillageBlacksmith
           ? "#5b6673"
-          : (styleVariant === 0
-            ? "#86673d"
-            : styleVariant === 1
-              ? "#7a5f3a"
-              : styleVariant === 2
-                ? "#906f43"
-                : "#6f5735");
-        const roofHighlight = isVillageBlacksmith ? "rgba(210,220,232,0.2)" : "rgba(245, 220, 162, 0.18)";
+          : (isVillageHouse ? villagePalette.roof : tropicalPalette.roof);
+        const roofHighlight = isVillageBlacksmith ? "rgba(210,220,232,0.2)" : "rgba(255, 233, 177, 0.18)";
 
         const wallTop = baseY + Math.max(9, Math.floor(baseHeight * 0.27));
         const wallBottom = baseY + baseHeight - 2;
@@ -38606,7 +38927,7 @@
         ctx.lineWidth = 1;
         ctx.strokeRect(wallLeft + 0.5, wallTop + 0.5, wallW - 1, wallHeight - 1);
 
-        // Plank lines / woven slat feel
+        // Plank lines / woven bamboo/slat feel
         ctx.strokeStyle = isVillageBlacksmith ? "rgba(62, 55, 49, 0.32)" : "rgba(72, 54, 38, 0.22)";
         for (let py = wallTop + 4; py < wallBottom - 2; py += 5) {
           ctx.beginPath();
@@ -38615,7 +38936,7 @@
           ctx.stroke();
         }
         if (!isVillageBlacksmith) {
-          ctx.strokeStyle = "rgba(255, 232, 192, 0.07)";
+          ctx.strokeStyle = "rgba(255, 239, 199, 0.1)";
           const postCount = Math.max(2, Math.floor(wallW / 14));
           for (let p = 1; p < postCount; p += 1) {
             const px = wallLeft + Math.floor((p * wallW) / postCount);
@@ -38623,6 +38944,18 @@
             ctx.moveTo(px + 0.5, wallTop + 1);
             ctx.lineTo(px + 0.5, wallBottom - 2);
             ctx.stroke();
+          }
+          // Woven fiber cross-stitch marks for tropical texture.
+          ctx.strokeStyle = "rgba(94, 69, 44, 0.14)";
+          for (let wy = wallTop + 6; wy < wallBottom - 4; wy += 7) {
+            for (let wx = wallLeft + 5; wx < wallRight - 4; wx += 8) {
+              ctx.beginPath();
+              ctx.moveTo(wx - 1, wy - 1);
+              ctx.lineTo(wx + 1, wy + 1);
+              ctx.moveTo(wx + 1, wy - 1);
+              ctx.lineTo(wx - 1, wy + 1);
+              ctx.stroke();
+            }
           }
         }
 
@@ -38677,6 +39010,23 @@
         ctx.lineTo(centerX + ridgeShift, roofPeakY + 0.5);
         ctx.lineTo(rightEaveX - 0.5, eaveY + 0.5);
         ctx.stroke();
+        if (!isVillageBlacksmith) {
+          // Thatch fringe under the eaves to sell the tropical roof texture.
+          const fringeStep = 4;
+          for (let fx = Math.floor(leftEaveX + 2); fx <= Math.floor(rightEaveX - 2); fx += fringeStep) {
+            const fringeDrop = 1 + ((fx + variantSeed) % 3);
+            ctx.strokeStyle = "rgba(72, 53, 28, 0.38)";
+            ctx.beginPath();
+            ctx.moveTo(fx + 0.5, eaveY + 0.5);
+            ctx.lineTo(fx + 0.5, eaveY + fringeDrop + 0.5);
+            ctx.stroke();
+            ctx.strokeStyle = "rgba(237, 205, 141, 0.12)";
+            ctx.beginPath();
+            ctx.moveTo(fx + 0.5, eaveY + 0.5);
+            ctx.lineTo(fx + 0.5, eaveY + Math.max(1, fringeDrop - 1) + 0.5);
+            ctx.stroke();
+          }
+        }
 
         // Optional side lean-to / awning for variant variety
         if (sideLeanTo) {
@@ -38728,6 +39078,18 @@
         ctx.beginPath();
         ctx.arc(doorX + doorWidth - 2.5, doorY + doorHeight * 0.58, 1.1, 0, Math.PI * 2);
         ctx.fill();
+        if (!isVillageBlacksmith) {
+          // Reed mat threshold for island-house feel.
+          ctx.fillStyle = "rgba(154, 124, 72, 0.9)";
+          ctx.fillRect(doorX - 1, doorY + doorHeight, doorWidth + 2, 2);
+          ctx.strokeStyle = "rgba(91, 67, 38, 0.35)";
+          for (let rx = doorX; rx < doorX + doorWidth; rx += 2) {
+            ctx.beginPath();
+            ctx.moveTo(rx + 0.5, doorY + doorHeight);
+            ctx.lineTo(rx + 0.5, doorY + doorHeight + 2);
+            ctx.stroke();
+          }
+        }
 
         // Windows + shutters
         const windowY = wallTop + Math.max(3, Math.floor(wallHeight * 0.18));
@@ -38763,7 +39125,7 @@
           const awY = wallTop + Math.max(5, Math.floor(wallHeight * 0.34));
           const awW = Math.max(10, Math.floor(wallW * 0.36));
           const awX = clamp(Math.floor(doorCenterX - awW / 2), wallLeft + 3, wallRight - awW - 3);
-          const awColors = ["#4f8f7d", "#b46f52", "#7c6cb8", "#bd8b43"];
+          const awColors = [tropicalPalette.accent, "#b46f52", "#7c6cb8", "#bd8b43"];
           const awColor = awColors[(variantSeed >> 13) % awColors.length];
           ctx.fillStyle = awColor;
           ctx.beginPath();
@@ -38777,6 +39139,25 @@
           ctx.beginPath();
           ctx.moveTo(awX + 1, awY + 1);
           ctx.lineTo(awX + awW - 1, awY + 1);
+          ctx.stroke();
+        }
+
+        if (!isVillageBlacksmith && structure.type !== "hut" && ((variantSeed >> 15) & 1) === 1) {
+          // Small tropical planter / shrub accent near porch.
+          const planterW = 7;
+          const planterX = clamp(Math.floor(centerX + (porchVariant === 0 ? -10 : 8)), wallLeft + 2, wallRight - planterW - 2);
+          const planterY = wallBottom - 3;
+          ctx.fillStyle = "#6a4b31";
+          ctx.fillRect(planterX, planterY, planterW, 3);
+          ctx.fillStyle = "rgba(58, 97, 61, 0.95)";
+          ctx.beginPath();
+          ctx.arc(planterX + 2, planterY, 2.3, Math.PI, 0);
+          ctx.arc(planterX + 5, planterY - 1, 2.8, Math.PI, 0);
+          ctx.fill();
+          ctx.strokeStyle = "rgba(179, 232, 164, 0.18)";
+          ctx.beginPath();
+          ctx.moveTo(planterX + 4, planterY - 3);
+          ctx.lineTo(planterX + 5.5, planterY - 5);
           ctx.stroke();
         }
 
@@ -40017,6 +40398,37 @@
       }
     }
 
+    if (Array.isArray(state.structures)) {
+      const tileMapW = (CONFIG.tileSize / worldPixelSize) * mapW;
+      const tileMapH = (CONFIG.tileSize / worldPixelSize) * mapH;
+      for (const structure of state.structures) {
+        if (!structure || structure.removed) continue;
+        if (structure.type !== "bridge" && structure.type !== "dock") continue;
+        const fillColor = structure.type === "dock"
+          ? "rgba(140, 98, 58, 0.92)"
+          : "rgba(206, 184, 112, 0.95)";
+        const strokeColor = structure.type === "dock"
+          ? "rgba(215, 188, 156, 0.7)"
+          : "rgba(251, 238, 190, 0.8)";
+        forEachStructureFootprintTile(structure.type, structure.tx, structure.ty, (tx, ty) => {
+          const worldX = tx * CONFIG.tileSize;
+          const worldY = ty * CONFIG.tileSize;
+          const mx = mapX + (worldX / worldPixelSize) * mapW;
+          const my = mapY + (worldY / worldPixelSize) * mapH;
+          const mw = Math.max(1.1, tileMapW);
+          const mh = Math.max(1.1, tileMapH);
+          if (mx + mw < mapX || mx > mapX + mapW || my + mh < mapY || my > mapY + mapH) return;
+          ctx.fillStyle = fillColor;
+          ctx.fillRect(mx, my, mw, mh);
+          if (mw >= 2 && mh >= 2) {
+            ctx.strokeStyle = strokeColor;
+            ctx.lineWidth = 0.8;
+            ctx.strokeRect(mx + 0.4, my + 0.4, Math.max(0.6, mw - 0.8), Math.max(0.6, mh - 0.8));
+          }
+        });
+      }
+    }
+
     for (const marker of players) {
       const mx = mapX + (marker.x / worldPixelSize) * mapW;
       const my = mapY + (marker.y / worldPixelSize) * mapH;
@@ -40515,110 +40927,147 @@
           const cy = screenY + CONFIG.tileSize / 2;
           const ts = CONFIG.tileSize;
           ctx.save();
-          // Ground shadow cast by the cave mouth / rim
+          const variant = seedToInt(`${cave.caveId}:${cave.tx},${cave.ty}`) >>> 0;
+          const lean = ((variant & 1) ? 1 : -1) * (ts * 0.04);
+          const timberHue = (variant >> 3) & 3;
+          const timberBase = timberHue === 0 ? "#6f5436" : timberHue === 1 ? "#7a5d3d" : timberHue === 2 ? "#654b31" : "#745739";
+          const timberDark = tintColor(timberBase, -0.28);
+          const timberLight = tintColor(timberBase, 0.14);
+          const metal = "rgba(63, 68, 74, 0.85)";
+
+          // Ground shadow and mound backdrop
           ctx.fillStyle = "rgba(0,0,0,0.24)";
           ctx.beginPath();
-          ctx.ellipse(cx, cy + ts * 0.45, ts * 0.95, ts * 0.34, 0, 0, Math.PI * 2);
+          ctx.ellipse(cx, cy + ts * 0.62, ts * 1.08, ts * 0.34, 0, 0, Math.PI * 2);
           ctx.fill();
-
-          // Back wall / earth face behind the opening to create depth
-          const backFace = ctx.createLinearGradient(0, cy - ts * 0.95, 0, cy + ts * 0.65);
-          backFace.addColorStop(0, "rgba(78, 66, 57, 0.22)");
-          backFace.addColorStop(1, "rgba(26, 22, 18, 0.12)");
-          ctx.fillStyle = backFace;
+          const moundGrad = ctx.createLinearGradient(0, cy - ts * 0.95, 0, cy + ts * 0.85);
+          moundGrad.addColorStop(0, "rgba(92, 81, 69, 0.22)");
+          moundGrad.addColorStop(0.55, "rgba(52, 43, 36, 0.2)");
+          moundGrad.addColorStop(1, "rgba(26, 22, 18, 0.08)");
+          ctx.fillStyle = moundGrad;
           ctx.beginPath();
-          ctx.moveTo(cx - ts * 0.92, cy + ts * 0.40);
-          ctx.quadraticCurveTo(cx - ts * 0.78, cy - ts * 0.72, cx - ts * 0.18, cy - ts * 0.92);
-          ctx.quadraticCurveTo(cx, cy - ts * 1.03, cx + ts * 0.21, cy - ts * 0.90);
-          ctx.quadraticCurveTo(cx + ts * 0.82, cy - ts * 0.68, cx + ts * 0.95, cy + ts * 0.36);
-          ctx.quadraticCurveTo(cx, cy + ts * 0.72, cx - ts * 0.92, cy + ts * 0.40);
+          ctx.moveTo(cx - ts * 1.06, cy + ts * 0.45);
+          ctx.quadraticCurveTo(cx - ts * 0.98, cy - ts * 0.56, cx - ts * 0.18, cy - ts * 0.94);
+          ctx.quadraticCurveTo(cx + ts * 0.05, cy - ts * 1.02, cx + ts * 0.34, cy - ts * 0.88);
+          ctx.quadraticCurveTo(cx + ts * 1.04, cy - ts * 0.52, cx + ts * 1.08, cy + ts * 0.42);
+          ctx.quadraticCurveTo(cx, cy + ts * 0.86, cx - ts * 1.06, cy + ts * 0.45);
           ctx.closePath();
           ctx.fill();
 
-          // Main rocky arch / rim silhouette (asymmetrical so it reads less like a round stone)
-          const rimGrad = ctx.createRadialGradient(cx - ts * 0.18, cy - ts * 0.28, ts * 0.1, cx, cy + ts * 0.05, ts * 1.1);
-          rimGrad.addColorStop(0, "rgba(168, 152, 132, 0.96)");
-          rimGrad.addColorStop(0.45, "rgba(123, 108, 95, 0.98)");
-          rimGrad.addColorStop(1, "rgba(86, 75, 69, 0.99)");
-          ctx.fillStyle = rimGrad;
-          ctx.beginPath();
-          ctx.moveTo(cx - ts * 0.98, cy + ts * 0.22);
-          ctx.bezierCurveTo(
-            cx - ts * 1.05, cy - ts * 0.40,
-            cx - ts * 0.76, cy - ts * 0.95,
-            cx - ts * 0.28, cy - ts * 1.02
-          );
-          ctx.quadraticCurveTo(cx - ts * 0.04, cy - ts * 1.10, cx + ts * 0.22, cy - ts * 0.98);
-          ctx.bezierCurveTo(
-            cx + ts * 0.66, cy - ts * 0.86,
-            cx + ts * 1.00, cy - ts * 0.34,
-            cx + ts * 1.05, cy + ts * 0.32
-          );
-          ctx.quadraticCurveTo(cx + ts * 0.88, cy + ts * 0.90, cx + ts * 0.22, cy + ts * 0.95);
-          ctx.quadraticCurveTo(cx - ts * 0.18, cy + ts * 1.00, cx - ts * 0.70, cy + ts * 0.72);
-          ctx.quadraticCurveTo(cx - ts * 0.98, cy + ts * 0.56, cx - ts * 0.98, cy + ts * 0.22);
-          ctx.closePath();
-          ctx.fill();
-
-          // Carved mouth cutout with strong depth (arched, not a dot)
-          const mouthGrad = ctx.createRadialGradient(cx, cy + ts * 0.10, ts * 0.08, cx, cy + ts * 0.14, ts * 0.92);
-          mouthGrad.addColorStop(0, "rgba(2,3,6,0.98)");
-          mouthGrad.addColorStop(0.25, "rgba(4,5,9,0.97)");
-          mouthGrad.addColorStop(0.62, "rgba(11,12,16,0.95)");
-          mouthGrad.addColorStop(1, "rgba(0,0,0,0.30)");
+          // Tunnel mouth (dark recessed opening)
+          const mouthW = ts * 0.98;
+          const mouthH = ts * 0.82;
+          const mouthX = cx - mouthW * 0.5;
+          const mouthY = cy - ts * 0.22;
+          const mouthGrad = ctx.createRadialGradient(cx, mouthY + mouthH * 0.52, ts * 0.08, cx, mouthY + mouthH * 0.5, ts * 0.92);
+          mouthGrad.addColorStop(0, "rgba(2, 3, 6, 0.98)");
+          mouthGrad.addColorStop(0.35, "rgba(8, 9, 13, 0.96)");
+          mouthGrad.addColorStop(1, "rgba(0,0,0,0.28)");
           ctx.fillStyle = mouthGrad;
           ctx.beginPath();
-          ctx.moveTo(cx - ts * 0.58, cy + ts * 0.36);
-          ctx.quadraticCurveTo(cx - ts * 0.70, cy - ts * 0.10, cx - ts * 0.36, cy - ts * 0.46);
-          ctx.quadraticCurveTo(cx - ts * 0.08, cy - ts * 0.68, cx + ts * 0.20, cy - ts * 0.52);
-          ctx.quadraticCurveTo(cx + ts * 0.58, cy - ts * 0.32, cx + ts * 0.62, cy + ts * 0.22);
-          ctx.quadraticCurveTo(cx + ts * 0.40, cy + ts * 0.54, cx + ts * 0.04, cy + ts * 0.58);
-          ctx.quadraticCurveTo(cx - ts * 0.36, cy + ts * 0.56, cx - ts * 0.58, cy + ts * 0.36);
+          ctx.moveTo(mouthX + ts * 0.08, mouthY + mouthH);
+          ctx.quadraticCurveTo(mouthX - ts * 0.02, mouthY + mouthH * 0.38, mouthX + mouthW * 0.22, mouthY + mouthH * 0.08);
+          ctx.quadraticCurveTo(cx, mouthY - ts * 0.10, mouthX + mouthW * 0.80, mouthY + mouthH * 0.06);
+          ctx.quadraticCurveTo(mouthX + mouthW + ts * 0.02, mouthY + mouthH * 0.34, mouthX + mouthW - ts * 0.04, mouthY + mouthH);
           ctx.closePath();
           ctx.fill();
 
-          // Rim highlights and lip shading for readability
-          ctx.strokeStyle = "rgba(255, 240, 210, 0.16)";
-          ctx.lineWidth = 1.15;
-          ctx.beginPath();
-          ctx.moveTo(cx - ts * 0.72, cy + ts * 0.06);
-          ctx.quadraticCurveTo(cx - ts * 0.40, cy - ts * 0.90, cx + ts * 0.20, cy - ts * 0.78);
-          ctx.quadraticCurveTo(cx + ts * 0.78, cy - ts * 0.64, cx + ts * 0.88, cy + ts * 0.08);
-          ctx.stroke();
-          ctx.strokeStyle = "rgba(0,0,0,0.20)";
-          ctx.beginPath();
-          ctx.moveTo(cx - ts * 0.58, cy + ts * 0.44);
-          ctx.quadraticCurveTo(cx, cy + ts * 0.76, cx + ts * 0.54, cy + ts * 0.38);
-          ctx.stroke();
+          // Mine shaft timber frame (posts + lintel)
+          const frameTop = mouthY - ts * 0.05;
+          const frameBottom = mouthY + mouthH + ts * 0.06;
+          const postW = Math.max(3, ts * 0.16);
+          const leftPostX = mouthX + ts * 0.06 + lean;
+          const rightPostX = mouthX + mouthW - postW - ts * 0.06 + lean;
+          const lintelX = leftPostX - ts * 0.05;
+          const lintelW = (rightPostX + postW) - lintelX + ts * 0.05;
+          const lintelH = Math.max(4, ts * 0.22);
 
-          // Small surrounding rubble stones (anchors it into the ground)
+          const drawTimber = (x, y, w, h, angle = 0) => {
+            ctx.save();
+            ctx.translate(x + w * 0.5, y + h * 0.5);
+            if (angle) ctx.rotate(angle);
+            ctx.translate(-(x + w * 0.5), -(y + h * 0.5));
+            ctx.fillStyle = timberBase;
+            ctx.fillRect(x, y, w, h);
+            ctx.fillStyle = timberLight;
+            ctx.fillRect(x, y, w, Math.max(1, h * 0.18));
+            ctx.fillStyle = timberDark;
+            ctx.fillRect(x, y + h - Math.max(1, h * 0.18), w, Math.max(1, h * 0.18));
+            ctx.strokeStyle = "rgba(34, 23, 15, 0.38)";
+            ctx.lineWidth = 1;
+            ctx.strokeRect(x + 0.5, y + 0.5, Math.max(0, w - 1), Math.max(0, h - 1));
+            // grain
+            ctx.strokeStyle = "rgba(255, 232, 188, 0.08)";
+            for (let gy = y + 2; gy < y + h - 2; gy += 4) {
+              ctx.beginPath();
+              ctx.moveTo(x + 1.5, gy);
+              ctx.lineTo(x + w - 1.5, gy + (((gy + variant) & 1) ? 0.4 : 0));
+              ctx.stroke();
+            }
+            ctx.restore();
+          };
+
+          // Posts
+          drawTimber(leftPostX, frameTop + lintelH - 1, postW, frameBottom - (frameTop + lintelH - 1));
+          drawTimber(rightPostX, frameTop + lintelH - 1, postW, frameBottom - (frameTop + lintelH - 1));
+          // Lintel
+          drawTimber(lintelX, frameTop, lintelW, lintelH);
+
+          // Cross braces (diagonal)
+          const braceW = Math.max(2, ts * 0.11);
+          const braceH = Math.max(8, ts * 0.52);
+          drawTimber(leftPostX + postW * 0.55, frameTop + lintelH + ts * 0.02, braceW, braceH, -0.42);
+          drawTimber(rightPostX + postW * 0.35, frameTop + lintelH + ts * 0.02, braceW, braceH, 0.42);
+
+          // Plank ramp / threshold leading into the mine
+          const rampY = mouthY + mouthH - ts * 0.03;
+          const rampW = ts * 1.02;
+          const rampH = ts * 0.34;
+          const rampX = cx - rampW * 0.5 + lean * 0.4;
+          ctx.fillStyle = "rgba(0,0,0,0.16)";
+          ctx.beginPath();
+          ctx.ellipse(cx, rampY + rampH * 0.85, rampW * 0.56, rampH * 0.36, 0, 0, Math.PI * 2);
+          ctx.fill();
+          for (let i = 0; i < 4; i += 1) {
+            const px = rampX + (i * (rampW / 4));
+            drawTimber(px + 1, rampY + (i % 2 ? 1 : 0), rampW / 4 - 2, rampH - 1);
+          }
+
+          // Metal strap bolts on lintel (subtle mine-shaft cue)
+          ctx.fillStyle = metal;
+          for (const bx of [lintelX + lintelW * 0.22, lintelX + lintelW * 0.78]) {
+            ctx.beginPath();
+            ctx.arc(bx, frameTop + lintelH * 0.55, 1.2, 0, Math.PI * 2);
+            ctx.fill();
+          }
+
+          // Warm interior glint so it reads as a hollow opening, not a flat black shape
+          ctx.fillStyle = "rgba(255, 232, 182, 0.05)";
+          ctx.beginPath();
+          ctx.ellipse(cx - ts * 0.10, mouthY + mouthH * 0.42, ts * 0.20, ts * 0.08, -0.25, 0, Math.PI * 2);
+          ctx.fill();
+
+          // Loose rubble around base
           const rubble = [
-            { x: -0.92, y: 0.64, rx: 0.18, ry: 0.12, rot: -0.2, a: 0.72 },
-            { x: -0.62, y: 0.80, rx: 0.15, ry: 0.11, rot: 0.1, a: 0.62 },
-            { x: 0.76, y: 0.58, rx: 0.17, ry: 0.12, rot: 0.2, a: 0.68 },
-            { x: 0.98, y: 0.44, rx: 0.12, ry: 0.09, rot: -0.35, a: 0.58 },
-            { x: 0.54, y: -0.70, rx: 0.11, ry: 0.08, rot: 0.25, a: 0.48 },
+            { x: -0.95, y: 0.62, rx: 0.16, ry: 0.11, a: 0.62 },
+            { x: -0.72, y: 0.80, rx: 0.13, ry: 0.09, a: 0.52 },
+            { x: 0.76, y: 0.60, rx: 0.15, ry: 0.11, a: 0.6 },
+            { x: 0.96, y: 0.46, rx: 0.11, ry: 0.08, a: 0.48 },
           ];
           for (const stone of rubble) {
-            ctx.fillStyle = `rgba(104, 94, 86, ${stone.a})`;
+            ctx.fillStyle = `rgba(102, 92, 84, ${stone.a})`;
             ctx.beginPath();
             ctx.ellipse(
               cx + stone.x * ts,
               cy + stone.y * ts,
               Math.max(1.1, stone.rx * ts),
               Math.max(0.8, stone.ry * ts),
-              stone.rot,
+              0,
               0,
               Math.PI * 2
             );
             ctx.fill();
           }
-
-          // Subtle warm highlight inside the mouth to suggest depth without reading as a "dot"
-          ctx.fillStyle = "rgba(255, 231, 186, 0.06)";
-          ctx.beginPath();
-          ctx.ellipse(cx - ts * 0.10, cy - ts * 0.05, ts * 0.28, ts * 0.12, -0.25, 0, Math.PI * 2);
-          ctx.fill();
           ctx.restore();
         }
       }

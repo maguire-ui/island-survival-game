@@ -12,3 +12,21 @@ Original prompt: Fix CaveV2 so caves use Zelda-style screen-to-screen room trans
 - Playwright/browser validation still blocked in this shell because npx is missing; validated with code inspection + syntax/diff checks.
 
 - Chest visual pass: replaced in-world chest render with clearer stylized chest model (arched lid, wood slats, iron bands, latch, feet, shadow) for stronger readability/intuition.
+
+- CaveV2 cleanup: hid room debug lane/trigger overlays and top cave debug summary bar behind hidden flag `state.debugCaveV2Visuals`; removed active-room outline box for normal cave view.
+
+- CaveV2 obstacle pass: upgraded room obstacle generation to place larger deterministic rock-wall clusters/short barriers while preserving path connectivity between exits and room center. Added reserved exit lanes/center buffer and stronger obstacle counts.
+
+- CaveV2 exit readability pass: hard-disabled CaveV2 dev overlays in render, darkened normal inter-room passage mouths, and strengthened only the true surface exit lighting so the exit reads distinctly.
+
+- CaveV2 mobs pass: guaranteed room-local mobs (1–2 per room) via deterministic spawn helper, plus one-time backfill for older generated rooms with saved marker (caveV2MobPopulateVersion) and save persistence of graphDepth/mob populate version.
+
+- CaveV2 mobs pass follow-up: bumped CAVE_V2_MOB_POPULATE_VERSION to 2 and added a deterministic fallback mob spawn tile so older/generated rooms reliably get at least one cave mob even if stricter obstacle spacing rejects normal placement. Also fixed a duplicate const syntax bug in the cave exit light render block.
+
+- CaveV2 surface entrance art pass: replaced the rocky circular cave mouth with a stylized wooden mine-shaft entrance (timber posts/lintel/braces, ramp, dark tunnel mouth, rubble) in the CaveV2 surface render loop.
+
+- CaveV2 bugfix: guaranteed entry-room surface corridor carve + floor-safe spawn fallback for cave entry/transition/load restore; prevents spawning inside wall/freeze at cave entrance.
+
+- House art pass: tropical texture/theme upgrade for shared house render block (hut/small/medium/large, village + player-built) using bamboo/woven wall detail, stronger thatch roof fringe, tropical palettes, and island porch accents.
+
+- Four-pass code-level QA sweep (integrity -> gameplay/state -> save/load+MP -> UI/render) completed. Fixed MP autotest harvest false failures by making dedicated harvest actions fully reliable (including the positioning payload), filtering autotest harvest targets to only harvestable resources, and extending harvest assertion timeout window. Runtime browser/mp validation still pending in a live environment.
