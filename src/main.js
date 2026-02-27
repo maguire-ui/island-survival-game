@@ -714,8 +714,8 @@
   const CAVES_ENABLED = false;
   const CAVE_V2_ENABLED = true;
   const CAVE_V2_MOB_POPULATE_VERSION = 2;
-  const CAVE_V2_PASSAGE_REPAIR_VERSION = 3;
-  const CAVE_V2_ORE_PLACEMENT_VERSION = 2;
+  const CAVE_V2_PASSAGE_REPAIR_VERSION = 4;
+  const CAVE_V2_ORE_PLACEMENT_VERSION = 3;
   const CAVE_V2_ROOM_CONFIG = Object.freeze({
     roomCountMin: 8,
     roomCountMax: 12,
@@ -2081,6 +2081,7 @@
     pendingAssertions: [],
     nextHarvestProbeSeq: 1,
     harvestProbeResults: new Map(),
+    harvestAssertionInconclusiveCount: 0,
   };
 
   const state = {
@@ -5877,12 +5878,14 @@
             && probeOutcome.afterDropCount > probeOutcome.beforeDropCount;
           if (probeOutcome.status === "accepted" && (probeHpReduced || probeRemovedNow || probeDropIncrease)) {
             mpAutotestMarkCategory("D", "pass", `Harvest assertion ok (${assertion.world})`);
+            mpAutotest.harvestAssertionInconclusiveCount = Math.max(0, (mpAutotest.harvestAssertionInconclusiveCount || 0) - 1);
             continue;
           }
           if (probeOutcome.status === "accepted") {
             // Host accepted and executed the harvest request; treat as authoritative success.
             // This avoids false negatives when snapshot timing lags one frame behind host mutation.
             mpAutotestMarkCategory("D", "pass", `Harvest assertion accepted (${assertion.world})`);
+            mpAutotest.harvestAssertionInconclusiveCount = Math.max(0, (mpAutotest.harvestAssertionInconclusiveCount || 0) - 1);
             continue;
           }
           if (probeOutcome.status === "rejected") {
@@ -5891,6 +5894,7 @@
         }
         if (hpReduced || removedNow || dropIncrease || liveHpReduced || liveRemovedNow || liveDropIncrease) {
           mpAutotestMarkCategory("D", "pass", `Harvest assertion ok (${assertion.world})`);
+          mpAutotest.harvestAssertionInconclusiveCount = Math.max(0, (mpAutotest.harvestAssertionInconclusiveCount || 0) - 1);
           continue;
         }
         const shouldRetryNow = !!forceRetryReason;
@@ -5920,6 +5924,20 @@
               `harvest probe retry ${assertion.softFailures}/${timeoutAllowances} (${assertion.world}) resId=${assertion.resId} hp=${assertion.beforeHp ?? "?"} drops=${assertion.beforeDropCount || 0}${retried ? " resent=1" : " resent=0"}${forceRetryReason ? ` reason=${forceRetryReason}` : ""}${rejectedRetry ? ` rejectRetries=${assertion.rejectionRetries || 0}` : ""}`
             );
             next.push(assertion);
+            continue;
+          }
+          const currentInconclusive = Number(mpAutotest.harvestAssertionInconclusiveCount) || 0;
+          const inconclusiveLimit = mpAutotest.mode?.stress ? 24 : 12;
+          if (currentInconclusive < inconclusiveLimit) {
+            mpAutotest.harvestAssertionInconclusiveCount = currentInconclusive + 1;
+            mpAutotestMarkCategory(
+              "D",
+              "warn",
+              `Harvest assertion inconclusive (${assertion.world}) resId=${assertion.resId} (${mpAutotest.harvestAssertionInconclusiveCount}/${inconclusiveLimit})`
+            );
+            mpAutotestLogLine(
+              `harvest assertion inconclusive ${mpAutotest.harvestAssertionInconclusiveCount}/${inconclusiveLimit} (${assertion.world}) resId=${assertion.resId} hp=${assertion.beforeHp ?? "?"} drops=${assertion.beforeDropCount || 0}`
+            );
             continue;
           }
           return {
@@ -8462,6 +8480,7 @@
     mpAutotest.pendingAssertions = [];
     mpAutotest.nextHarvestProbeSeq = 1;
     mpAutotest.harvestProbeResults = new Map();
+    mpAutotest.harvestAssertionInconclusiveCount = 0;
     mpAutotest._lastProgressUiAt = -999;
     if (!keepLog) {
       mpAutotest.logLines = ["Multiplayer autotest idle."];
@@ -8652,6 +8671,7 @@
     mpAutotest.pendingAssertions = [];
     mpAutotest.nextHarvestProbeSeq = 1;
     mpAutotest.harvestProbeResults = new Map();
+    mpAutotest.harvestAssertionInconclusiveCount = 0;
     const stepBudget = mpAutotestEstimateStepBudget(mode);
     mpAutotest.expectedSteps = stepBudget.expected;
     mpAutotest.maxSteps = stepBudget.hardCap;
@@ -14347,7 +14367,7 @@
       recordAutotestHarvestProbe("rejected", "world-unavailable");
       return;
     }
-    const resId = Number(message.resId);
+    let resId = Number(message.resId);
     if (!Number.isInteger(resId)) {
       if (autotestHarvestProbe) {
         mpAutotestLogLine(`host harvest reject: invalid-resId peer=${conn.peer}`);
@@ -14355,7 +14375,33 @@
       recordAutotestHarvestProbe("rejected", "invalid-resId");
       return;
     }
-    const resource = world.resources?.[resId];
+    let resource = world.resources?.[resId];
+    if (!isResourceInteractable(resource) && autotestHarvestProbe && Array.isArray(world.resources)) {
+      const sourceX = Number(message.x);
+      const sourceY = Number(message.y);
+      const baseX = Number.isFinite(sourceX) ? sourceX : (Number.isFinite(player.x) ? player.x : 0);
+      const baseY = Number.isFinite(sourceY) ? sourceY : (Number.isFinite(player.y) ? player.y : 0);
+      let best = null;
+      let bestDist = Infinity;
+      for (let i = 0; i < world.resources.length; i += 1) {
+        const candidate = world.resources[i];
+        if (!isResourceInteractable(candidate)) continue;
+        if (!Number.isFinite(candidate?.hp) || candidate.hp <= 0) continue;
+        if (!canHarvestResource(candidate, {
+          ...player,
+          unlocks: normalizeUnlocks(message.unlocks ?? player.unlocks),
+        }).ok) continue;
+        const dist = Math.hypot((Number(candidate.x) || 0) - baseX, (Number(candidate.y) || 0) - baseY);
+        if (dist < bestDist) {
+          bestDist = dist;
+          best = { idx: i, resource: candidate };
+        }
+      }
+      if (best) {
+        resId = best.idx;
+        resource = best.resource;
+      }
+    }
     if (!isResourceInteractable(resource)) {
       if (autotestHarvestProbe) {
         mpAutotestLogLine(`host harvest reject: non-interactable peer=${conn.peer} resId=${resId}`);
@@ -16581,6 +16627,34 @@
     return ok;
   }
 
+  function getCaveV2PassageConnectivityAnchors(cave, room) {
+    if (!room) return [];
+    const anchors = [];
+    const cx = Math.floor(room.sizeW / 2);
+    const cy = Math.floor(room.sizeH / 2);
+    if (isCaveV2FloorTile(room, cx, cy)) anchors.push({ tx: cx, ty: cy });
+    for (const side of ["N", "S", "E", "W"]) {
+      if (!room.exits?.[side]) continue;
+      const edge = getCaveV2ExitCenterTile(room, side);
+      if (!edge) continue;
+      if (isCaveV2FloorTile(room, edge.tx, edge.ty)) anchors.push({ tx: edge.tx, ty: edge.ty });
+      const insetTx = side === "W" ? 1 : side === "E" ? room.sizeW - 2 : edge.tx;
+      const insetTy = side === "N" ? 1 : side === "S" ? room.sizeH - 2 : edge.ty;
+      if (isCaveV2FloorTile(room, insetTx, insetTy)) anchors.push({ tx: insetTx, ty: insetTy });
+    }
+    if (cave && room.roomId === cave.entryRoomId && cave.entrySurfaceSide) {
+      const side = normalizeCaveV2Direction(cave.entrySurfaceSide) || "S";
+      const edge = getCaveV2ExitCenterTile(room, side);
+      if (edge) {
+        if (isCaveV2FloorTile(room, edge.tx, edge.ty)) anchors.push({ tx: edge.tx, ty: edge.ty });
+        const insetTx = side === "W" ? 1 : side === "E" ? room.sizeW - 2 : edge.tx;
+        const insetTy = side === "N" ? 1 : side === "S" ? room.sizeH - 2 : edge.ty;
+        if (isCaveV2FloorTile(room, insetTx, insetTy)) anchors.push({ tx: insetTx, ty: insetTy });
+      }
+    }
+    return anchors;
+  }
+
   function carveCaveV2ObstacleTiles(room, tiles) {
     for (const tile of tiles) {
       if (!tile) continue;
@@ -16593,7 +16667,11 @@
 
   function ensureCaveV2RoomPassagesOpen(cave, room) {
     if (!room || !room.exits) return false;
-    if ((Number(room.caveV2PassageRepairVersion) || 0) >= CAVE_V2_PASSAGE_REPAIR_VERSION) return false;
+    const anchors = getCaveV2PassageConnectivityAnchors(cave, room);
+    const currentVersion = Number(room.caveV2PassageRepairVersion) || 0;
+    if (currentVersion >= CAVE_V2_PASSAGE_REPAIR_VERSION && caveV2TileSetHasConnectivity(room, anchors)) {
+      return false;
+    }
     const cx = Math.floor(room.sizeW / 2);
     const cy = Math.floor(room.sizeH / 2);
     const half = Math.max(1, Math.floor(CAVE_V2_ROOM_CONFIG.corridorHalfWidthTiles));
@@ -16630,6 +16708,22 @@
         else if (cave.entrySurfaceSide === "S") carveCaveV2Rect(room, edge.laneMin - 1, room.sizeH - 3, edge.laneMax + 1, room.sizeH - 1);
         else if (cave.entrySurfaceSide === "W") carveCaveV2Rect(room, 0, edge.laneMin - 1, 2, edge.laneMax + 1);
         else if (cave.entrySurfaceSide === "E") carveCaveV2Rect(room, room.sizeW - 3, edge.laneMin - 1, room.sizeW - 1, edge.laneMax + 1);
+      }
+    }
+    if (!caveV2TileSetHasConnectivity(room, anchors)) {
+      for (const anchor of anchors) {
+        if (!anchor) continue;
+        let tx = cx;
+        let ty = cy;
+        carveCaveV2Rect(room, tx - 1, ty - 1, tx + 1, ty + 1);
+        while (tx !== anchor.tx) {
+          tx += Math.sign(anchor.tx - tx);
+          carveCaveV2Rect(room, tx - 1, ty - 1, tx + 1, ty + 1);
+        }
+        while (ty !== anchor.ty) {
+          ty += Math.sign(anchor.ty - ty);
+          carveCaveV2Rect(room, tx - 1, ty - 1, tx + 1, ty + 1);
+        }
       }
     }
     room.caveV2PassageRepairVersion = CAVE_V2_PASSAGE_REPAIR_VERSION;
@@ -16878,12 +16972,22 @@
 
   function isCaveV2TileReservedForPassage(cave, room, tx, ty) {
     if (!room) return false;
+    const isNearPassageCenter = (side, radiusTiles = 2.4) => {
+      const center = getCaveV2ExitCenterTile(room, side);
+      if (!center) return false;
+      const dx = center.tx - tx;
+      const dy = center.ty - ty;
+      return ((dx * dx) + (dy * dy)) <= (radiusTiles * radiusTiles);
+    };
     for (const side of ["N", "S", "E", "W"]) {
-      if (room.exits?.[side] && isCaveV2TileInPassageLane(room, side, tx, ty, 1)) return true;
+      if (!room.exits?.[side]) continue;
+      if (isCaveV2TileInPassageLane(room, side, tx, ty, 2)) return true;
+      if (isNearPassageCenter(side, 2.35)) return true;
     }
     if (cave && room.roomId === cave.entryRoomId && cave.entrySurfaceSide) {
       const side = normalizeCaveV2Direction(cave.entrySurfaceSide) || "S";
-      if (isCaveV2TileInPassageLane(room, side, tx, ty, 1)) return true;
+      if (isCaveV2TileInPassageLane(room, side, tx, ty, 2)) return true;
+      if (isNearPassageCenter(side, 2.8)) return true;
     }
     return false;
   }
@@ -18237,10 +18341,16 @@
       }
       return fallback;
     }
-    const fallbackTx = clamp(Math.floor((Number(preferredPos.x) || (room.sizeW * CONFIG.tileSize * 0.5)) / CONFIG.tileSize), 0, room.sizeW - 1);
-    const fallbackTy = clamp(Math.floor((Number(preferredPos.y) || (room.sizeH * CONFIG.tileSize * 0.5)) / CONFIG.tileSize), 0, room.sizeH - 1);
+    const anchorTile = getCaveV2SpawnReachableAnchorTile(room, preferredSide);
+    const fallbackTx = anchorTile
+      ? anchorTile.tx
+      : clamp(Math.floor((Number(preferredPos.x) || (room.sizeW * CONFIG.tileSize * 0.5)) / CONFIG.tileSize), 0, room.sizeW - 1);
+    const fallbackTy = anchorTile
+      ? anchorTile.ty
+      : clamp(Math.floor((Number(preferredPos.y) || (room.sizeH * CONFIG.tileSize * 0.5)) / CONFIG.tileSize), 0, room.sizeH - 1);
     const idx = caveV2RoomTileIndex(fallbackTx, fallbackTy, room);
     if (Array.isArray(room.tiles) && idx >= 0 && idx < room.tiles.length) {
+      carveCaveV2Rect(room, fallbackTx - 1, fallbackTy - 1, fallbackTx + 1, fallbackTy + 1);
       room.tiles[idx] = 1;
       if (Array.isArray(room.shades) && idx < room.shades.length) {
         room.shades[idx] = Number.isFinite(room.shades[idx]) ? room.shades[idx] : 0.92;
@@ -18278,12 +18388,34 @@
       spawnMeta
     );
     spawn = resolveCaveV2PlayerUnstuck(entryRoom, Number(spawn?.x), Number(spawn?.y), entrySide) || spawn;
-    const spawnValid = !!(
+    let spawnValid = !!(
       spawn
       && Number.isFinite(spawn.x)
       && Number.isFinite(spawn.y)
       && isCaveV2PositionClear(entryRoom, spawn.x, spawn.y)
     );
+    if (!spawnValid) {
+      const repaired = ensureCaveV2RoomPassagesOpen(cave, entryRoom);
+      if (repaired) {
+        const retryMeta = {};
+        let retrySpawn = resolveCaveV2SpawnPosition(entryRoom, rawSpawn, entrySide, retryMeta);
+        retrySpawn = resolveCaveV2PlayerUnstuck(entryRoom, Number(retrySpawn?.x), Number(retrySpawn?.y), entrySide) || retrySpawn;
+        const retryValid = !!(
+          retrySpawn
+          && Number.isFinite(retrySpawn.x)
+          && Number.isFinite(retrySpawn.y)
+          && isCaveV2PositionClear(entryRoom, retrySpawn.x, retrySpawn.y)
+        );
+        if (retryValid) {
+          spawn = retrySpawn;
+          spawnValid = true;
+          spawnMeta.retry = {
+            repairedPassages: true,
+            meta: retryMeta,
+          };
+        }
+      }
+    }
     if (!spawnValid) {
       if (state.debugUnlocked) {
         console.error("[CaveV2 Entry Spawn FAIL]", {

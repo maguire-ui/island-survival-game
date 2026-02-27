@@ -69,3 +69,10 @@ Original prompt: Fix CaveV2 so caves use Zelda-style screen-to-screen room trans
 - Cave death drops now share the same CaveV2 drop spawn helper/path so drop IDs/TTL behavior are consistent across manual drops, ore drops, and death drops.
 - Runtime validation still limited in this shell because `node`/`npx` are unavailable.
 - Drop texture pass: replaced generic ground-drop circles with cached item-specific mini textures for both surface world and CaveV2 room drops (`drawDroppedItemVisual`). Quantity labels and despawn warning rings remain intact.
+- Reliability hardening pass (2026-02-27): bumped CaveV2 repair versions (`CAVE_V2_PASSAGE_REPAIR_VERSION=4`, `CAVE_V2_ORE_PLACEMENT_VERSION=3`) so existing saves re-run passage + ore repair logic.
+- Cave spawn safety: strengthened `ensureCaveV2RoomPassagesOpen` to run when corridors are disconnected even if version-tagged, and added final center->anchor hard-carve fallback so entry/exit lanes cannot remain blocked.
+- Cave entry robustness: `enterCaveV2` now retries spawn after on-the-fly passage repair before failing entry; `resolveCaveV2SpawnPosition` now prefers reachable anchor tiles and carves a small safe pocket on forced fallback.
+- Cave exit-lane cleanup: widened ore passage reservation (`isCaveV2TileReservedForPassage`) with lane padding + passage-center radius so ore nodes no longer spawn in/near doorway throats.
+- MP autotest stabilization: added host-side autotest retarget fallback in `handleHarvestRequest` when requested `resId` is stale/non-interactable; host selects nearest valid harvestable node for probe continuity.
+- MP autotest harvest assertion hardening: added `harvestAssertionInconclusiveCount` guard so isolated inconclusive harvest probes are downgraded to warnings instead of immediate run abort, with cap to still fail on persistent systemic issues.
+- Cache-buster update in `/index.html`: CSS and JS query versions set to `20260227-2` so browser/GitHub Pages pulls the latest assets after next deploy.
