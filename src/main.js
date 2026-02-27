@@ -741,8 +741,8 @@
     mobOreClearanceTiles: 1.9,
     mobEdgeClearanceTiles: 2,
     mobSpeedScale: 0.72,
-    obstacleMinPerRoom: 3,
-    obstacleMaxPerRoom: 6,
+    obstacleMinPerRoom: 4,
+    obstacleMaxPerRoom: 8,
     obstacleAnchorSpacingTiles: 2.9,
     obstacleExitClearanceTiles: 4.8,
     corridorJitterMaxTiles: 2,
@@ -18711,8 +18711,42 @@
             ctx.fillRect(sx + CONFIG.tileSize - 2, sy, 2, CONFIG.tileSize);
           }
         } else {
-          ctx.fillStyle = "rgba(22, 18, 16, 0.98)";
-          ctx.fillRect(sx, sy, CONFIG.tileSize, CONFIG.tileSize);
+          const n = ((x * 31337) ^ (y * 9119) ^ (room.decorSeed || 0)) >>> 0;
+          const leftFloor = x > 0 && !!room.tiles[caveV2RoomTileIndex(x - 1, y, room)];
+          const rightFloor = x < room.sizeW - 1 && !!room.tiles[caveV2RoomTileIndex(x + 1, y, room)];
+          const upFloor = y > 0 && !!room.tiles[caveV2RoomTileIndex(x, y - 1, room)];
+          const downFloor = y < room.sizeH - 1 && !!room.tiles[caveV2RoomTileIndex(x, y + 1, room)];
+          const nearFloor = leftFloor || rightFloor || upFloor || downFloor;
+          if (!nearFloor) {
+            ctx.fillStyle = "rgba(20, 16, 14, 0.98)";
+            ctx.fillRect(sx, sy, CONFIG.tileSize, CONFIG.tileSize);
+          } else {
+            const blockShade = 0.54 + (((n >> 3) & 7) - 3) * 0.012;
+            const br = Math.floor(48 * blockShade + 9);
+            const bg = Math.floor(39 * blockShade + 8);
+            const bb = Math.floor(34 * blockShade + 10);
+            ctx.fillStyle = `rgb(${br}, ${bg}, ${bb})`;
+            ctx.fillRect(sx, sy, CONFIG.tileSize, CONFIG.tileSize);
+
+            // Raised stone block bevel so blocked tiles read as solid obstacles.
+            ctx.fillStyle = "rgba(255,255,255,0.05)";
+            ctx.fillRect(sx, sy, CONFIG.tileSize, 2);
+            ctx.fillRect(sx, sy, 2, CONFIG.tileSize);
+            ctx.fillStyle = "rgba(0,0,0,0.18)";
+            ctx.fillRect(sx, sy + CONFIG.tileSize - 2, CONFIG.tileSize, 2);
+            ctx.fillRect(sx + CONFIG.tileSize - 2, sy, 2, CONFIG.tileSize);
+
+            if (downFloor) {
+              ctx.fillStyle = "rgba(255, 241, 210, 0.06)";
+              ctx.fillRect(sx + 2, sy + CONFIG.tileSize - 4, CONFIG.tileSize - 4, 2);
+            } else if (upFloor) {
+              ctx.fillStyle = "rgba(0,0,0,0.12)";
+              ctx.fillRect(sx + 2, sy + 2, CONFIG.tileSize - 4, 2);
+            }
+            ctx.strokeStyle = "rgba(0,0,0,0.22)";
+            ctx.lineWidth = 1;
+            ctx.strokeRect(sx + 0.5, sy + 0.5, CONFIG.tileSize - 1, CONFIG.tileSize - 1);
+          }
         }
       }
     }
