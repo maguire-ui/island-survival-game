@@ -281,7 +281,7 @@
       attackCooldown: 1.18,
       aggroRange: 236,
       rangedRange: CONFIG.tileSize * 4.9,
-      dayImmune: true,
+      dayImmune: false,
       poisonDuration: 7.5,
       poisonDps: 1.45,
       drop: {
@@ -1715,10 +1715,12 @@
     maxPassengers: 5,
     minSpawnDistanceFromSpawnTiles: 24,
     maxSpawnDistanceFromSpawnTiles: 190,
-    speedMax: 272,
-    accel: 380,
-    drag: 0.91,
-    turnSpeed: 2.2,
+    preferredSpawnDistanceFromSpawnTilesMin: 72,
+    preferredSpawnDistanceFromSpawnTilesMax: 168,
+    speedMax: CONFIG.moveSpeed * 1.5,
+    accel: CONFIG.moveSpeed * 2.9,
+    drag: 0.97,
+    turnSpeed: 2.6,
     remoteInputTimeout: 0.35,
     repairCost: Object.freeze({
       wood: MAX_STACK * 2,
@@ -1761,15 +1763,21 @@
   });
 
   const AMBIENT_FISH_CONFIG = Object.freeze({
-    maxFish: 16,
-    spawnIntervalMin: 1.5,
-    spawnIntervalMax: 3.4,
-    lifeMin: 4.2,
-    lifeMax: 9.2,
+    maxFish: 24,
+    spawnIntervalMin: 1.0,
+    spawnIntervalMax: 2.7,
+    lifeMin: 5.2,
+    lifeMax: 10.8,
     speedMin: 14,
     speedMax: 24,
     sizeMin: 4.5,
     sizeMax: 8.6,
+  });
+  const OCEAN_DECOR_CONFIG = Object.freeze({
+    shimmerMod: 19,
+    coralMod: 131,
+    reefMod: 149,
+    kelpMod: 163,
   });
 
   const TREE_TRUNK = "#7a5a2f";
@@ -1940,6 +1948,7 @@
     screenScale: 0.23,
   });
   const DEBUG_WILD_ROBOT_TOGGLE_HEIGHT = 24;
+  const DEBUG_WORLD_MAP_TOGGLE_GAP = 4;
   const DEBUG_BOAT_RECEIPT_MAX = 192;
   const ROBOT_STORAGE_SIZE = CHEST_SIZE;
   const ROBOT_MODE = Object.freeze({
@@ -1998,6 +2007,7 @@
   const inventorySlots = [];
   const chestSlots = [];
   const itemTextureCache = new Map();
+  const groundDropTextureCache = new Map();
   const ITEM_TEXTURE_CACHE_VERSION = 4;
   const qaRuntime = {
     runTimer: QA_SELF_TEST_CONFIG.runInterval,
@@ -2154,6 +2164,7 @@
     debugInfiniteHealth: SETTINGS_DEFAULTS.debugInfiniteHealth,
     debugWorldMapVisible: false,
     debugShowAbandonedRobot: false,
+    debugShowRepairableShip: false,
     debugContinentalShift: false,
     debugPlaceRepairedBoat: false,
     debugBoatPlacePending: false,
@@ -2751,6 +2762,7 @@
       state.debugInfiniteHealth = false;
       state.debugWorldMapVisible = false;
       state.debugShowAbandonedRobot = false;
+      state.debugShowRepairableShip = false;
       state.debugContinentalShift = false;
       state.debugPlaceRepairedBoat = false;
       state.debugBoatPlacePending = false;
@@ -3655,6 +3667,11 @@
             const qty = Math.floor(Number(drop.qty) || 0);
             if (qty <= 0 || qty > MAX_STACK) {
               qaPushIssue(issues, `[caveV2:${caveId}:${roomId}] Drop qty invalid`);
+              break;
+            }
+            const ttl = Number(drop.ttl);
+            if (!Number.isFinite(ttl) || ttl < 0 || ttl > DROP_DESPAWN.lifetime) {
+              qaPushIssue(issues, `[caveV2:${caveId}:${roomId}] Drop ttl invalid`);
               break;
             }
             const tx = Math.floor(drop.x / CONFIG.tileSize);
@@ -16191,6 +16208,17 @@
     return state.caveV2;
   }
 
+  function getActiveCaveV2Context() {
+    if (!isCaveV2Active()) return null;
+    const caveState = getCaveV2State();
+    const active = caveState.active;
+    if (!active) return null;
+    const cave = caveState.cavesById?.[active.caveId];
+    const room = cave?.roomsById?.[active.roomId];
+    if (!cave || !room) return null;
+    return { caveState, active, cave, room };
+  }
+
   function buildCaveV2EntranceSurfaceKey(world, tx, ty) {
     const seed = String(world?.seed ?? "island");
     return `${seed}:${tx},${ty}`;
@@ -17161,33 +17189,145 @@
     return false;
   }
 
-  function createCaveV2OreDrops(cave, room, ore, itemId, qty) {
-    if (!cave || !room || !ore || !itemId) return 0;
+  function spawnCaveV2RoomDrop(cave, room, itemId, qty, x, y, idScope = "drop", ttl = DROP_DESPAWN.lifetime) {
+    if (!cave || !room || !itemId || !ITEMS[itemId]) return null;
+    const amount = clamp(Math.floor(Number(qty) || 0), 1, MAX_STACK);
+    if (amount <= 0) return null;
     room.entities = room.entities || { ores: [], mobs: [], drops: [] };
     room.entities.drops = Array.isArray(room.entities.drops) ? room.entities.drops : [];
-    const count = clamp(Math.floor(Number(qty) || 0), 1, 8);
     cave.nextDropSeq = Math.max(1, Math.floor(Number(cave.nextDropSeq) || 1));
+    const drop = {
+      id: `${cave.caveId}:${room.roomId}:${String(idScope || "drop")}:${cave.nextDropSeq}`,
+      itemId,
+      qty: amount,
+      x: Number(x) || 0,
+      y: Number(y) || 0,
+      ttl: clamp(Number(ttl) || DROP_DESPAWN.lifetime, 0, DROP_DESPAWN.lifetime),
+    };
+    cave.nextDropSeq += 1;
+    if (!clampCaveV2DropToFloor(room, drop)) return null;
+    room.entities.drops.push(drop);
+    return drop;
+  }
+
+  function getCaveV2DropSpawnPosition(room, active, facing, tilesAway = 2) {
+    if (!room || !active) {
+      return { x: Number(active?.x) || 0, y: Number(active?.y) || 0 };
+    }
+    const tile = CONFIG.tileSize;
+    const roomPx = getCaveV2RoomPixelSize(room);
+    const dirX = Number.isFinite(facing?.x) ? facing.x : 1;
+    const dirY = Number.isFinite(facing?.y) ? facing.y : 0;
+    const len = Math.hypot(dirX, dirY) || 1;
+    const nx = dirX / len;
+    const ny = dirY / len;
+    const distance = tile * Math.max(1, Number(tilesAway) || 1);
+    const px = Number(active.x) || 0;
+    const py = Number(active.y) || 0;
+    const targetX = clamp(px + nx * distance, tile * 0.5, roomPx.w - tile * 0.5);
+    const targetY = clamp(py + ny * distance, tile * 0.5, roomPx.h - tile * 0.5);
+    const targetTx = Math.floor(targetX / tile);
+    const targetTy = Math.floor(targetY / tile);
+    const minDropDistance = tile * 1.35;
+    if (isCaveV2FloorTile(room, targetTx, targetTy)) {
+      const centerX = (targetTx + 0.5) * tile;
+      const centerY = (targetTy + 0.5) * tile;
+      if (Math.hypot(centerX - px, centerY - py) >= minDropDistance) {
+        return { x: centerX, y: centerY };
+      }
+    }
+    let best = null;
+    let bestScore = Infinity;
+    for (let radius = 1; radius <= 3; radius += 1) {
+      for (let dy = -radius; dy <= radius; dy += 1) {
+        for (let dx = -radius; dx <= radius; dx += 1) {
+          if (Math.max(Math.abs(dx), Math.abs(dy)) !== radius) continue;
+          const tx = targetTx + dx;
+          const ty = targetTy + dy;
+          if (!isCaveV2FloorTile(room, tx, ty)) continue;
+          const centerX = (tx + 0.5) * tile;
+          const centerY = (ty + 0.5) * tile;
+          const fromPlayer = Math.hypot(centerX - px, centerY - py);
+          if (fromPlayer < minDropDistance) continue;
+          const score = Math.hypot(centerX - targetX, centerY - targetY);
+          if (score < bestScore) {
+            bestScore = score;
+            best = { x: centerX, y: centerY };
+          }
+        }
+      }
+      if (best) return best;
+    }
+    const candidate = {
+      x: clamp(targetX, tile * 0.5, roomPx.w - tile * 0.5),
+      y: clamp(targetY, tile * 0.5, roomPx.h - tile * 0.5),
+    };
+    if (!clampCaveV2DropToFloor(room, candidate)) {
+      candidate.x = clamp(px, tile * 0.5, roomPx.w - tile * 0.5);
+      candidate.y = clamp(py, tile * 0.5, roomPx.h - tile * 0.5);
+      clampCaveV2DropToFloor(room, candidate);
+    }
+    return candidate;
+  }
+
+  function createCaveV2OreDrops(cave, room, ore, itemId, qty) {
+    if (!cave || !room || !ore || !itemId) return 0;
+    const count = clamp(Math.floor(Number(qty) || 0), 1, 8);
     let created = 0;
     for (let i = 0; i < count; i += 1) {
       const angle = ((cave.nextDropSeq * 1.61803398875) + i * 0.83) % (Math.PI * 2);
       const radius = 4 + ((cave.nextDropSeq + i) % 6);
-      const drop = {
-        id: `${cave.caveId}:${room.roomId}:drop:${ore.id}:${cave.nextDropSeq}:${i}`,
-        itemId,
-        qty: 1,
-        x: (Number(ore.x) || 0) + Math.cos(angle) * radius,
-        y: (Number(ore.y) || 0) + Math.sin(angle) * radius,
-      };
-      cave.nextDropSeq += 1;
-      if (!clampCaveV2DropToFloor(room, drop)) {
-        drop.x = Number(ore.x) || 0;
-        drop.y = Number(ore.y) || 0;
-        if (!clampCaveV2DropToFloor(room, drop)) continue;
-      }
-      room.entities.drops.push(drop);
-      created += 1;
+      const ox = (Number(ore.x) || 0) + Math.cos(angle) * radius;
+      const oy = (Number(ore.y) || 0) + Math.sin(angle) * radius;
+      const drop = spawnCaveV2RoomDrop(cave, room, itemId, 1, ox, oy, `ore:${ore.id}:${i}`);
+      if (drop) created += 1;
     }
     return created;
+  }
+
+  function updateCaveV2RoomDrops(cave, room, dt = 0) {
+    if (!cave || !room) return false;
+    room.entities = room.entities || { ores: [], mobs: [], drops: [] };
+    room.entities.drops = Array.isArray(room.entities.drops) ? room.entities.drops : [];
+    const step = Number.isFinite(dt) ? Math.max(0, dt) : 0;
+    let changed = false;
+    for (let i = room.entities.drops.length - 1; i >= 0; i -= 1) {
+      const drop = room.entities.drops[i];
+      if (!drop || !drop.itemId || !ITEMS[drop.itemId]) {
+        room.entities.drops.splice(i, 1);
+        changed = true;
+        continue;
+      }
+      const qty = Math.floor(Number(drop.qty) || 0);
+      if (qty <= 0) {
+        room.entities.drops.splice(i, 1);
+        changed = true;
+        continue;
+      }
+      drop.qty = clamp(qty, 1, MAX_STACK);
+      if (!Number.isFinite(drop.x) || !Number.isFinite(drop.y)) {
+        room.entities.drops.splice(i, 1);
+        changed = true;
+        continue;
+      }
+      if (!clampCaveV2DropToFloor(room, drop)) {
+        room.entities.drops.splice(i, 1);
+        changed = true;
+        continue;
+      }
+      let ttl = Number(drop.ttl);
+      if (!Number.isFinite(ttl)) {
+        ttl = DROP_DESPAWN.lifetime;
+        changed = true;
+      }
+      drop.ttl = Math.max(0, Math.min(DROP_DESPAWN.lifetime, ttl) - step);
+      if (drop.ttl <= 0) {
+        room.entities.drops.splice(i, 1);
+        changed = true;
+      }
+    }
+    if (changed) markDirty();
+    return changed;
   }
 
   function attemptHarvestCaveV2Ore(cave, room, ore) {
@@ -17635,6 +17775,9 @@
           qty: clamp(Math.floor(Number(drop?.qty) || 0), 1, MAX_STACK),
           x: Number(drop?.x) || 0,
           y: Number(drop?.y) || 0,
+          ttl: Number.isFinite(drop?.ttl)
+            ? clamp(Number(drop.ttl), 0, DROP_DESPAWN.lifetime)
+            : DROP_DESPAWN.lifetime,
         })).filter((drop) => isKnownItemId(drop.itemId)),
       },
     };
@@ -17740,6 +17883,9 @@
         qty: clamp(Math.floor(Number(rawDrop?.qty) || 0), 1, MAX_STACK),
         x: Number(rawDrop?.x) || 0,
         y: Number(rawDrop?.y) || 0,
+        ttl: Number.isFinite(rawDrop?.ttl)
+          ? clamp(Number(rawDrop.ttl), 0, DROP_DESPAWN.lifetime)
+          : DROP_DESPAWN.lifetime,
       };
       if (drop.qty <= 0) continue;
       if (!clampCaveV2DropToFloor(room, drop)) continue;
@@ -18605,6 +18751,7 @@
       }
     }
 
+    updateCaveV2RoomDrops(cave, room, dt);
     const nearestOre = uiLock ? null : findNearestCaveV2Ore(room, caveState.active.x, caveState.active.y, CONFIG.interactRange);
     caveState.targetOreId = nearestOre?.ore?.id || null;
     caveState.targetDropId = null;
@@ -18993,25 +19140,19 @@
       if (!drop || !drop.itemId || !Number.isFinite(drop.x) || !Number.isFinite(drop.y)) continue;
       const dx = drawX + drop.x;
       const dy = drawY + drop.y;
-      const itemVisual = ITEM_VISUALS[drop.itemId];
-      const dropColor = ORE_COLORS[drop.itemId] || itemVisual?.bg || "#8bb0d8";
-      ctx.fillStyle = "rgba(0,0,0,0.17)";
-      ctx.beginPath();
-      ctx.ellipse(dx, dy + 5, 6, 2.4, 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = dropColor;
-      ctx.beginPath();
-      ctx.arc(dx, dy, 6.1, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = "rgba(255,255,255,0.22)";
-      ctx.beginPath();
-      ctx.arc(dx - 2, dy - 2, 1.8, 0, Math.PI * 2);
-      ctx.fill();
+      const pulseSeed = (seedToInt(String(drop.id || drop.itemId)) >>> 0) % 997;
+      const bob = Math.sin((performance.now() * 0.006) + (pulseSeed * 0.17)) * 0.7;
+      drawDroppedItemVisual(drop, dx, dy, {
+        alpha: 0.98,
+        size: 13.6,
+        shadowScale: 1,
+        bobOffset: bob,
+      });
       if (drop.qty > 1) {
         ctx.fillStyle = "rgba(240,248,255,0.9)";
         ctx.font = "10px Trebuchet MS";
         ctx.textAlign = "center";
-        ctx.fillText(String(drop.qty), dx, dy - 9);
+        ctx.fillText(String(drop.qty), dx, dy - 10 + bob);
       }
     }
 
@@ -24788,9 +24929,40 @@
   }
 
   function normalizeLegacyStructureType(type) {
-    if (type === "hut") return "small_house";
+    if (typeof type !== "string") return type;
+    const normalized = type.trim();
+    if (!normalized) return type;
+    const lower = normalized.toLowerCase();
+    if (lower === "hut") return "small_house";
     // Lanterns were removed; fold old saves/snapshots into campfires.
-    if (type === "lantern") return "campfire";
+    if (lower === "lantern") return "campfire";
+    // Legacy house aliases from older saves/branches.
+    if (
+      lower === "house"
+      || lower === "house_small"
+      || lower === "smallhouse"
+      || lower === "small-house"
+      || lower === "village_house"
+      || lower === "village_small_house"
+    ) return "small_house";
+    if (
+      lower === "house_medium"
+      || lower === "mediumhouse"
+      || lower === "medium-house"
+      || lower === "village_medium_house"
+    ) return "medium_house";
+    if (
+      lower === "house_large"
+      || lower === "largehouse"
+      || lower === "large-house"
+      || lower === "village_large_house"
+    ) return "large_house";
+    // Generic safety: if a legacy type still clearly encodes a house size, recover it.
+    if (lower.includes("house")) {
+      if (lower.includes("large")) return "large_house";
+      if (lower.includes("medium")) return "medium_house";
+      if (lower.includes("small")) return "small_house";
+    }
     return type;
   }
 
@@ -25042,21 +25214,18 @@
     return wrapped;
   }
 
-  function mapWorldInputToShipControls(input, shipAngle) {
+  function mapWorldInputToShipControls(input) {
     const worldX = clamp(Number(input?.x) || 0, -1, 1);
     const worldY = clamp(Number(input?.y) || 0, -1, 1);
     if (Math.abs(worldX) < 0.001 && Math.abs(worldY) < 0.001) {
       return { turn: 0, throttle: 0 };
     }
-
-    const forwardX = Math.cos(shipAngle);
-    const forwardY = Math.sin(shipAngle);
-    const rightX = -forwardY;
-    const rightY = forwardX;
-    const throttle = clamp(worldX * forwardX + worldY * forwardY, -1, 1);
-    const turn = clamp(worldX * rightX + worldY * rightY, -1, 1);
-
-    return { turn, throttle };
+    // Intuitive ship controls: horizontal input steers, vertical input throttles.
+    // Up/Down are forward/reverse regardless of the ship's current heading.
+    return {
+      turn: worldX,
+      throttle: clamp(-worldY, -1, 1),
+    };
   }
 
   function getAbandonedShipSeatOffsets() {
@@ -26060,6 +26229,21 @@
       );
   }
 
+  function isRepairableAbandonedShipStructure(structure) {
+    if (!structure || structure.removed || structure.type !== "abandoned_ship") return false;
+    const ship = ensureAbandonedShipMeta(structure);
+    return !!ship && !ship.repaired;
+  }
+
+  function getRepairableAbandonedShipStructures() {
+    if (!Array.isArray(state.structures)) return [];
+    return state.structures.filter((structure) => isRepairableAbandonedShipStructure(structure));
+  }
+
+  function hasRepairableAbandonedShip() {
+    return getRepairableAbandonedShipStructures().length > 0;
+  }
+
   function getWildSpawnRobots() {
     if (!Array.isArray(state.structures)) return [];
     return state.structures.filter((structure) => (
@@ -26551,7 +26735,52 @@
     };
   }
 
-  function isAbandonedShipStructureValid(world, structure, outerIslands = null) {
+  function getPreferredAbandonedShipIslands(world) {
+    if (!world || !Array.isArray(world.islands)) return [];
+    const spawn = getSpawnAnchorTile(world);
+    const preferredMin = Math.max(
+      ABANDONED_SHIP_CONFIG.minSpawnDistanceFromSpawnTiles + 6,
+      ABANDONED_SHIP_CONFIG.preferredSpawnDistanceFromSpawnTilesMin,
+    );
+    const preferredMax = Math.min(
+      ABANDONED_SHIP_CONFIG.maxSpawnDistanceFromSpawnTiles,
+      ABANDONED_SHIP_CONFIG.preferredSpawnDistanceFromSpawnTilesMax,
+    );
+    const preferredCenter = (preferredMin + preferredMax) * 0.5;
+    const candidates = world.islands.filter((island) => (
+      island
+      && !isSpawnIsland(world, island)
+      && Number.isFinite(island.x)
+      && Number.isFinite(island.y)
+      && Number.isFinite(island.radius)
+      && island.radius >= 4
+    ));
+    if (candidates.length <= 0) return [];
+    const ranked = candidates
+      .map((island) => {
+        const centerDist = Math.hypot(island.x - spawn.x, island.y - spawn.y);
+        const edgeDist = Math.max(0, centerDist - island.radius);
+        return {
+          island,
+          centerDist,
+          edgeDist,
+          score: Math.abs(edgeDist - preferredCenter),
+        };
+      })
+      .sort((a, b) => a.edgeDist - b.edgeDist);
+    const preferredBand = ranked
+      .filter((entry) => entry.edgeDist >= preferredMin && entry.edgeDist <= preferredMax)
+      .sort((a, b) => a.score - b.score)
+      .map((entry) => entry.island);
+    if (preferredBand.length > 0) return preferredBand;
+    const startIndex = Math.floor(ranked.length * 0.15);
+    const endIndex = Math.max(startIndex + 1, Math.ceil(ranked.length * 0.72));
+    const middle = ranked.slice(startIndex, endIndex).map((entry) => entry.island);
+    if (middle.length > 0) return middle;
+    return ranked.map((entry) => entry.island);
+  }
+
+  function isAbandonedShipStructureValid(world, structure, preferredIslands = null) {
     if (!world || !structure || structure.removed || structure.type !== "abandoned_ship") return false;
     if (!canUseWaterStructureFootprint(world, structure.type, structure.tx, structure.ty, {
       ignoreStructureId: structure.id,
@@ -26566,8 +26795,8 @@
     if (spawnDist > ABANDONED_SHIP_CONFIG.maxSpawnDistanceFromSpawnTiles) return false;
     const nearestIsland = getIslandForTile(world, Math.floor(center.x), Math.floor(center.y));
     if (nearestIsland) return false;
-    if (!Array.isArray(outerIslands) || outerIslands.length === 0) return true;
-    return outerIslands.some((island) => {
+    if (!Array.isArray(preferredIslands) || preferredIslands.length === 0) return true;
+    return preferredIslands.some((island) => {
       const dist = Math.hypot(center.x - island.x, center.y - island.y);
       return dist <= island.radius + 16;
     });
@@ -26576,13 +26805,16 @@
   function findAbandonedShipPlacement(world) {
     if (!world || !Array.isArray(world.islands)) return null;
     const seedInt = Number.isFinite(world.seedInt) ? world.seedInt : seedToInt(String(world.seed || "island-1"));
-    const outerIslands = getOutermostIslandsForWildRobot(world);
-    if (outerIslands.length === 0) return null;
+    const preferredIslands = getPreferredAbandonedShipIslands(world);
+    const candidateIslands = preferredIslands.length > 0
+      ? preferredIslands
+      : world.islands.filter((island) => island && !isSpawnIsland(world, island));
+    if (candidateIslands.length === 0) return null;
     const spawn = getSpawnAnchorTile(world);
-    const islandStart = Math.floor(rand2d(seedInt + 17, seedInt + 41, seedInt + 73) * outerIslands.length);
+    const islandStart = Math.floor(rand2d(seedInt + 17, seedInt + 41, seedInt + 73) * candidateIslands.length);
 
-    for (let order = 0; order < outerIslands.length; order += 1) {
-      const island = outerIslands[(islandStart + order) % outerIslands.length];
+    for (let order = 0; order < candidateIslands.length; order += 1) {
+      const island = candidateIslands[(islandStart + order) % candidateIslands.length];
       if (!island) continue;
       for (let attempt = 0; attempt < 48; attempt += 1) {
         const a = rand2d(seedInt + order * 31 + attempt * 13, seedInt + 191, seedInt + 4001);
@@ -26596,11 +26828,6 @@
         if (spawnDist > ABANDONED_SHIP_CONFIG.maxSpawnDistanceFromSpawnTiles) continue;
         const anchor = getStructureAnchorForCenterTile("abandoned_ship", centerX, centerY);
         if (!canUseWaterStructureFootprint(world, "abandoned_ship", anchor.tx, anchor.ty)) continue;
-        const nearOuter = outerIslands.some((candidateIsland) => {
-          const dist = Math.hypot(centerX - candidateIsland.x, centerY - candidateIsland.y);
-          return dist <= candidateIsland.radius + 16;
-        });
-        if (!nearOuter) continue;
         return anchor;
       }
     }
@@ -26609,7 +26836,7 @@
 
   function ensureSingleAbandonedShip(world = state.surfaceWorld || state.world) {
     if (!world || !Array.isArray(state.structures)) return false;
-    const outerIslands = getOutermostIslandsForWildRobot(world);
+    const preferredIslands = getPreferredAbandonedShipIslands(world);
     const allShips = getAllSurfaceStructureAnchors("abandoned_ship")
       .slice()
       .sort((a, b) => (a.tx - b.tx) || (a.ty - b.ty) || ((a.id || 0) - (b.id || 0)));
@@ -26626,7 +26853,7 @@
       changed = true;
     }
 
-    if (keep && !isAbandonedShipStructureValid(world, keep, outerIslands)) {
+    if (keep && !isAbandonedShipStructureValid(world, keep, preferredIslands)) {
       removeStructure(keep);
       keep = null;
       changed = true;
@@ -26896,11 +27123,11 @@
       }
 
       const input = ship.repaired ? getDriverInputForShip(structure, ship) : { x: 0, y: 0 };
-      const controls = mapWorldInputToShipControls(input, ship.angle);
+      const controls = mapWorldInputToShipControls(input);
       const turn = controls.turn;
       const throttle = controls.throttle;
       if (Math.abs(turn) > 0.001) {
-        const turnScalar = 0.45 + Math.abs(throttle) * 0.55;
+        const turnScalar = 0.72 + Math.abs(throttle) * 0.28;
         ship.angle = normalizeAngleRadians(ship.angle + turn * ABANDONED_SHIP_CONFIG.turnSpeed * turnScalar * dt);
       }
       if (ship.repaired && Math.abs(throttle) > 0.001) {
@@ -28272,6 +28499,8 @@
     }
     if (caves.length < 2) return changed;
     const seedInt = world.seedInt ?? seedToInt(world.seed || "island");
+    const linkEnableThreshold = 0.88;
+    const minCrossIslandLinkDistance = Math.max(8, world.size * 0.05);
     const caveMeta = caves.map((cave) => ({
       cave,
       islandIndex: getSurfaceIslandIndexForTile(world, cave.tx, cave.ty),
@@ -28289,7 +28518,7 @@
       const source = sourceMeta.cave;
       if (!source || used.has(source.id)) continue;
       const enableRoll = rand2d((source.id + 1) * 31, 149, seedInt + 21713);
-      if (enableRoll > 0.5) continue;
+      if (enableRoll > linkEnableThreshold) continue;
       let best = null;
       let bestScore = -Infinity;
       for (const targetMeta of sorted) {
@@ -28299,7 +28528,7 @@
           continue;
         }
         const dist = Math.hypot(source.tx - target.tx, source.ty - target.ty);
-        if (dist < Math.max(12, world.size * 0.08)) continue;
+        if (dist < minCrossIslandLinkDistance) continue;
         const score = dist + rand2d(source.id * 53 + target.id * 71, 211, seedInt + 12617) * 6;
         if (score > bestScore) {
           bestScore = score;
@@ -29814,7 +30043,29 @@
     const dropQty = slot.qty;
     const dropItemId = slot.id;
     const world = state.world;
-    const dropPos = getDropSpawnPosition(world, state.player.x, state.player.y, state.player.facing, 2);
+    const caveV2Context = isCaveV2Active() ? getActiveCaveV2Context() : null;
+    const caveV2Room = caveV2Context?.room || null;
+    const caveV2Active = caveV2Context?.active || null;
+    const dropPos = caveV2Room && caveV2Active
+      ? getCaveV2DropSpawnPosition(caveV2Room, caveV2Active, state.player.facing, 2)
+      : getDropSpawnPosition(world, state.player.x, state.player.y, state.player.facing, 2);
+    let localCaveDropPlaced = false;
+    if (caveV2Context?.cave && caveV2Room && caveV2Active && !netIsClientReady()) {
+      const drop = spawnCaveV2RoomDrop(
+        caveV2Context.cave,
+        caveV2Room,
+        dropItemId,
+        dropQty,
+        dropPos.x,
+        dropPos.y,
+        "manual",
+      );
+      if (!drop) {
+        setPrompt("No room to drop item", 1.1);
+        return;
+      }
+      localCaveDropPlaced = true;
+    }
     slot.id = null;
     slot.qty = 0;
     if (selectedSlot?.scope === "inventory" && selectedSlot.index === slotIndex) {
@@ -29834,7 +30085,7 @@
         x: dropPos.x,
         y: dropPos.y,
       });
-    } else {
+    } else if (!localCaveDropPlaced) {
       spawnDrop(dropItemId, dropQty, dropPos.x, dropPos.y, world);
     }
 
@@ -30961,6 +31212,41 @@
     const url = texCanvas.toDataURL("image/png");
     itemTextureCache.set(key, url);
     return url;
+  }
+
+  function getGroundDropTexture(itemId, size = 30) {
+    const key = `${ITEM_TEXTURE_CACHE_VERSION}:${itemId}:${size}:ground`;
+    if (groundDropTextureCache.has(key)) return groundDropTextureCache.get(key);
+    const texCanvas = document.createElement("canvas");
+    texCanvas.width = size;
+    texCanvas.height = size;
+    const texCtx = texCanvas.getContext("2d");
+    drawItemTexture(texCtx, itemId, size);
+    groundDropTextureCache.set(key, texCanvas);
+    return texCanvas;
+  }
+
+  function drawDroppedItemVisual(drop, x, y, options = null) {
+    if (!drop || !drop.itemId || !Number.isFinite(x) || !Number.isFinite(y)) return;
+    const alpha = clamp(Number(options?.alpha) || 1, 0.05, 1);
+    const size = clamp(Number(options?.size) || 14, 9, 24);
+    const shadowScale = clamp(Number(options?.shadowScale) || 1, 0.6, 1.4);
+    const bobOffset = Number(options?.bobOffset) || 0;
+    const yDraw = y + bobOffset;
+    const textureSize = 30;
+    const tex = getGroundDropTexture(drop.itemId, textureSize);
+    const half = size * 0.5;
+    const shadowRx = size * 0.58 * shadowScale;
+    const shadowRy = size * 0.26 * shadowScale;
+
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = "rgba(0,0,0,0.24)";
+    ctx.beginPath();
+    ctx.ellipse(x, yDraw + (size * 0.44), shadowRx, shadowRy, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.drawImage(tex, x - half, yDraw - half, size, size);
+    ctx.restore();
   }
 
   function formatItemLabel(itemId) {
@@ -32983,6 +33269,25 @@
     );
   }
 
+  function toggleDebugRepairableShipMarker() {
+    if (!state.debugUnlocked) {
+      setPrompt("Debug is locked. Open Settings to unlock.", 1.2);
+      return;
+    }
+    if (!hasRepairableAbandonedShip()) {
+      state.debugShowRepairableShip = false;
+      setPrompt("No repairable ship in this world.", 1.4);
+      return;
+    }
+    state.debugShowRepairableShip = !state.debugShowRepairableShip;
+    setPrompt(
+      state.debugShowRepairableShip
+        ? "Repairable ship marker enabled"
+        : "Repairable ship marker disabled",
+      1.2
+    );
+  }
+
   function switchToSeed(seedInput) {
     if (netIsClientReady()) {
       setPrompt("Host only", 1);
@@ -33532,11 +33837,54 @@
     }
   }
 
+  function spawnCaveV2DeathDrops(cave, room, x, y, items) {
+    if (!cave || !room || !Array.isArray(items) || items.length <= 0) return 0;
+    const cols = Math.ceil(Math.sqrt(items.length));
+    const spacing = 14;
+    let created = 0;
+    for (let i = 0; i < items.length; i += 1) {
+      const item = items[i];
+      if (!item || !item.id || !ITEMS[item.id]) continue;
+      const qty = clamp(Math.floor(Number(item.qty) || 0), 1, MAX_STACK);
+      if (qty <= 0) continue;
+      const gx = i % cols;
+      const gy = Math.floor(i / cols);
+      const ox = (gx - (cols - 1) / 2) * spacing;
+      const oy = gy * spacing - spacing;
+      const drop = spawnCaveV2RoomDrop(
+        cave,
+        room,
+        item.id,
+        qty,
+        (Number(x) || 0) + ox,
+        (Number(y) || 0) + oy,
+        `death:${i}`,
+      );
+      if (drop) created += 1;
+    }
+    if (created > 0) markDirty();
+    return created;
+  }
+
   function dropInventoryOnDeath(world, x, y) {
     if (!world || !state.inventory) return;
     const filled = state.inventory.filter((slot) => slot.id && slot.qty > 0);
     if (filled.length === 0) return;
-    if (netIsClientReady()) {
+    const caveV2State = CAVE_V2_ENABLED ? getCaveV2State() : null;
+    const caveV2Active = !!(CAVE_V2_ENABLED && caveV2State?.active);
+    const activeCave = caveV2Active
+      ? caveV2State.cavesById?.[caveV2State.active.caveId]
+      : null;
+    const activeRoom = activeCave?.roomsById?.[caveV2State.active.roomId] || null;
+    if (caveV2Active && activeCave && activeRoom) {
+      spawnCaveV2DeathDrops(
+        activeCave,
+        activeRoom,
+        Number.isFinite(x) ? x : caveV2State.active.x,
+        Number.isFinite(y) ? y : caveV2State.active.y,
+        filled.map((slot) => ({ id: slot.id, qty: slot.qty })),
+      );
+    } else if (netIsClientReady()) {
       sendToHost({
         type: "deathDrop",
         world: state.inCave ? "cave" : "surface",
@@ -33581,12 +33929,16 @@
     if (!state.player || state.respawnLock) return;
     state.respawnLock = true;
     removePlayerFromAllShips(getLocalShipPlayerId());
+    const caveV2WasActive = isCaveV2Active();
     const deathWorld = state.world;
     const deathX = state.player.x;
     const deathY = state.player.y;
     try {
       dropInventoryOnDeath(deathWorld, deathX, deathY);
       const surface = state.surfaceWorld || state.world;
+      if (caveV2WasActive) {
+        leaveCaveV2();
+      }
       if (state.inCave) {
         leaveCave();
       }
@@ -33625,6 +33977,9 @@
       state.activeCave = null;
       state.activeCaveLayer = 0;
       state.caveTransition = null;
+      if (isCaveV2Active()) {
+        leaveCaveV2();
+      }
       state.world = state.surfaceWorld || state.world;
       const surface = state.surfaceWorld || state.world;
       const respawnPos = getSafeRespawnPosition(surface);
@@ -36002,7 +36357,6 @@
       } else {
         state.surfaceSpawnTimer -= dt;
         if (state.surfaceSpawnTimer <= 0) {
-          spawnDayMarshStalkersForActiveIslands(world, players);
           state.surfaceSpawnTimer = MONSTER.spawnInterval;
         }
         if (Array.isArray(world.monsters) && world.monsters.length > 0) {
@@ -36434,6 +36788,38 @@
       + Math.random() * (AMBIENT_FISH_CONFIG.spawnIntervalMax - AMBIENT_FISH_CONFIG.spawnIntervalMin);
   }
 
+  function getAmbientFishKind(nearShore = false) {
+    if (nearShore) {
+      const roll = Math.random();
+      if (roll < 0.46) return "tropical";
+      if (roll < 0.74) return "silver";
+      if (roll < 0.9) return "needle";
+      return "ray";
+    }
+    const roll = Math.random();
+    if (roll < 0.58) return "silver";
+    if (roll < 0.8) return "needle";
+    if (roll < 0.93) return "tropical";
+    return "ray";
+  }
+
+  function countWaterAdjacentLandTiles(world, tx, ty) {
+    if (!world || !Array.isArray(world.tiles)) return 0;
+    const dirs = [
+      [1, 0], [-1, 0], [0, 1], [0, -1],
+      [1, 1], [1, -1], [-1, 1], [-1, -1],
+    ];
+    let count = 0;
+    for (const [dx, dy] of dirs) {
+      const nx = tx + dx;
+      const ny = ty + dy;
+      if (!inBounds(nx, ny, world.size)) continue;
+      const nIdx = tileIndex(nx, ny, world.size);
+      if (world.tiles[nIdx]) count += 1;
+    }
+    return count;
+  }
+
   function canSpawnAmbientFishAt(world, x, y) {
     if (!world || !Number.isFinite(x) || !Number.isFinite(y)) return false;
     const tx = Math.floor(x / CONFIG.tileSize);
@@ -36458,23 +36844,43 @@
       const y = minY + Math.random() * (maxY - minY);
       if (!canSpawnAmbientFishAt(world, x, y)) continue;
 
-      const speed = AMBIENT_FISH_CONFIG.speedMin
-        + Math.random() * (AMBIENT_FISH_CONFIG.speedMax - AMBIENT_FISH_CONFIG.speedMin);
+      const tx = Math.floor(x / CONFIG.tileSize);
+      const ty = Math.floor(y / CONFIG.tileSize);
+      const nearShore = countWaterAdjacentLandTiles(world, tx, ty) > 0;
+      const fishKind = getAmbientFishKind(nearShore);
+      const schoolCount = Math.random() < (nearShore ? 0.42 : 0.28)
+        ? 2 + Math.floor(Math.random() * 3)
+        : 1;
       const angle = Math.random() * Math.PI * 2;
-      const life = AMBIENT_FISH_CONFIG.lifeMin
-        + Math.random() * (AMBIENT_FISH_CONFIG.lifeMax - AMBIENT_FISH_CONFIG.lifeMin);
-      state.ambientFish.push({
-        x,
-        y,
-        vx: Math.cos(angle) * speed,
-        vy: Math.sin(angle) * speed,
-        turnSpeed: (Math.random() < 0.5 ? -1 : 1) * (0.6 + Math.random() * 1.4),
-        life,
-        maxLife: life,
-        size: AMBIENT_FISH_CONFIG.sizeMin
-          + Math.random() * (AMBIENT_FISH_CONFIG.sizeMax - AMBIENT_FISH_CONFIG.sizeMin),
-        phase: Math.random() * Math.PI * 2,
-      });
+      for (let i = 0; i < schoolCount; i += 1) {
+        if (state.ambientFish.length >= AMBIENT_FISH_CONFIG.maxFish) break;
+        const offsetAngle = angle + ((Math.random() - 0.5) * 1.2);
+        const scatter = i === 0 ? 0 : (3 + Math.random() * 10);
+        const px = x + Math.cos(offsetAngle) * scatter;
+        const py = y + Math.sin(offsetAngle) * scatter;
+        if (!canSpawnAmbientFishAt(world, px, py)) continue;
+        const speedBias = fishKind === "needle" ? 1.2 : fishKind === "ray" ? 0.85 : 1;
+        const speed = (AMBIENT_FISH_CONFIG.speedMin
+          + Math.random() * (AMBIENT_FISH_CONFIG.speedMax - AMBIENT_FISH_CONFIG.speedMin)) * speedBias;
+        const life = (AMBIENT_FISH_CONFIG.lifeMin
+          + Math.random() * (AMBIENT_FISH_CONFIG.lifeMax - AMBIENT_FISH_CONFIG.lifeMin))
+          * (fishKind === "ray" ? 1.2 : 1);
+        const sizeBias = fishKind === "ray" ? 1.5 : fishKind === "needle" ? 0.86 : fishKind === "tropical" ? 1.06 : 1;
+        state.ambientFish.push({
+          x: px,
+          y: py,
+          kind: fishKind,
+          vx: Math.cos(angle + (Math.random() - 0.5) * 0.4) * speed,
+          vy: Math.sin(angle + (Math.random() - 0.5) * 0.4) * speed,
+          turnSpeed: (Math.random() < 0.5 ? -1 : 1) * (0.6 + Math.random() * 1.4),
+          life,
+          maxLife: life,
+          size: (AMBIENT_FISH_CONFIG.sizeMin
+            + Math.random() * (AMBIENT_FISH_CONFIG.sizeMax - AMBIENT_FISH_CONFIG.sizeMin))
+            * sizeBias,
+          phase: Math.random() * Math.PI * 2,
+        });
+      }
       break;
     }
   }
@@ -36495,7 +36901,7 @@
     state.ambientFishSpawnTimer -= dt;
     if (state.ambientFishSpawnTimer <= 0) {
       state.ambientFishSpawnTimer = getAmbientFishSpawnDelay();
-      if (Math.random() < 0.45) {
+      if (Math.random() < 0.62) {
         spawnAmbientFishNearCamera(world);
       }
     }
@@ -38968,9 +39374,22 @@
   }
 
   function drawPlayerAvatar(player, camera, color, name) {
-    const px = player.renderX ?? player.x;
-    const py = player.renderY ?? player.y;
+    if (!player) return;
+    const hasPhysics = Number.isFinite(player.x) && Number.isFinite(player.y);
+    let px = Number.isFinite(player.renderX) ? player.renderX : (hasPhysics ? player.x : NaN);
+    let py = Number.isFinite(player.renderY) ? player.renderY : (hasPhysics ? player.y : NaN);
+    if (!Number.isFinite(px) || !Number.isFinite(py)) return;
+    if (hasPhysics) {
+      const drift = Math.hypot(px - player.x, py - player.y);
+      if (!Number.isFinite(drift) || drift > CONFIG.tileSize * 5) {
+        px = player.x;
+        py = player.y;
+        player.renderX = player.x;
+        player.renderY = player.y;
+      }
+    }
     const screen = worldToScreen(px, py, camera);
+    if (!Number.isFinite(screen.x) || !Number.isFinite(screen.y)) return;
     const bodyColor = color || "#2f4b6c";
     ctx.fillStyle = "rgba(0,0,0,0.2)";
     ctx.beginPath();
@@ -39015,7 +39434,31 @@
     return normalizeHexColor(net.localColor) || "#2f4b6c";
   }
 
+  function ensureLocalPlayerRenderableState() {
+    if (!state.player) return;
+    if (!Number.isFinite(state.player.x) || !Number.isFinite(state.player.y)) {
+      const surface = state.surfaceWorld || state.world;
+      const spawn = surface ? getSafeRespawnPosition(surface) : null;
+      if (spawn) {
+        state.player.x = spawn.x;
+        state.player.y = spawn.y;
+      } else {
+        state.player.x = Number.isFinite(state.player.x) ? state.player.x : 0;
+        state.player.y = Number.isFinite(state.player.y) ? state.player.y : 0;
+      }
+    }
+    if (!Number.isFinite(state.player.renderX) || !Number.isFinite(state.player.renderY)) {
+      syncLocalPlayerRenderToPhysics();
+      return;
+    }
+    const drift = Math.hypot(state.player.renderX - state.player.x, state.player.renderY - state.player.y);
+    if (!Number.isFinite(drift) || drift > CONFIG.tileSize * 5) {
+      syncLocalPlayerRenderToPhysics();
+    }
+  }
+
   function drawPlayer(camera) {
+    ensureLocalPlayerRenderableState();
     if (state.gameWon) {
       const t = state.winTimer;
       if (t >= WIN_SEQUENCE.ladderDropEnd && t < WIN_SEQUENCE.textDelay) {
@@ -39539,6 +39982,83 @@
     ctx.restore();
   }
 
+  function drawOceanTileDecor(world, tx, ty, screenX, screenY, nowSeconds = 0) {
+    if (!world || !Array.isArray(world.tiles)) return;
+    const seedInt = Number.isFinite(world.seedInt) ? world.seedInt : seedToInt(String(world.seed || "island-1"));
+    const baseHash = ((tx * 92837111) ^ (ty * 689287499) ^ (seedInt * 283923481)) >>> 0;
+    const shimmerHit = (baseHash % OCEAN_DECOR_CONFIG.shimmerMod) === 4;
+    const coralHit = (baseHash % OCEAN_DECOR_CONFIG.coralMod) === 11;
+    const reefHit = (baseHash % OCEAN_DECOR_CONFIG.reefMod) === 39;
+    const kelpHit = (baseHash % OCEAN_DECOR_CONFIG.kelpMod) === 51;
+    if (!shimmerHit && !coralHit && !reefHit && !kelpHit) return;
+
+    const ts = CONFIG.tileSize;
+    const cx = screenX + ts * 0.5;
+    const cy = screenY + ts * 0.5;
+    const nearShoreCount = (coralHit || reefHit || kelpHit)
+      ? countWaterAdjacentLandTiles(world, tx, ty)
+      : 0;
+
+    if (shimmerHit) {
+      const shimmerAlpha = 0.04 + (((baseHash >> 5) & 7) * 0.008);
+      const wave = Math.sin((nowSeconds * 2.1) + ((baseHash & 255) * 0.042));
+      const len = ts * (0.22 + (((baseHash >> 9) & 7) * 0.032));
+      ctx.strokeStyle = `rgba(216, 244, 255, ${shimmerAlpha * (0.7 + 0.3 * (wave * 0.5 + 0.5))})`;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(cx - len, cy + wave * 0.8);
+      ctx.lineTo(cx + len, cy + wave * 0.8);
+      ctx.stroke();
+    }
+
+    if (nearShoreCount > 0 && reefHit) {
+      const reefGrad = ctx.createRadialGradient(cx - 2, cy + 1, 1, cx, cy + 2, ts * 0.8);
+      reefGrad.addColorStop(0, "rgba(52, 116, 138, 0.26)");
+      reefGrad.addColorStop(1, "rgba(38, 86, 110, 0.05)");
+      ctx.fillStyle = reefGrad;
+      ctx.beginPath();
+      ctx.ellipse(cx, cy + ts * 0.12, ts * 0.46, ts * 0.28, 0.08, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "rgba(105, 180, 170, 0.22)";
+      ctx.beginPath();
+      ctx.arc(cx - ts * 0.11, cy + ts * 0.05, ts * 0.12, 0, Math.PI * 2);
+      ctx.arc(cx + ts * 0.15, cy + ts * 0.04, ts * 0.1, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    if (nearShoreCount > 0 && coralHit) {
+      ctx.strokeStyle = "rgba(255, 150, 181, 0.44)";
+      ctx.lineWidth = 1.4;
+      const sway = Math.sin((nowSeconds * 1.5) + ((baseHash >> 3) & 31)) * 0.45;
+      ctx.beginPath();
+      ctx.moveTo(cx - ts * 0.10, cy + ts * 0.20);
+      ctx.lineTo(cx - ts * 0.13 + sway, cy + ts * 0.01);
+      ctx.moveTo(cx, cy + ts * 0.24);
+      ctx.lineTo(cx + sway * 0.6, cy - ts * 0.02);
+      ctx.moveTo(cx + ts * 0.10, cy + ts * 0.18);
+      ctx.lineTo(cx + ts * 0.13 + sway, cy + ts * 0.02);
+      ctx.stroke();
+      ctx.fillStyle = "rgba(255, 199, 112, 0.32)";
+      ctx.beginPath();
+      ctx.arc(cx + ts * 0.02, cy + ts * 0.18, ts * 0.08, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    if (nearShoreCount <= 1 && kelpHit) {
+      const sway = Math.sin((nowSeconds * 1.8) + ((baseHash >> 7) & 31)) * (ts * 0.05);
+      ctx.strokeStyle = "rgba(82, 148, 122, 0.33)";
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.moveTo(cx - ts * 0.16, cy + ts * 0.30);
+      ctx.quadraticCurveTo(cx - ts * 0.12 + sway, cy + ts * 0.03, cx - ts * 0.08, cy - ts * 0.12);
+      ctx.moveTo(cx, cy + ts * 0.34);
+      ctx.quadraticCurveTo(cx + sway * 0.9, cy + ts * 0.05, cx + ts * 0.03, cy - ts * 0.10);
+      ctx.moveTo(cx + ts * 0.16, cy + ts * 0.28);
+      ctx.quadraticCurveTo(cx + ts * 0.20 + sway, cy + ts * 0.04, cx + ts * 0.12, cy - ts * 0.09);
+      ctx.stroke();
+    }
+  }
+
   function drawAmbientFish(camera) {
     if (!Array.isArray(state.ambientFish) || state.ambientFish.length === 0) return;
     const cameraViewWidth = getCameraViewWidth(camera);
@@ -39559,23 +40079,72 @@
       }
       const dir = Math.atan2(fish.vy || 0, fish.vx || 1);
       const size = fish.size || 6;
-      const bodyLen = size;
-      const bodyWidth = size * 0.38;
-
       ctx.save();
       ctx.translate(screen.x, screen.y);
       ctx.rotate(dir);
-      ctx.fillStyle = `rgba(186, 223, 244, ${alpha})`;
-      ctx.beginPath();
-      ctx.ellipse(0, 0, bodyLen, bodyWidth, 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = `rgba(138, 186, 216, ${alpha * 0.92})`;
-      ctx.beginPath();
-      ctx.moveTo(-bodyLen, 0);
-      ctx.lineTo(-bodyLen - bodyWidth * 1.6, bodyWidth * 0.9);
-      ctx.lineTo(-bodyLen - bodyWidth * 1.6, -bodyWidth * 0.9);
-      ctx.closePath();
-      ctx.fill();
+      if (fish.kind === "tropical") {
+        const bodyLen = size * 0.95;
+        const bodyWidth = size * 0.5;
+        ctx.fillStyle = `rgba(255, 205, 118, ${alpha * 0.92})`;
+        ctx.beginPath();
+        ctx.ellipse(0, 0, bodyLen, bodyWidth, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = `rgba(255, 143, 112, ${alpha * 0.85})`;
+        ctx.fillRect(-bodyLen * 0.15, -bodyWidth, Math.max(1, bodyLen * 0.14), bodyWidth * 2);
+        ctx.fillRect(bodyLen * 0.23, -bodyWidth * 0.9, Math.max(1, bodyLen * 0.14), bodyWidth * 1.8);
+        ctx.fillStyle = `rgba(255, 232, 193, ${alpha * 0.9})`;
+        ctx.beginPath();
+        ctx.moveTo(-bodyLen, 0);
+        ctx.lineTo(-bodyLen - bodyWidth * 1.45, bodyWidth * 0.85);
+        ctx.lineTo(-bodyLen - bodyWidth * 1.45, -bodyWidth * 0.85);
+        ctx.closePath();
+        ctx.fill();
+      } else if (fish.kind === "needle") {
+        const bodyLen = size * 1.6;
+        ctx.strokeStyle = `rgba(158, 221, 231, ${alpha * 0.9})`;
+        ctx.lineWidth = Math.max(1, size * 0.18);
+        ctx.beginPath();
+        ctx.moveTo(-bodyLen * 0.8, 0);
+        ctx.lineTo(bodyLen * 0.35, 0);
+        ctx.stroke();
+        ctx.strokeStyle = `rgba(210, 245, 255, ${alpha * 0.82})`;
+        ctx.lineWidth = Math.max(1, size * 0.12);
+        ctx.beginPath();
+        ctx.moveTo(bodyLen * 0.2, -size * 0.12);
+        ctx.lineTo(bodyLen * 0.35, 0);
+        ctx.lineTo(bodyLen * 0.2, size * 0.12);
+        ctx.stroke();
+      } else if (fish.kind === "ray") {
+        const wing = size * 0.8;
+        ctx.fillStyle = `rgba(134, 181, 193, ${alpha * 0.68})`;
+        ctx.beginPath();
+        ctx.moveTo(0, -wing * 0.65);
+        ctx.lineTo(wing, 0);
+        ctx.lineTo(0, wing * 0.65);
+        ctx.lineTo(-wing * 1.05, 0);
+        ctx.closePath();
+        ctx.fill();
+        ctx.strokeStyle = `rgba(165, 220, 231, ${alpha * 0.7})`;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(-wing * 1.05, 0);
+        ctx.lineTo(-wing * 1.7, 0);
+        ctx.stroke();
+      } else {
+        const bodyLen = size;
+        const bodyWidth = size * 0.38;
+        ctx.fillStyle = `rgba(186, 223, 244, ${alpha})`;
+        ctx.beginPath();
+        ctx.ellipse(0, 0, bodyLen, bodyWidth, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = `rgba(138, 186, 216, ${alpha * 0.92})`;
+        ctx.beginPath();
+        ctx.moveTo(-bodyLen, 0);
+        ctx.lineTo(-bodyLen - bodyWidth * 1.6, bodyWidth * 0.9);
+        ctx.lineTo(-bodyLen - bodyWidth * 1.6, -bodyWidth * 0.9);
+        ctx.closePath();
+        ctx.fill();
+      }
       ctx.restore();
     }
   }
@@ -40003,7 +40572,13 @@
         const doorOffsetVariant = ((variantSeed >> 5) % 3) - 1;
         const clothAwning = !isVillageBlacksmith && ((variantSeed >> 7) & 1) === 1;
         const sideLeanTo = !isVillageBlacksmith && structure.type !== "hut" && ((variantSeed >> 9) % 3) === 1;
-        const roofLift = structure.type === "large_house" ? 8 : (structure.type === "medium_house" ? 6 : 4);
+        const roofLiftBase = structure.type === "large_house" ? 8 : (structure.type === "medium_house" ? 6 : 4);
+        const isWideHouse = structure.type === "medium_house" || structure.type === "large_house";
+        const wideInset = isWideHouse ? clamp(Math.floor(baseWidth * 0.1), 3, 7) : 0;
+        const silhouetteLift = structure.type === "medium_house"
+          ? Math.max(8, Math.floor(baseHeight * 0.55))
+          : (structure.type === "large_house" ? Math.max(4, Math.floor(baseHeight * 0.22)) : 0);
+        const roofLift = roofLiftBase + silhouetteLift;
         const tropicalPalette = [
           { wall: "#c9925f", roof: "#92703f", trim: "#5b402e", accent: "#4d8f7d" },
           { wall: "#d5a66f", roof: "#83663a", trim: "#5d4430", accent: "#c56d52" },
@@ -40031,12 +40606,16 @@
           : (isVillageHouse ? villagePalette.roof : tropicalPalette.roof);
         const roofHighlight = isVillageBlacksmith ? "rgba(210,220,232,0.2)" : "rgba(255, 233, 177, 0.18)";
 
-        const wallTop = baseY + Math.max(9, Math.floor(baseHeight * 0.27));
         const wallBottom = baseY + baseHeight - 2;
-        const wallHeight = Math.max(9, wallBottom - wallTop);
-        const wallLeft = baseX + 2;
-        const wallRight = baseX + baseWidth - 2;
+        const wallTop = baseY + Math.max(9, Math.floor(baseHeight * 0.27)) - silhouetteLift;
+        let wallLeft = baseX + 2 + wideInset;
+        let wallRight = baseX + baseWidth - 2 - wideInset;
+        if (wallRight - wallLeft < 12) {
+          wallLeft = baseX + 2;
+          wallRight = baseX + baseWidth - 2;
+        }
         const wallW = wallRight - wallLeft;
+        const wallHeight = Math.max(9, wallBottom - wallTop);
         const centerX = baseX + baseWidth / 2;
 
         // Ground shadow and slight raised foundation (island stilt vibe)
@@ -40594,6 +41173,68 @@
         ctx.fillStyle = def.color;
         ctx.fillRect(baseX, baseY, baseSize, baseSize);
       }
+    }
+  }
+
+  function drawStructureFallback(structure, camera) {
+    const footprint = getStructureFootprint(structure.type);
+    const worldX = (Number.isFinite(structure.tx) ? structure.tx : 0) * CONFIG.tileSize;
+    const worldY = (Number.isFinite(structure.ty) ? structure.ty : 0) * CONFIG.tileSize;
+    const topLeft = worldToScreen(worldX, worldY, camera);
+    const fallbackColor = normalizeHexColor(STRUCTURE_DEFS[structure.type]?.color) || "#8b6a4a";
+    ctx.fillStyle = fallbackColor;
+    ctx.fillRect(
+      topLeft.x + 1,
+      topLeft.y + 1,
+      Math.max(4, footprint.w * CONFIG.tileSize - 2),
+      Math.max(4, footprint.h * CONFIG.tileSize - 2)
+    );
+  }
+
+  function drawStructureSafe(structure, camera) {
+    if (!structure || structure.removed) return;
+    if (!ctx) return;
+    const normalizedType = normalizeLegacyStructureType(structure.type);
+    if (normalizedType !== structure.type && STRUCTURE_DEFS[normalizedType]) {
+      structure.type = normalizedType;
+    }
+    if (!STRUCTURE_DEFS[structure.type]) {
+      ctx.save();
+      try {
+        ctx.globalAlpha = 1;
+        ctx.globalCompositeOperation = "source-over";
+        drawStructureFallback(structure, camera);
+      } finally {
+        ctx.restore();
+      }
+      if (state.debugUnlocked) {
+        console.warn("[Render] Unknown structure type; fallback rendered", {
+          structureId: structure.id,
+          structureType: structure.type,
+          tx: structure.tx,
+          ty: structure.ty,
+        });
+      }
+      return;
+    }
+    ctx.save();
+    try {
+      ctx.globalAlpha = 1;
+      ctx.globalCompositeOperation = "source-over";
+      drawStructure(structure, camera);
+    } catch (error) {
+      drawStructureFallback(structure, camera);
+      if (state.debugUnlocked) {
+        console.error("[Render] Structure draw failed; fallback applied", {
+          structureId: structure.id,
+          structureType: structure.type,
+          tx: structure.tx,
+          ty: structure.ty,
+          error,
+        });
+      }
+    } finally {
+      ctx.restore();
     }
   }
 
@@ -41228,17 +41869,23 @@
       186,
       320
     );
-    const panelH = panelW + 36 + DEBUG_WILD_ROBOT_TOGGLE_HEIGHT;
+    const toggleRows = 2;
+    const togglesTotalHeight = (DEBUG_WILD_ROBOT_TOGGLE_HEIGHT * toggleRows) + DEBUG_WORLD_MAP_TOGGLE_GAP;
+    const panelH = panelW + 36 + togglesTotalHeight;
     const panelX = viewWidth - panelW - 16;
     const panelY = 70;
     const mapX = panelX + 10;
     const mapY = panelY + 24;
     const mapW = panelW - 20;
-    const mapH = panelH - 34 - DEBUG_WILD_ROBOT_TOGGLE_HEIGHT;
+    const mapH = panelH - 34 - togglesTotalHeight;
     const toggleX = panelX + 10;
-    const toggleY = panelY + panelH - DEBUG_WILD_ROBOT_TOGGLE_HEIGHT - 6;
+    const toggleY = panelY + panelH - togglesTotalHeight - 6;
     const toggleW = panelW - 20;
     const toggleH = DEBUG_WILD_ROBOT_TOGGLE_HEIGHT;
+    const shipToggleX = toggleX;
+    const shipToggleY = toggleY + toggleH + DEBUG_WORLD_MAP_TOGGLE_GAP;
+    const shipToggleW = toggleW;
+    const shipToggleH = toggleH;
 
     return {
       world,
@@ -41255,6 +41902,10 @@
       toggleY,
       toggleW,
       toggleH,
+      shipToggleX,
+      shipToggleY,
+      shipToggleW,
+      shipToggleH,
     };
   }
 
@@ -41433,6 +42084,10 @@
       toggleY,
       toggleW,
       toggleH,
+      shipToggleX,
+      shipToggleY,
+      shipToggleW,
+      shipToggleH,
     } = layout;
     const players = getDebugSurfacePlayerMarkers();
 
@@ -41447,6 +42102,8 @@
       }
     }
     const hasWildRobot = !!wildRobotStructure;
+    const repairableShips = getRepairableAbandonedShipStructures();
+    const hasRepairableShip = repairableShips.length > 0;
 
     ctx.save();
 
@@ -41625,6 +42282,42 @@
       }
     }
 
+    if (state.debugShowRepairableShip && hasRepairableShip) {
+      for (const structure of repairableShips) {
+        const shipCenter = getStructureCenterWorld(structure);
+        const sx = mapX + (shipCenter.x / worldPixelSize) * mapW;
+        const sy = mapY + (shipCenter.y / worldPixelSize) * mapH;
+        if (
+          !Number.isFinite(sx)
+          || !Number.isFinite(sy)
+          || sx < mapX
+          || sx > mapX + mapW
+          || sy < mapY
+          || sy > mapY + mapH
+        ) {
+          continue;
+        }
+
+        ctx.fillStyle = "rgba(0, 0, 0, 0.34)";
+        ctx.beginPath();
+        ctx.arc(sx, sy + 1.3, 5.6, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = "rgba(197, 163, 92, 0.96)";
+        ctx.beginPath();
+        ctx.moveTo(sx, sy - 4.4);
+        ctx.lineTo(sx + 4.4, sy);
+        ctx.lineTo(sx, sy + 4.4);
+        ctx.lineTo(sx - 4.4, sy);
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.strokeStyle = "rgba(255, 228, 164, 0.96)";
+        ctx.lineWidth = 1.2;
+        ctx.stroke();
+      }
+    }
+
     ctx.font = "bold 12px Trebuchet MS";
     ctx.textAlign = "left";
     ctx.textBaseline = "middle";
@@ -41634,59 +42327,81 @@
     ctx.fillStyle = "rgba(189, 216, 235, 0.88)";
     ctx.fillText(`Players: ${players.length}`, panelX + panelW - 82, panelY + 13);
     if (world.seed) {
-      const bottomTextY = panelY + panelH - toggleH - 10;
+      const bottomTextY = panelY + panelH - ((toggleH * 2) + DEBUG_WORLD_MAP_TOGGLE_GAP) - 10;
       ctx.fillText(`Seed: ${world.seed}`, panelX + 10, bottomTextY);
     }
 
     ctx.textAlign = "left";
     ctx.textBaseline = "middle";
 
-    drawRoundedRect(ctx, toggleX, toggleY, toggleW, toggleH, 6);
-    const toggleGradient = ctx.createLinearGradient(toggleX, toggleY, toggleX, toggleY + toggleH);
-    toggleGradient.addColorStop(0, "rgba(12, 24, 36, 0.95)");
-    toggleGradient.addColorStop(1, "rgba(8, 16, 26, 0.96)");
-    ctx.fillStyle = toggleGradient;
-    ctx.fill();
-    ctx.strokeStyle = "rgba(140, 190, 230, 0.7)";
-    ctx.lineWidth = 1;
-    ctx.stroke();
-
-    const boxSize = 14;
-    const boxX = toggleX + 9;
-    const boxY = toggleY + (toggleH - boxSize) / 2;
-    const enabled = state.debugShowAbandonedRobot && hasWildRobot;
-
-    drawRoundedRect(ctx, boxX, boxY, boxSize, boxSize, 3);
-    ctx.fillStyle = enabled ? "rgba(118, 189, 250, 0.55)" : "rgba(10, 18, 28, 0.9)";
-    ctx.fill();
-    ctx.strokeStyle = enabled ? "rgba(188, 232, 255, 0.95)" : "rgba(120, 170, 210, 0.9)";
-    ctx.lineWidth = 1;
-    ctx.stroke();
-
-    if (enabled) {
-      ctx.strokeStyle = "rgba(12, 28, 44, 0.9)";
-      ctx.lineWidth = 1.6;
-      ctx.beginPath();
-      ctx.moveTo(boxX + 3, boxY + boxSize * 0.55);
-      ctx.lineTo(boxX + boxSize * 0.45, boxY + boxSize - 3.2);
-      ctx.lineTo(boxX + boxSize - 3, boxY + 3.4);
+    const drawMiniMapToggleRow = (rowX, rowY, rowW, rowH, enabled, available, label, unavailableText) => {
+      drawRoundedRect(ctx, rowX, rowY, rowW, rowH, 6);
+      const toggleGradient = ctx.createLinearGradient(rowX, rowY, rowX, rowY + rowH);
+      toggleGradient.addColorStop(0, "rgba(12, 24, 36, 0.95)");
+      toggleGradient.addColorStop(1, "rgba(8, 16, 26, 0.96)");
+      ctx.fillStyle = toggleGradient;
+      ctx.fill();
+      ctx.strokeStyle = "rgba(140, 190, 230, 0.7)";
+      ctx.lineWidth = 1;
       ctx.stroke();
-    }
 
-    const labelX = boxX + boxSize + 6;
-    const labelY = toggleY + toggleH * 0.5;
-    ctx.font = "10px Trebuchet MS";
-    ctx.fillStyle = hasWildRobot
-      ? "rgba(214, 236, 255, 0.96)"
-      : "rgba(150, 170, 190, 0.72)";
-    ctx.fillText("Show abandoned robot", labelX, labelY);
+      const boxSize = 14;
+      const boxX = rowX + 9;
+      const boxY = rowY + (rowH - boxSize) / 2;
+      drawRoundedRect(ctx, boxX, boxY, boxSize, boxSize, 3);
+      ctx.fillStyle = enabled ? "rgba(118, 189, 250, 0.55)" : "rgba(10, 18, 28, 0.9)";
+      ctx.fill();
+      ctx.strokeStyle = enabled ? "rgba(188, 232, 255, 0.95)" : "rgba(120, 170, 210, 0.9)";
+      ctx.lineWidth = 1;
+      ctx.stroke();
 
-    if (!hasWildRobot) {
-      ctx.font = "9px Trebuchet MS";
-      ctx.textAlign = "right";
-      ctx.fillStyle = "rgba(200, 160, 130, 0.86)";
-      ctx.fillText("No wild robot this seed", toggleX + toggleW - 6, labelY);
-    }
+      if (enabled) {
+        ctx.strokeStyle = "rgba(12, 28, 44, 0.9)";
+        ctx.lineWidth = 1.6;
+        ctx.beginPath();
+        ctx.moveTo(boxX + 3, boxY + boxSize * 0.55);
+        ctx.lineTo(boxX + boxSize * 0.45, boxY + boxSize - 3.2);
+        ctx.lineTo(boxX + boxSize - 3, boxY + 3.4);
+        ctx.stroke();
+      }
+
+      const labelX = boxX + boxSize + 6;
+      const labelY = rowY + rowH * 0.5;
+      ctx.font = "10px Trebuchet MS";
+      ctx.textAlign = "left";
+      ctx.fillStyle = available
+        ? "rgba(214, 236, 255, 0.96)"
+        : "rgba(150, 170, 190, 0.72)";
+      ctx.fillText(label, labelX, labelY);
+
+      if (!available && unavailableText) {
+        ctx.font = "9px Trebuchet MS";
+        ctx.textAlign = "right";
+        ctx.fillStyle = "rgba(200, 160, 130, 0.86)";
+        ctx.fillText(unavailableText, rowX + rowW - 6, labelY);
+      }
+    };
+
+    drawMiniMapToggleRow(
+      toggleX,
+      toggleY,
+      toggleW,
+      toggleH,
+      state.debugShowAbandonedRobot && hasWildRobot,
+      hasWildRobot,
+      "Show abandoned robot",
+      "No wild robot this seed"
+    );
+    drawMiniMapToggleRow(
+      shipToggleX,
+      shipToggleY,
+      shipToggleW,
+      shipToggleH,
+      state.debugShowRepairableShip && hasRepairableShip,
+      hasRepairableShip,
+      "Show repairable ship",
+      "No repairable ship"
+    );
 
     ctx.restore();
   }
@@ -41936,12 +42651,18 @@
     const endX = Math.min(state.world.size, Math.ceil((camera.x + cameraViewWidth) / CONFIG.tileSize) + 1);
     const endY = Math.min(state.world.size, Math.ceil((camera.y + cameraViewHeight) / CONFIG.tileSize) + 1);
 
+    const oceanNowSeconds = performance.now() * 0.001;
     for (let y = startY; y < endY; y += 1) {
       for (let x = startX; x < endX; x += 1) {
         const idx = tileIndex(x, y, state.world.size);
-        if (!state.world.tiles[idx]) continue;
         const screenX = x * CONFIG.tileSize - camera.x;
         const screenY = y * CONFIG.tileSize - camera.y;
+        if (!state.world.tiles[idx]) {
+          if (!state.inCave) {
+            drawOceanTileDecor(state.world, x, y, screenX, screenY, oceanNowSeconds);
+          }
+          continue;
+        }
         if (state.inCave) {
           const shade = state.world.shades[idx] ?? 0.6;
           const base = [60, 48, 42];
@@ -42001,7 +42722,7 @@
           || structure.type === "bridge"
           || structure.type === "dock"
         ) {
-          drawStructure(structure, camera);
+          drawStructureSafe(structure, camera);
         }
       }
     }
@@ -42779,7 +43500,7 @@
           && structure.type !== "bridge"
           && structure.type !== "dock"
         ) {
-          drawStructure(structure, camera);
+          drawStructureSafe(structure, camera);
         }
       }
     } else if (state.inCave && state.world?.entrance) {
@@ -42944,7 +43665,6 @@
       ) {
         continue;
       }
-      const color = ITEMS[drop.itemId]?.color ?? "#fff";
       const ttl = Number.isFinite(drop.ttl) ? drop.ttl : DROP_DESPAWN.lifetime;
       const warningAmount = clamp(
         (DROP_DESPAWN.warningStart - ttl) / DROP_DESPAWN.warningStart,
@@ -42961,25 +43681,15 @@
       const flickerAlpha = criticalAmount > 0 ? (0.45 + (pulse * 0.55)) : 1;
       const drawAlpha = clamp(baseAlpha * flickerAlpha, 0.18, 1);
       const sizeScale = 1 - (warningAmount * 0.08) - (criticalAmount * (0.08 + ((1 - pulse) * 0.06)));
-      const itemRadius = 6 * sizeScale;
-      const shadowRadiusX = 7 * sizeScale;
-      const shadowRadiusY = 3 * sizeScale;
-
-      ctx.save();
-      ctx.globalAlpha = drawAlpha;
-      ctx.fillStyle = "rgba(0,0,0,0.22)";
-      ctx.beginPath();
-      ctx.ellipse(screen.x, screen.y + 6, shadowRadiusX, shadowRadiusY, 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = color;
-      ctx.beginPath();
-      ctx.arc(screen.x, screen.y, itemRadius, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = "rgba(255,255,255,0.35)";
-      ctx.beginPath();
-      ctx.arc(screen.x - (2 * sizeScale), screen.y - (2 * sizeScale), Math.max(1.4, 2 * sizeScale), 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
+      const drawSize = (12.8 * sizeScale) + (criticalAmount * 0.8);
+      const bobSeed = (seedToInt(String(drop.id || drop.itemId)) >>> 0) % 997;
+      const bob = Math.sin((performance.now() * 0.005) + (bobSeed * 0.17)) * 0.8;
+      drawDroppedItemVisual(drop, screen.x, screen.y, {
+        alpha: drawAlpha,
+        size: drawSize,
+        shadowScale: 1 + (criticalAmount * 0.08),
+        bobOffset: bob,
+      });
 
       if (warningAmount > 0) {
         const ringAlpha = clamp(0.08 + (warningAmount * 0.2) + (criticalAmount * 0.26), 0, 0.66);
@@ -42989,6 +43699,12 @@
         ctx.beginPath();
         ctx.arc(screen.x, screen.y, ringRadius, 0, Math.PI * 2);
         ctx.stroke();
+      }
+      if (drop.qty > 1) {
+        ctx.fillStyle = "rgba(242, 249, 255, 0.92)";
+        ctx.font = "10px Trebuchet MS";
+        ctx.textAlign = "center";
+        ctx.fillText(String(drop.qty), screen.x, screen.y - 10 + bob);
       }
     }
 
@@ -43092,8 +43808,12 @@
       }
     }
 
+    ctx.save();
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = "source-over";
     drawPlayer(camera);
     drawRemotePlayers(camera);
+    ctx.restore();
 
     if (state.inCave) {
       drawCaveDarkness(camera);
@@ -43139,6 +43859,9 @@
             const surface = state.surfaceWorld || state.world;
             if (surface) {
               removePlayerFromAllShips(getLocalShipPlayerId());
+              if (isCaveV2Active()) {
+                leaveCaveV2();
+              }
               state.inCave = false;
               state.activeCave = null;
               state.activeCaveLayer = 0;
@@ -43499,6 +44222,10 @@
       toggleY,
       toggleW,
       toggleH,
+      shipToggleX,
+      shipToggleY,
+      shipToggleW,
+      shipToggleH,
     } = layout;
     const x = event.clientX;
     const y = event.clientY;
@@ -43507,6 +44234,10 @@
     }
     if (isPointInRect(x, y, toggleX, toggleY, toggleW, toggleH)) {
       toggleDebugAbandonedRobotMarker();
+      return true;
+    }
+    if (isPointInRect(x, y, shipToggleX, shipToggleY, shipToggleW, shipToggleH)) {
+      toggleDebugRepairableShipMarker();
       return true;
     }
     if (isPointInRect(x, y, mapX, mapY, mapW, mapH) && state.debugContinentalShift) {

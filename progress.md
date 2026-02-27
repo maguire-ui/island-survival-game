@@ -47,3 +47,25 @@ Original prompt: Fix CaveV2 so caves use Zelda-style screen-to-screen room trans
 - Harvest probe acceptance is now treated as authoritative success in assertion evaluation (host has confirmed execution), and failure reports now include both snapshot and live observed fields (`snapshotHp/Removed/DropCount`, `liveHp/Removed/DropCount`).
 - Increased harvest soft-failure budget for retries (stress: 12, quick: 6) to prevent premature autotest aborts on transient reject windows.
 - CaveV2 stuck-at-entrance hardening: bumped `CAVE_V2_PASSAGE_REPAIR_VERSION` to 3 and strengthened `ensureCaveV2RoomPassagesOpen` to recarve guaranteed wide center-to-edge corridors (including entry surface side) so old saves re-open blocked room pathways.
+
+- CaveV2 link-frequency tuning: increased cross-island cave pairing chance in `assignSurfaceCaveTunnelLinks` (enable threshold 0.88 from 0.5) and lowered minimum link distance gate (`max(8, world.size*0.05)` from `max(12, world.size*0.08)`) so connected cave pairs are much more common while remaining deterministic by seed.
+
+- Boat control pass: switched repaired-boat controls to intuitive steer/throttle mapping (A/D turn, W/S throttle), increased steering responsiveness at low throttle, and retuned ship physics to `speedMax = CONFIG.moveSpeed * 1.5` (225 with current moveSpeed), with smoother glide (`drag 0.97`) and matching acceleration.
+
+- Debug world mini-map update: added a second under-map toggle row for "Show repairable ship" (alongside robot toggle), wired click handling, and added map markers for unrepaired abandoned ships so they are easy to locate for repair.
+
+- Abandoned ship discoverability pass: moved seeded abandoned-ship placement from outer-ring islands to a deterministic mid-ring island band (`getPreferredAbandonedShipIslands`), with fallback to non-spawn islands. Existing seeded ships are now validated against mid-band proximity so ships remain findable and repairable in central/middle areas.
+- Ocean ambience pass: expanded ambient fish population/variety (schooling + species variants: silver, tropical, needle, ray), increased spawn cadence, and added deterministic water-tile decor rendering (reef patches, coral branches, kelp fronds, shimmer lines) so open water feels alive while remaining decorative-only and performance-safe.
+- Rendering integration: ocean decor now draws on visible water tiles during the main tile pass (seed-deterministic per tile + world seed) and keeps land/structure gameplay logic unchanged.
+- Runtime validation note: browser automation is still blocked in this shell (`node`/`npx` missing), so this pass was validated by direct code inspection + diff integrity checks.
+- Village/player disappearance fix pass: added `drawStructureSafe` wrapper (save/restore + fallback draw + error containment) and switched both surface structure render loops to use it, preventing one broken structure from aborting later house/player rendering.
+- Added local player render-state guard (`ensureLocalPlayerRenderableState`) and hardened `drawPlayerAvatar` finite/drift fallback so stale/invalid render coords cannot hide the local player model.
+- Render pass now hard-resets blend/alpha before local+remote player draw to prevent canvas-state leakage from earlier draws.
+- Village/player disappearance hardening follow-up: added broader legacy house type normalization (`house_small`, `village_*_house`, etc.) and render-time self-heal/fallback for unknown structure types in `drawStructureSafe`, so stale structure types no longer silently disappear.
+- House silhouette tuning: medium/large houses keep same footprint but render less flat via taller silhouette lift + roof lift and slight horizontal inset, so textures read better without changing occupied tile space.
+- Cave death/respawn hardening: fixed CaveV2 death handling so dying in a CaveV2 room now drops inventory into that room's drop container (not surface world), then force-exits CaveV2 and respawns at checkpoint/dock. Added same CaveV2 teardown in frame-error respawn fallback to prevent cave active-state from pinning player in-place after death.
+- CaveV2 drop fix: manual item drops in caves now spawn into the active room container (instead of surface world), use floor-safe spawn placement with minimum distance from player, render as pickup balls, and use TTL despawn like surface drops.
+- Added CaveV2 room drop ticking (`updateCaveV2RoomDrops`) and save/load persistence for drop `ttl`; QA now flags invalid cave drop TTL.
+- Cave death drops now share the same CaveV2 drop spawn helper/path so drop IDs/TTL behavior are consistent across manual drops, ore drops, and death drops.
+- Runtime validation still limited in this shell because `node`/`npx` are unavailable.
+- Drop texture pass: replaced generic ground-drop circles with cached item-specific mini textures for both surface world and CaveV2 room drops (`drawDroppedItemVisual`). Quantity labels and despawn warning rings remain intact.
