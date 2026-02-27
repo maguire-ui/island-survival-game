@@ -18794,23 +18794,56 @@
     // Entry room daylight spill / surface-exit guidance
     if (cave && room.roomId === cave.entryRoomId) {
       const side = cave.entrySurfaceSide || "S";
-      const grad = side === "N" || side === "S"
-        ? ctx.createLinearGradient(0, side === "N" ? drawY : drawY + roomPx.h, 0, side === "N" ? drawY + 90 : drawY + roomPx.h - 90)
-        : ctx.createLinearGradient(side === "W" ? drawX : drawX + roomPx.w, 0, side === "W" ? drawX + 90 : drawX + roomPx.w - 90, 0);
-      grad.addColorStop(0, "rgba(255, 224, 158, 0.2)");
-      grad.addColorStop(1, "rgba(255, 225, 160, 0)");
-      ctx.fillStyle = grad;
-      if (side === "N") ctx.fillRect(drawX, drawY, roomPx.w, 120);
-      else if (side === "S") ctx.fillRect(drawX, drawY + roomPx.h - 120, roomPx.w, 120);
-      else if (side === "W") ctx.fillRect(drawX, drawY, 120, roomPx.h);
-      else ctx.fillRect(drawX + roomPx.w - 120, drawY, 120, roomPx.h);
-
       const laneRect = getCaveV2ExitLaneRectPx(room, side);
       if (laneRect) {
         const lx = drawX + laneRect.x;
         const ly = drawY + laneRect.y;
         const lw = laneRect.w;
         const lh = laneRect.h;
+        // Keep daylight spill constrained to the actual exit passage so we avoid
+        // a full-room edge band across the screen.
+        const corridorBleed = Math.max(
+          CONFIG.tileSize * 1.2,
+          (Math.max(lw, lh) * 0.65)
+        );
+        const spillDepth = Math.min(
+          Math.floor((side === "N" || side === "S" ? roomPx.h : roomPx.w) * 0.34),
+          112
+        );
+        if (side === "N" || side === "S") {
+          const centerX = lx + (lw * 0.5);
+          const spillW = Math.max(lw + corridorBleed * 2, CONFIG.tileSize * 4);
+          const spillX = centerX - (spillW * 0.5);
+          const spillY = side === "N" ? ly : (ly + lh - spillDepth);
+          const grad = ctx.createLinearGradient(
+            0,
+            side === "N" ? ly : (ly + lh),
+            0,
+            side === "N" ? (ly + spillDepth) : (ly + lh - spillDepth)
+          );
+          grad.addColorStop(0, "rgba(255, 224, 158, 0.2)");
+          grad.addColorStop(0.6, "rgba(255, 215, 145, 0.1)");
+          grad.addColorStop(1, "rgba(255, 225, 160, 0)");
+          ctx.fillStyle = grad;
+          ctx.fillRect(spillX, spillY, spillW, spillDepth);
+        } else {
+          const centerY = ly + (lh * 0.5);
+          const spillH = Math.max(lh + corridorBleed * 2, CONFIG.tileSize * 4);
+          const spillY = centerY - (spillH * 0.5);
+          const spillX = side === "W" ? lx : (lx + lw - spillDepth);
+          const grad = ctx.createLinearGradient(
+            side === "W" ? lx : (lx + lw),
+            0,
+            side === "W" ? (lx + spillDepth) : (lx + lw - spillDepth),
+            0
+          );
+          grad.addColorStop(0, "rgba(255, 224, 158, 0.2)");
+          grad.addColorStop(0.6, "rgba(255, 215, 145, 0.1)");
+          grad.addColorStop(1, "rgba(255, 225, 160, 0)");
+          ctx.fillStyle = grad;
+          ctx.fillRect(spillX, spillY, spillDepth, spillH);
+        }
+
         const laneGlow = (side === "N" || side === "S")
           ? ctx.createLinearGradient(0, side === "N" ? ly : (ly + lh), 0, side === "N" ? (ly + Math.min(90, roomPx.h * 0.35)) : (ly + lh - Math.min(90, roomPx.h * 0.35)))
           : ctx.createLinearGradient(side === "W" ? lx : (lx + lw), 0, side === "W" ? (lx + Math.min(90, roomPx.w * 0.35)) : (lx + lw - Math.min(90, roomPx.w * 0.35)), 0);
