@@ -7,7 +7,7 @@
     content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no, viewport-fit=cover"
   />
   <title>Island Survival Game</title>
-  <link rel="stylesheet" href="styles.css?v=20260227-2" />
+  <link rel="stylesheet" href="styles.css?v=20260228-2" />
 </head>
 <body>
   <canvas id="game"></canvas>
@@ -31,9 +31,9 @@
         <div id="startPlayMenu" class="start-menu-view">
           <div class="start-subhead">Play</div>
           <div class="start-menu-stack">
-            <button id="soloBtn" class="start-menu-btn" type="button">Play Alone</button>
-            <button id="hostBtn" class="start-menu-btn" type="button">Host Room</button>
-            <button id="joinBtn" class="start-menu-btn" type="button">Join Room</button>
+            <button id="soloBtn" class="start-menu-btn" type="button">Solo</button>
+            <button id="hostBtn" class="start-menu-btn" type="button">Host</button>
+            <button id="joinBtn" class="start-menu-btn" type="button">Join</button>
           </div>
           <button id="menuBackFromPlayBtn" class="start-menu-back-btn" type="button">Back</button>
         </div>
@@ -41,7 +41,7 @@
           <div class="start-subhead">Options</div>
           <div class="start-options-list">
             <label class="start-option-row" for="menuPlayerName">
-              <span>Player Name</span>
+              <span>Name</span>
             </label>
             <input
               id="menuPlayerName"
@@ -55,17 +55,17 @@
               spellcheck="false"
             />
             <label class="start-option-row" for="menuMusicVolume">
-              <span>Music Volume</span>
+              <span>Music</span>
               <span id="menuMusicVolumeValue">62%</span>
             </label>
             <input id="menuMusicVolume" class="settings-slider start-settings-slider" type="range" min="0" max="100" step="1" value="62" />
             <label class="start-option-row" for="menuSfxVolume">
-              <span>SFX Volume</span>
+              <span>SFX</span>
               <span id="menuSfxVolumeValue">65%</span>
             </label>
             <input id="menuSfxVolume" class="settings-slider start-settings-slider" type="range" min="0" max="100" step="1" value="65" />
           </div>
-          <button id="menuResetWorldBtn" class="start-menu-utility-btn" type="button">Reset Current Seed</button>
+          <button id="menuResetWorldBtn" class="start-menu-utility-btn" type="button">Reset Seed</button>
           <button id="menuBackFromOptionsBtn" class="start-menu-back-btn" type="button">Back</button>
         </div>
       </div>
@@ -84,26 +84,26 @@
           <div id="healthFill"></div>
         </div>
         <div id="armorDisplay" aria-label="Armor points">
-          <span class="armor-label">Armor</span>
+          <span class="armor-label">🛡</span>
           <span id="armorPips" class="armor-pips" aria-hidden="true"></span>
           <span id="armorValue" class="armor-value">0/20</span>
         </div>
       </div>
       <div class="topbar-group topbar-group-right">
         <div id="mpStatus">MP: Offline</div>
-        <div id="roomDisplay">Room: --</div>
-        <button id="mpCopy" type="button">Copy Code</button>
-        <button id="mpJoin" type="button">Join Room</button>
+        <div id="roomDisplay">R: --</div>
+        <button id="mpCopy" type="button">Copy</button>
+        <button id="mpJoin" type="button">Join</button>
         <button id="settingsToggle" type="button" aria-label="Settings">⚙</button>
         <button id="debugToggle" type="button" class="hidden">Debug</button>
-        <div id="saveStatus" data-state="saved">Saved</div>
+        <div id="saveStatus" data-state="saved">✓</div>
       </div>
     </div>
 
     <div id="prompt"></div>
 
     <div id="buildMenu" class="panel hidden">
-      <div class="panel-title">Crafting Bench</div>
+      <div class="panel-title">Craft</div>
       <div id="buildRobotControls" class="build-robot-controls hidden">
         <button id="toggleRobotRecallBtn" class="build-robot-btn" type="button">Call All Robots</button>
         <div id="buildRobotControlsHint" class="build-robot-hint"></div>
@@ -142,7 +142,7 @@
           <span class="build-category-label">Upgrades</span>
         </button>
       </div>
-      <div id="buildCategoryHint" class="build-category-hint">Paths, bridges, and travel structures.</div>
+      <div id="buildCategoryHint" class="build-category-hint">Paths & bridges.</div>
       <div id="buildList" class="recipe-list"></div>
     </div>
 
@@ -154,13 +154,13 @@
     <div id="chestPanel" class="panel hidden">
       <div id="chestPanelTitle" class="panel-title">Chest</div>
       <div id="chestSlots" class="slot-grid"></div>
-      <div id="chestPanelHint" class="panel-hint">Click items to quick-transfer between chest and inventory.</div>
+      <div id="chestPanelHint" class="panel-hint">Tap item ↔ bag</div>
       <button id="destroyChest" class="action-btn danger-btn">Break & Pickup</button>
     </div>
 
     <div id="shipRepairPanel" class="panel hidden">
       <div id="shipRepairTitle" class="panel-title">Abandoned Ship</div>
-      <div id="shipRepairStatus" class="panel-hint">Restore this vessel with materials to unlock travel.</div>
+      <div id="shipRepairStatus" class="panel-hint">Fix ship to sail.</div>
       <div id="shipRepairCost" class="recipe-cost"></div>
       <div class="ship-repair-actions">
         <button id="shipRepairBtn" class="action-btn" type="button">Repair Ship</button>
@@ -171,9 +171,9 @@
     <div id="hotbar" class="slot-row"></div>
 
     <div id="inventory" class="panel hidden">
-      <div class="panel-title">Inventory</div>
+      <div class="panel-title">Bag</div>
       <div id="inventorySlots" class="slot-grid"></div>
-      <div class="panel-hint">Click a slot to move or merge stacks.</div>
+      <div class="panel-hint">Tap to move stacks</div>
     </div>
 
     <div id="debugPanel" class="panel hidden">
@@ -191,6 +191,7 @@
       <button id="infiniteResourcesBtn" class="action-btn">Infinite Resources: Off</button>
       <button id="infiniteHealthBtn" class="action-btn">Infinite Health: Off</button>
       <button id="debugWorldMapBtn" class="action-btn">World Mini-Map: Off</button>
+      <button id="debugRepairableShipBtn" class="action-btn">Mini-Map Boat Marker: Off</button>
       <button id="continentalShiftBtn" class="action-btn">Continental Shift: Off</button>
       <div class="settings-row">
         <span>Player Speed</span>
@@ -233,8 +234,8 @@
       />
       <div class="panel-section-title">Multiplayer Autotest</div>
       <div class="mp-autotest-controls">
-        <button id="mpAutotestQuickBtn" class="action-btn" type="button">Run MP Autotest (Quick)</button>
-        <button id="mpAutotestStressBtn" class="action-btn" type="button">Run MP Autotest (Stress)</button>
+        <button id="mpAutotestQuickBtn" class="action-btn" type="button">MP Test (Quick)</button>
+        <button id="mpAutotestStressBtn" class="action-btn" type="button">MP Test (Stress)</button>
         <label class="mp-autotest-field" for="mpAutotestClients">
           <span>Clients</span>
           <select id="mpAutotestClients" class="mp-autotest-input">
@@ -244,10 +245,10 @@
           </select>
         </label>
         <label class="mp-autotest-field" for="mpAutotestSeed">
-          <span>Seed (optional)</span>
-          <input id="mpAutotestSeed" class="mp-autotest-input" type="text" placeholder="blank = random" />
+          <span>Seed</span>
+          <input id="mpAutotestSeed" class="mp-autotest-input" type="text" placeholder="random" />
         </label>
-        <button id="mpAutotestReplayBtn" class="action-btn secondary-btn" type="button">Replay Last Failure</button>
+        <button id="mpAutotestReplayBtn" class="action-btn secondary-btn" type="button">Replay Last</button>
         <div id="mpAutotestProgressWrap" class="mp-autotest-progress" data-status="idle" aria-hidden="true">
           <div class="mp-autotest-progress-track">
             <div id="mpAutotestProgressFill" class="mp-autotest-progress-fill"></div>
@@ -255,30 +256,30 @@
           <div id="mpAutotestProgressText" class="mp-autotest-progress-text">Idle</div>
         </div>
         <pre id="mpAutotestLog" class="mp-autotest-log">Multiplayer autotest idle.</pre>
-        <button id="mpAutotestCopyReportBtn" class="action-btn secondary-btn" type="button">Copy Failure Report</button>
+        <button id="mpAutotestCopyReportBtn" class="action-btn secondary-btn" type="button">Copy Report</button>
       </div>
     </div>
 
     <div id="settingsPanel" class="panel hidden">
-      <div class="panel-title">Game Menu</div>
+      <div class="panel-title">Menu</div>
       <div class="tabs">
         <button id="settingsTabBtn" class="tab-btn active" type="button">Settings</button>
-        <button id="objectivesTabBtn" class="tab-btn" type="button">Objectives</button>
+        <button id="objectivesTabBtn" class="tab-btn" type="button">Goals</button>
       </div>
       <div id="settingsContent" class="panel-content">
         <div class="settings-row">
-          <span>Music Volume</span>
+          <span>Music</span>
           <span id="musicVolumeValue">62%</span>
         </div>
         <input id="musicVolume" class="settings-slider" type="range" min="0" max="100" step="1" value="62" />
         <div class="settings-row">
-          <span>SFX Volume</span>
+          <span>SFX</span>
           <span id="sfxVolumeValue">65%</span>
         </div>
         <input id="sfxVolume" class="settings-slider" type="range" min="0" max="100" step="1" value="65" />
-        <button id="resetWorldBtn" class="action-btn danger-btn">Reset World</button>
-        <button id="unlockDebugBtn" class="action-btn secondary-btn">Access Debug Tools</button>
-        <div id="debugUnlockStatus" class="panel-hint">Debug tools locked</div>
+        <button id="resetWorldBtn" class="action-btn danger-btn">Reset</button>
+        <button id="unlockDebugBtn" class="action-btn secondary-btn">Unlock Debug</button>
+        <div id="debugUnlockStatus" class="panel-hint">Debug locked</div>
       </div>
       <div id="objectivesContent" class="panel-content hidden">
         <div id="objectiveGuide" class="objective-guide"></div>
@@ -290,24 +291,22 @@
       <div id="stick">
         <div id="stickKnob"></div>
       </div>
-      <button id="inventoryBtn">Inventory</button>
+      <button id="inventoryBtn">Bag</button>
       <button id="dropBtn">Drop</button>
-      <button id="actionBtn">Interact</button>
-      <button id="attackBtn">Attack</button>
+      <button id="actionBtn">Use</button>
+      <button id="attackBtn">Hit</button>
     </div>
   </div>
 
   <div id="endScreen" class="overlay hidden">
     <div class="overlay-card">
       <div class="overlay-title">Rescued!</div>
-      <div class="overlay-text">
-        Your beacon was seen. A rescue crew arrives at dawn.
-      </div>
+      <div class="overlay-text">Beacon seen. Rescue inbound.</div>
       <button id="newRunBtn" class="action-btn">Start New Seed</button>
     </div>
   </div>
 
   <script src="https://unpkg.com/peerjs@1.5.5/dist/peerjs.min.js"></script>
-  <script src="src/main.js?v=20260227-2"></script>
+  <script src="src/main.js?v=20260228-2"></script>
 </body>
 </html>

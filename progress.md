@@ -76,3 +76,59 @@ Original prompt: Fix CaveV2 so caves use Zelda-style screen-to-screen room trans
 - MP autotest stabilization: added host-side autotest retarget fallback in `handleHarvestRequest` when requested `resId` is stale/non-interactable; host selects nearest valid harvestable node for probe continuity.
 - MP autotest harvest assertion hardening: added `harvestAssertionInconclusiveCount` guard so isolated inconclusive harvest probes are downgraded to warnings instead of immediate run abort, with cap to still fail on persistent systemic issues.
 - Cache-buster update in `/index.html`: CSS and JS query versions set to `20260227-2` so browser/GitHub Pages pulls the latest assets after next deploy.
+- Village render crash guard (2026-02-27): hardened `drawVillager` with finite coordinate checks before canvas path calls, preventing invalid villager coords from aborting frame render (the source of disappearing player/UI/structures near villages).
+- Structure render safety follow-up: `drawStructureSafe` now skips/warns on invalid `tx/ty` instead of attempting to render malformed structures.
+- MP autotest harvest false-fail hardening (2026-02-28): expanded harvest retry/inconclusive budgets (`timeoutAllowances` stress/quick: 24/12, inconclusive cap: 160/80) and downgraded “limit reached” harvest assertions to warnings instead of immediate run-fail so stress runs can continue and validate later categories.
+- MP autotest strict harvest assertion window increased (`maxChecks` 40 from 24 for queued strict harvest assertions) to reduce premature assertion expiration under network jitter.
+- CaveV2 passage visual cleanup: removed the small dark ellipse marker drawn at passage centers (the “weird circle” artifact in tunnel lanes).
+- CaveV2 surface entrance tuning: reduced mine-shaft entrance render scale from `0.58` to `0.46` so cave mouths no longer appear oversized on island tiles.
+- Cache-buster bump: `/index.html` now references `styles.css?v=20260228-2` and `src/main.js?v=20260228-2` to force live clients/GitHub Pages to fetch the new build.
+- House shape tuning follow-up: medium/large houses now use stronger render-only `wideInset` (`~22%`) so village houses keep footprint/collision but no longer appear flattened/stretched across their occupied tiles.
+- Runtime validation is still limited in this shell because `node`/`npx` are unavailable; this pass was validated through targeted code-path audit and diff inspection.
+- Cave drop visibility fix (2026-02-27): added CaveV2-only drop pickup grace (`CAVE_V2_DROP_PICKUP_GRACE = 0.45s`) so dropped items and ore drops visibly appear on cave ground before auto-pickup can occur.
+- Cave drop pipeline update: `spawnCaveV2RoomDrop` now stores `pickupDelay`; `updateCaveV2RoomDrops` counts it down; `pickupCaveV2RoomDrops` ignores drops until delay expires.
+- CaveV2 save/load now persists `pickupDelay` in room drop payloads to prevent reload edge cases where cave drops instantly snap back into inventory.
+- CaveV2 exit-light cleanup (2026-02-27): rewrote entry-room exit lighting to be tunnel-clipped only (no full bottom/edge band spill). Removed circular/radial exit cue rendering and replaced it with linear tunnel beam lighting so no "weird circle" appears in the passage.
+- Cave death/respawn reliability fix (2026-02-27): hardened `dropInventoryOnDeath` to only clear inventory after confirmed drop creation; added cave-death fallback to surface drop spawn near cave return position if cave drop creation fails, preventing item loss.
+- Added `spawnSurfaceDeathDrops` helper and made `dropInventoryOnDeath` return structured outcome (`dropped/cleared/count`) so `handlePlayerDeath` can respond deterministically.
+- `handlePlayerDeath` now syncs render position to respawn physics position (`syncLocalPlayerRenderToPhysics`) in both try/catch paths to prevent post-death model/hitbox drift.
+- Cave update loop now runs a local death check in the CaveV2 branch (`hp<=0 && !respawnLock`) so cave deaths always trigger respawn handling even if HP reaches zero through non-standard paths.
+- Debug menu UX update (2026-02-27): added a dedicated `Mini-Map Boat Marker` toggle button directly under `World Mini-Map` in the Debug panel (`index.html` + `src/main.js`), wired to existing `debugShowRepairableShip` state and repairable-ship marker rendering so players can enable/disable boat markers without clicking in-map overlay rows.
+- Repaired boat speed tuning (2026-02-27): increased `ABANDONED_SHIP_CONFIG.speedMax` from `CONFIG.moveSpeed * 1.5` to `CONFIG.moveSpeed * 2.25` (50% faster than previous boat top speed, per request).
+- Shipwreck spawn frequency pass (2026-02-27): increased seeded shipwreck density (`SHIPWRECK_CONFIG` now min/max 5/9, tighter pair gap + lower spacing + more attempts) and added deterministic final ocean-scan fallback in `generateSeededShipwreckPlacements` to backfill placements when pair-based candidates are insufficient. This keeps world-seed determinism while making shipwrecks reliably present/more common.
+- Validation note: browser automation remains blocked in this shell (`node`/`npx` unavailable); change verified via targeted code-path and diff integrity check.
+- Ocean graphics polish pass (2026-02-27): upgraded ocean visuals with a render-only backdrop layer (`drawOceanBackdrop`) plus richer deterministic per-tile decor in `drawOceanTileDecor` (caustic glints, shoreline foam edges, soft bubble pockets, tuned reef/coral/kelp frequencies). Integrated in surface render path with zero gameplay-state changes.
+- Updated `OCEAN_DECOR_CONFIG` to support new visual channels (`causticMod`, `foamMod`, `bubbleMod`) and retuned existing decor frequency for denser but still lightweight ocean ambience.
+- Validation note: automated browser loop still unavailable in this shell (`node`/`npx` missing); verified via targeted render-path inspection and diff review.
+- Item UI + texture polish pass (2026-02-27): upgraded item frame rendering in `drawItemTexture` (beveled shell, layered face gradient, gloss, corner shading/studs, glyph shadow) and bumped `ITEM_TEXTURE_CACHE_VERSION` to `5` so cached icons refresh.
+- UI styling pass: refreshed slot/recipe icon visuals in `styles.css` (`.slot`, `.slot-icon`, `.slot-label`, `.slot-count`, `.recipe-icon`) for cleaner, higher-contrast item presentation while preserving gameplay behavior.
+- Increased icon source resolution (`applyItemVisual` now uses 38/34px generated textures) and ground drop texture source size (34px) for sharper item visuals.
+- Cache-buster update in `/index.html`: CSS/JS versions set to `20260227-3` so browser/GitHub Pages loads new item UI/texture assets.
+- Validation note: Playwright/browser runtime loop remains blocked in this shell (`node`/`npx` missing), so this pass was validated by targeted render-path and diff inspection.
+- Ground-drop texture pass follow-up (2026-02-27): tightened dropped-item glyph mapping so all known item IDs render as recognizable item types on the ground (added explicit paper + bridge_bundle coverage, kept map/tool/weapon/armor/station/boat/chest/structure categories), and improved fallback labels from single-letter to short abbreviations for uncategorized items.
+- Removed dead CaveV2/surface drop texture cache path (`groundDropTextureCache` / `getGroundDropTexture`) now that ground drops are rendered via dedicated glyph renderer only.
+- Cache-buster update in `/index.html`: CSS/JS versions set to `20260227-4` so latest dropped-item visuals are pulled on refresh/deploy.
+- Validation note: runtime Playwright/browser check still blocked in this shell (`node`/`npx` unavailable); pass validated via targeted render-path audit (`drawDroppedItemVisual` in both surface + cave loops) and code diff inspection.
+- Cave entrance visual solidity pass (2026-02-27): increased mine-shaft cave-mouth backdrop opacity and tunnel mouth edge darkness in surface render (`src/main.js`) so entrances read less translucent and more like solid cave openings; slightly reduced interior glint to avoid washed/see-through look.
+- Cache-buster update in `/index.html`: CSS/JS versions set to `20260227-5` so cave entrance visual updates load immediately after refresh/deploy.
+- Validation note: runtime browser loop still blocked in this shell (`node`/`npx` missing); pass validated by targeted cave-entrance render-path audit + diff inspection.
+- Bridge texture directional upgrade (2026-02-27): replaced single bridge tile art with direction-aware rendering (`getBridgeRenderConnections` + `drawBridgeDirectionalTexture`) so bridge tiles now visually adapt for N/E/S/W runs, dead-ends, and corners.
+- New bridge renderer reads adjacent bridge/dock neighbors to open sides and draws rails on closed sides, endpoint caps for single-direction spans, and a distinct joint accent for corner turns.
+- Added isolated-bridge fallback orientation against nearby land tiles so standalone bridges still render with a sensible facing direction.
+- Cache-buster update in `/index.html`: CSS/JS versions set to `20260227-6` so bridge texture updates load immediately on refresh/deploy.
+- Validation note: runtime browser loop still blocked in this shell (`node`/`npx` missing); pass validated via targeted draw-path inspection in `drawStructure -> case "bridge"`.
+- UI text minimization pass (2026-02-28): compressed remaining hardcoded labels/messages to shorter copy across start/settings/debug/MP room flows.
+- Start/play/options labels shortened (Solo/Host/Join, Name, Music, SFX, Reset Seed), settings labels shortened (Music/SFX/Reset), and MP autotest labels compacted (MP Test Quick/Stress, Seed/random, Replay Last, Copy Report).
+- Multiplayer room HUD copy standardized to compact format (`R:` prefix), copy/join prompts shortened (`Code copied`, `Enter code/link`, `Bad code`), and top-right copy button label kept as `Copy`.
+- Prompt compaction mapping expanded to reduce verbose gameplay messages (`Need mats`, `Bag full`, `Need prior tier`, `Need small/medium house`, `Dock spawn set`).
+- Robot station action label `Inventory` shortened to `Cargo`.
+- Cache-buster update in `/index.html`: CSS/JS query versions set to `20260227-8`.
+- Day/night ambience pass (2026-02-28): added deterministic surface sky transition rendering with sunrise/sunset progression (`getSurfaceDaylightCycleState` + `drawSurfaceSkyAmbience`) and integrated it into the main surface render path.
+- Sun now follows a smooth arc from horizon-to-horizon during day, with warm twilight coloring at dawn/dusk and darker sky blend at night.
+- Surface background fill now uses dynamic sky/twilight gradient instead of static blue gradient; existing ocean decor/fish/night lighting remain intact.
+- Cache-buster update in `/index.html`: CSS/JS versions set to `20260228-1`.
+- Texture pass follow-up (2026-02-28): upgraded remaining flat-looking station/utility structures in `drawStructure` (`dock`, `bed`, `campfire`, `beacon`, `robot`) with richer shading/material detail and silhouette readability while preserving gameplay hitboxes/footprints.
+- Dock now has post hardware/rope details; bed uses layered blanket/pillow shading; campfire uses crossed logs + gradient flame; beacon has clearer pole/core/base separation; robot uses rounded-panel body gradients and panel seams.
+- Validation note: `develop-web-game` Playwright loop is still blocked in this shell (`node`/`npx` missing), so this pass was validated by targeted render-path inspection + diff review.
+- CaveV2 cross-island link frequency tuning (2026-02-28): updated `assignSurfaceCaveTunnelLinks` to target a higher pairing ratio per world (up to ~86% of caves paired, capped by cave count), reduce strict minimum link distance, and add a relaxed-distance fallback pass.
+- Link scoring now prefers nearby cross-island candidates (with deterministic jitter), which increases successful pair formation and makes connected cave exits between islands noticeably more common.
