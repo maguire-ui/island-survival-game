@@ -210,3 +210,5 @@ Original prompt: Fix CaveV2 so caves use Zelda-style screen-to-screen room trans
 - Main-menu reliability fix: extracted `bindStartMenuListeners()` and bind it at init start so Play/Options/Quit/Back/Solo/Host/Join remain wired even if later init work errors. Also guarded previously unprotected listeners (`actionBtn`, `canvas`, `destroyChestBtn`) to prevent startup aborts from missing DOM nodes.
 
 - Menu button fail-safe: `bindStartMenuListeners()` now runs before `init()` as well, so Play/Options/Quit/Solo/Host/Join stay clickable even if later startup logic throws.
+
+- Main menu hotfix follow-up: bumped main script cache-buster to `v=20260228-17` so clients cannot keep stale JS where start-menu handlers were missing/broken.
