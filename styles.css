@@ -532,20 +532,18 @@ html, body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 34px;
-  height: 34px;
-  border-radius: 8px;
-  border: 1px solid rgba(185, 225, 255, 0.34);
-  background:
-    radial-gradient(120% 90% at 26% 18%, rgba(228, 246, 255, 0.16), rgba(228, 246, 255, 0) 55%),
-    rgba(9, 19, 31, 0.58);
+  width: 38px;
+  height: 38px;
+  border-radius: 0;
+  border: none;
+  background: transparent;
   overflow: hidden;
-  box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.34), 0 2px 6px rgba(0, 0, 0, 0.28);
+  box-shadow: none;
 }
 
 .slot-icon-compact {
-  width: 38px;
-  height: 38px;
+  width: 42px;
+  height: 42px;
 }
 
 .slot-icon-img {
@@ -771,6 +769,51 @@ html, body {
   filter: drop-shadow(0 2px 5px rgba(0, 0, 0, 0.3));
 }
 
+.settings-select {
+  width: 100%;
+  min-height: 36px;
+  margin-bottom: 10px;
+  border-radius: 9px;
+  border: 1px solid rgba(155, 186, 212, 0.42);
+  background: linear-gradient(180deg, rgba(22, 38, 54, 0.92), rgba(14, 25, 38, 0.95));
+  color: rgba(229, 240, 248, 0.96);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 0 10px;
+}
+
+.settings-select:focus-visible {
+  outline: 2px solid rgba(183, 217, 245, 0.74);
+  outline-offset: 1px;
+}
+
+.settings-name-input {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 36px;
+  margin-bottom: 10px;
+  border-radius: 9px;
+  border: 1px solid rgba(155, 186, 212, 0.42);
+  background: linear-gradient(180deg, rgba(22, 38, 54, 0.92), rgba(14, 25, 38, 0.95));
+  color: rgba(229, 240, 248, 0.96);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 0 10px;
+}
+
+.settings-name-input::placeholder {
+  color: rgba(189, 211, 229, 0.75);
+}
+
+.settings-name-input:focus-visible {
+  outline: 2px solid rgba(183, 217, 245, 0.74);
+  outline-offset: 1px;
+}
+
 .objective-guide {
   display: flex;
   flex-direction: column;
@@ -965,15 +1008,15 @@ html, body {
 }
 
 .recipe-icon {
-  width: 44px;
-  min-height: 26px;
+  width: 52px;
+  min-height: 34px;
   border-radius: 8px;
-  border: 1px solid rgba(160, 210, 245, 0.4);
+  border: 1px solid rgba(160, 210, 245, 0.26);
   margin-bottom: 6px;
   background:
-    radial-gradient(130% 100% at 22% 16%, rgba(221, 242, 255, 0.14), rgba(221, 242, 255, 0) 58%),
-    rgba(10, 18, 28, 0.4);
-  box-shadow: inset 0 0 7px rgba(0, 0, 0, 0.3), 0 2px 8px rgba(0, 0, 0, 0.22);
+    radial-gradient(130% 100% at 22% 16%, rgba(221, 242, 255, 0.08), rgba(221, 242, 255, 0) 58%),
+    rgba(10, 18, 28, 0.24);
+  box-shadow: inset 0 0 5px rgba(0, 0, 0, 0.22), 0 2px 7px rgba(0, 0, 0, 0.18);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -993,36 +1036,66 @@ html, body {
   line-height: 1.3;
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
-  gap: 5px;
+  align-items: flex-end;
+  gap: 6px;
 }
 
 .recipe-cost-chip {
   display: inline-flex;
+  flex-direction: column;
   align-items: center;
-  gap: 4px;
-  padding: 2px 5px 2px 3px;
-  border-radius: 999px;
-  border: 1px solid rgba(156, 189, 218, 0.42);
-  background: linear-gradient(160deg, rgba(19, 31, 45, 0.9), rgba(10, 17, 27, 0.94));
+  justify-content: flex-start;
+  gap: 2px;
+  min-width: 64px;
+  padding: 4px 6px;
+  border-radius: 10px;
+  border: 1px solid rgba(156, 189, 218, 0.34);
+  background: linear-gradient(160deg, rgba(19, 31, 45, 0.58), rgba(10, 17, 27, 0.62));
 }
 
 .recipe-cost-chip.met {
-  border-color: rgba(108, 212, 152, 0.72);
-  box-shadow: 0 0 8px rgba(58, 150, 102, 0.25);
+  border-color: rgba(108, 212, 152, 0.58);
+  box-shadow: 0 0 7px rgba(58, 150, 102, 0.2);
+}
+
+.recipe-cost-chip.missing {
+  border-color: rgba(228, 120, 120, 0.56);
+  box-shadow: 0 0 7px rgba(184, 68, 68, 0.15);
 }
 
 .recipe-cost-chip-icon {
-  width: 14px;
-  height: 14px;
+  width: 22px;
+  height: 22px;
   object-fit: contain;
-  border-radius: 3px;
+  border-radius: 2px;
+}
+
+.recipe-cost-chip-name {
+  max-width: 74px;
+  font-size: 9px;
+  line-height: 1.1;
+  letter-spacing: 0.12px;
+  color: rgba(226, 238, 248, 0.9);
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .recipe-cost-chip-qty {
   font-size: 10px;
-  letter-spacing: 0.2px;
+  letter-spacing: 0.16px;
   color: #dceefe;
+}
+
+.recipe-cost-chip-qty.met {
+  color: #aef3ca;
+  font-weight: 600;
+}
+
+.recipe-cost-chip-qty.missing {
+  color: #ffb5b5;
+  font-weight: 600;
 }
 
 .recipe-flow-sep {
@@ -1058,6 +1131,27 @@ html, body {
 .recipe-card button:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+@media (max-width: 820px) {
+  .recipe-cost-chip {
+    min-width: 56px;
+    padding: 3px 4px;
+  }
+
+  .recipe-cost-chip-icon {
+    width: 19px;
+    height: 19px;
+  }
+
+  .recipe-cost-chip-name {
+    max-width: 62px;
+    font-size: 8px;
+  }
+
+  .recipe-cost-chip-qty {
+    font-size: 9px;
+  }
 }
 
 .robot-mode-grid {
@@ -1396,8 +1490,8 @@ button:focus-visible {
 }
 
 .start-screen .start-card {
-  width: min(440px, 88vw);
-  max-width: min(440px, 88vw);
+  width: min(560px, 92vw);
+  max-width: min(560px, 92vw);
   position: relative;
   z-index: 3;
   margin: 0;
@@ -1415,14 +1509,14 @@ button:focus-visible {
   justify-content: center;
   opacity: 1;
   transform: translateY(0);
-  border-radius: 38px;
+  border-radius: 44px;
   border: 1px solid rgba(196, 233, 255, 0.52);
   background: linear-gradient(180deg, rgba(122, 205, 255, 0.38), rgba(55, 154, 214, 0.46));
   box-shadow:
     0 20px 44px rgba(2, 18, 34, 0.42),
     inset 0 1px 0 rgba(237, 251, 255, 0.55),
     inset 0 -14px 24px rgba(17, 93, 150, 0.24);
-  padding: 28px;
+  padding: 34px;
   backdrop-filter: blur(16px) saturate(1.16);
   -webkit-backdrop-filter: blur(16px) saturate(1.16);
 }
@@ -1442,9 +1536,9 @@ button:focus-visible {
 }
 
 .start-menu-shell {
-  width: min(352px, 100%);
+  width: min(460px, 100%);
   margin: 0;
-  min-height: 344px;
+  min-height: 470px;
   display: grid;
   align-items: center;
   justify-items: center;
@@ -1459,7 +1553,7 @@ button:focus-visible {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 14px;
+  gap: 18px;
   text-align: center;
   animation: startMenuFadeIn 0.2s ease;
 }
@@ -1481,11 +1575,11 @@ button:focus-visible {
 
 .start-menu-stack {
   width: 100%;
-  max-width: 340px;
+  max-width: 430px;
   margin: 0;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 18px;
   align-items: stretch;
   justify-content: center;
 }
@@ -1494,13 +1588,13 @@ button:focus-visible {
 .start-menu-back-btn {
   box-sizing: border-box;
   width: 100%;
-  min-height: 74px;
+  min-height: 92px;
   border-radius: 999px;
   border: 1px solid rgba(213, 198, 160, 0.95);
   background: linear-gradient(180deg, #f4ebcf 0%, #e8dbb7 46%, #d6c79e 100%);
   color: #264f80;
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Segoe UI", sans-serif;
-  font-size: clamp(24px, 3.3vw, 56px);
+  font-size: clamp(34px, 5vw, 68px);
   font-weight: 800;
   letter-spacing: 0.012em;
   text-align: center;
@@ -1525,7 +1619,7 @@ button:focus-visible {
   text-transform: uppercase;
   letter-spacing: 0.12em;
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 700;
   color: rgba(229, 244, 255, 0.95);
   text-align: center;
@@ -1534,10 +1628,10 @@ button:focus-visible {
 
 .start-options-list {
   width: 100%;
-  max-width: 340px;
+  max-width: 430px;
   margin: 0;
   display: grid;
-  gap: 8px;
+  gap: 12px;
 }
 
 .start-option-row {
@@ -1545,7 +1639,7 @@ button:focus-visible {
   justify-content: space-between;
   align-items: center;
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
-  font-size: 13px;
+  font-size: 16px;
   font-weight: 600;
   color: rgba(233, 244, 252, 0.96);
   padding: 0 2px;
@@ -1555,19 +1649,28 @@ button:focus-visible {
   margin-bottom: 8px;
 }
 
+.start-settings-select {
+  margin-bottom: 8px;
+  min-height: 42px;
+  border-color: rgba(194, 221, 242, 0.56);
+  background: linear-gradient(180deg, rgba(20, 83, 129, 0.62), rgba(12, 56, 90, 0.78));
+  font-size: 15px;
+  font-weight: 700;
+}
+
 .start-name-input {
   width: 100%;
   box-sizing: border-box;
-  min-height: 36px;
+  min-height: 44px;
   border-radius: 10px;
   border: 1px solid rgba(186, 215, 238, 0.54);
   background: linear-gradient(180deg, rgba(18, 74, 116, 0.64), rgba(12, 54, 87, 0.78));
   color: rgba(236, 247, 255, 0.98);
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
-  font-size: 14px;
+  font-size: 17px;
   font-weight: 600;
   letter-spacing: 0.01em;
-  padding: 0 10px;
+  padding: 0 12px;
 }
 
 .start-name-input::placeholder {
@@ -1581,61 +1684,75 @@ button:focus-visible {
 }
 
 .start-menu-back-btn {
-  min-height: 56px;
+  min-height: 68px;
   width: 100%;
-  max-width: 280px;
-  font-size: 22px;
+  max-width: 340px;
+  font-size: 30px;
   margin: 0 auto;
 }
 
 .start-menu-utility-btn {
   width: 100%;
-  max-width: 340px;
-  min-height: 44px;
+  max-width: 430px;
+  min-height: 54px;
   margin: 0 auto;
   border-radius: 14px;
   border: 1px solid rgba(186, 215, 238, 0.54);
   background: linear-gradient(180deg, rgba(20, 80, 124, 0.76), rgba(12, 56, 89, 0.84));
   color: rgba(231, 244, 255, 0.96);
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
-  font-size: 14px;
+  font-size: 17px;
   font-weight: 700;
   letter-spacing: 0.02em;
 }
 
 @media (max-width: 720px) {
   .start-screen .start-card {
-    width: min(92vw, 392px);
-    max-width: min(92vw, 392px);
+    width: min(94vw, 440px);
+    max-width: min(94vw, 440px);
   }
 
   .start-screen .overlay-card {
-    border-radius: 30px;
-    padding: 18px;
+    border-radius: 34px;
+    padding: 24px;
   }
 
   .start-menu-shell {
-    width: min(330px, 100%);
-    min-height: 304px;
+    width: min(390px, 100%);
+    min-height: 372px;
   }
 
   .start-menu-stack {
-    gap: 12px;
+    gap: 14px;
   }
 
   .start-menu-btn,
   .start-menu-back-btn {
-    min-height: 62px;
-    font-size: 30px;
+    min-height: 74px;
+    font-size: 38px;
   }
 
   .start-menu-back-btn {
-    min-height: 50px;
-    font-size: 20px;
+    min-height: 58px;
+    font-size: 24px;
   }
 
   .start-options-list {
-    gap: 6px;
+    gap: 8px;
+  }
+
+  .start-option-row {
+    font-size: 14px;
+  }
+
+  .start-menu-utility-btn {
+    min-height: 48px;
+    font-size: 15px;
+  }
+
+  .start-name-input {
+    min-height: 40px;
+    font-size: 15px;
   }
 }
 

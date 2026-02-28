@@ -37,6 +37,7 @@
   const shipRepairCloseBtn = document.getElementById("shipRepairClose");
   const endScreen = document.getElementById("endScreen");
   const newRunBtn = document.getElementById("newRunBtn");
+  const restartSeedBtn = document.getElementById("restartSeedBtn");
   const startScreen = document.getElementById("startScreen");
   const startMainMenu = document.getElementById("startMainMenu");
   const startPlayMenu = document.getElementById("startPlayMenu");
@@ -54,6 +55,9 @@
   const menuMusicVolumeValue = document.getElementById("menuMusicVolumeValue");
   const menuSfxVolumeInput = document.getElementById("menuSfxVolume");
   const menuSfxVolumeValue = document.getElementById("menuSfxVolumeValue");
+  const menuGraphicsPresetInput = document.getElementById("menuGraphicsPreset");
+  const menuRenderScaleInput = document.getElementById("menuRenderScale");
+  const menuRenderScaleValue = document.getElementById("menuRenderScaleValue");
   const menuPlayerNameInput = document.getElementById("menuPlayerName");
   const movePadEl = document.getElementById("movePad");
   const stickEl = document.getElementById("stick");
@@ -73,10 +77,14 @@
   const settingsContent = document.getElementById("settingsContent");
   const objectivesContent = document.getElementById("objectivesContent");
   const objectiveGuide = document.getElementById("objectiveGuide");
+  const playerNameInput = document.getElementById("playerName");
   const musicVolumeInput = document.getElementById("musicVolume");
   const musicVolumeValue = document.getElementById("musicVolumeValue");
   const sfxVolumeInput = document.getElementById("sfxVolume");
   const sfxVolumeValue = document.getElementById("sfxVolumeValue");
+  const graphicsPresetInput = document.getElementById("graphicsPreset");
+  const renderScaleInput = document.getElementById("renderScale");
+  const renderScaleValue = document.getElementById("renderScaleValue");
   const resetWorldBtn = document.getElementById("resetWorldBtn");
   const unlockDebugBtn = document.getElementById("unlockDebugBtn");
   const debugUnlockStatus = document.getElementById("debugUnlockStatus");
@@ -91,6 +99,7 @@
   const giveBeaconBtn = document.getElementById("giveBeaconBtn");
   const giveRobotBtn = document.getElementById("giveRobotBtn");
   const spawnCaveBtn = document.getElementById("spawnCaveBtn");
+  const spawnLinkedCaveBtn = document.getElementById("spawnLinkedCaveBtn");
   const spawnVillageBtn = document.getElementById("spawnVillageBtn");
   const debugPlaceBoatBtn = document.getElementById("debugPlaceBoatBtn");
   const forceDayBtn = document.getElementById("forceDayBtn");
@@ -148,6 +157,19 @@
   const DESKTOP_RENDER_DPR_CAP = 2.5;
   const MOBILE_RENDER_MAX_PIXELS = 3000000;
   const DESKTOP_RENDER_MAX_PIXELS = 5200000;
+  const GRAPHICS_PRESET_CONFIG = Object.freeze({
+    performance: Object.freeze({ renderScale: 0.7, effectsLevel: 0 }),
+    balanced: Object.freeze({ renderScale: 1, effectsLevel: 1 }),
+    quality: Object.freeze({ renderScale: 1, effectsLevel: 2 }),
+    ultra: Object.freeze({ renderScale: 1.15, effectsLevel: 3 }),
+  });
+  const GRAPHICS_PRESET_IDS = Object.freeze([
+    "performance",
+    "balanced",
+    "quality",
+    "ultra",
+    "custom",
+  ]);
 
   const MONSTER_CAMPFIRE_FEAR = Object.freeze({
     radiusPadding: 6,
@@ -450,6 +472,9 @@
     motionInterval: 0.025,
     playerSendInterval: 0.025,
     helloRetryInterval: 0.9,
+    joinReconnectBase: 1.2,
+    joinReconnectMax: 4.0,
+    joinHandshakeTimeout: 16,
     resyncSilenceThreshold: 1.2,
     resyncRequestCooldown: 0.8,
     renderSmooth: 14,
@@ -638,6 +663,20 @@
     Object.freeze({ id: "S5", label: "Late join snapshot sync", stepRatioStart: 0.70, stepRatioEnd: 0.86 }),
     Object.freeze({ id: "S6", label: "Regen acceleration", stepRatioStart: 0.86, stepRatioEnd: 1.01 }),
   ]);
+  const MP_AUTOTEST_FEATURE_SPECS = Object.freeze([
+    Object.freeze({ id: "inventory", label: "Inventory/chest sync", requiredInStress: true }),
+    Object.freeze({ id: "dropItems", label: "Drop item lifecycle", requiredInStress: true }),
+    Object.freeze({ id: "caves", label: "Cave multiplayer coverage", requiredInStress: true }),
+    Object.freeze({ id: "villages", label: "Village state sync", requiredInStress: true }),
+    Object.freeze({ id: "houses", label: "House enter/place flow", requiredInStress: true }),
+    Object.freeze({ id: "sleeping", label: "Sleep/wake replication", requiredInStress: true }),
+    Object.freeze({ id: "boat", label: "Boat board/control flow", requiredInStress: true }),
+    Object.freeze({ id: "bridges", label: "Bridge placement", requiredInStress: true }),
+    Object.freeze({ id: "treeBreak", label: "Tree/resource harvest", requiredInStress: true }),
+    Object.freeze({ id: "stations", label: "Station refine cycle", requiredInStress: true }),
+    Object.freeze({ id: "crafting", label: "Crafting rules/cycles", requiredInStress: true }),
+    Object.freeze({ id: "mobKills", label: "Mob combat/kill", requiredInStress: true }),
+  ]);
   const MP_AUTOTEST_FPS_FAIL_THRESHOLD = 22;
   const MP_AUTOTEST_FPS_WARN_THRESHOLD = 35;
   const MP_AUTOTEST_FRAME_SPIKE_MS = 110;
@@ -715,8 +754,8 @@
   const CAVE_DEAD_END_REWARD_MIN_SEPARATION_TILES = 4.8;
   const CAVES_ENABLED = false;
   const CAVE_V2_ENABLED = true;
-  const CAVE_V2_MOB_POPULATE_VERSION = 2;
-  const CAVE_V2_PASSAGE_REPAIR_VERSION = 4;
+  const CAVE_V2_MOB_POPULATE_VERSION = 3;
+  const CAVE_V2_PASSAGE_REPAIR_VERSION = 5;
   const CAVE_V2_ORE_PLACEMENT_VERSION = 3;
   const CAVE_V2_ROOM_CONFIG = Object.freeze({
     roomCountMin: 8,
@@ -734,17 +773,17 @@
     oreMaxPerRoom: 6,
     oreMinSpacingTiles: 2.35,
     oreMaxPerRoomWarn: 8,
-    mobMinPerRoom: 3,
-    mobMaxPerRoom: 6,
-    mobRareEmptyChance: 0.035,
-    mobSpawnChanceBase: 0.52,
-    mobSpawnChanceDeepBonus: 0.22,
+    mobMinPerRoom: 1,
+    mobMaxPerRoom: 4,
+    mobRareEmptyChance: 0.06,
+    mobSpawnChanceBase: 0.42,
+    mobSpawnChanceDeepBonus: 0.16,
     mobMinSpacingTiles: 2.4,
     mobOreClearanceTiles: 1.9,
     mobEdgeClearanceTiles: 2,
     mobSpeedScale: 0.72,
-    obstacleMinPerRoom: 4,
-    obstacleMaxPerRoom: 8,
+    obstacleMinPerRoom: 6,
+    obstacleMaxPerRoom: 10,
     obstacleAnchorSpacingTiles: 2.9,
     obstacleExitClearanceTiles: 4.8,
     corridorJitterMaxTiles: 2,
@@ -1246,7 +1285,7 @@
     {
       id: "unlock_gold_pickaxe",
       name: "Gold Pickaxe",
-      description: "Lets you mine emerald and biome stones.",
+      description: "Lets you mine emerald ore.",
       cost: { iron_ingot: 3, gold_ingot: 4, plank: 6, stick: 4 },
       icon: "gold_ingot",
       unlock: "mythicPickaxe",
@@ -1268,7 +1307,7 @@
     {
       id: "unlock_diamond_pickaxe",
       name: "Diamond Pickaxe",
-      description: "Best mining speed and full resource access.",
+      description: "Best mining speed and full resource access, including biome stones.",
       cost: { diamond: 4, emerald: 3, gold_ingot: 4, plank: 10, stick: 8 },
       icon: "diamond",
       unlock: "apexPickaxe",
@@ -1939,6 +1978,9 @@
     playerName: "",
     musicVolume: 0.72,
     sfxVolume: 0.62,
+    graphicsPreset: "balanced",
+    renderScale: GRAPHICS_PRESET_CONFIG.balanced.renderScale,
+    graphicsEffectsLevel: GRAPHICS_PRESET_CONFIG.balanced.effectsLevel,
     debugUnlocked: false,
     debugInfiniteResources: false,
     debugInfiniteHealth: false,
@@ -2012,7 +2054,7 @@
   const inventorySlots = [];
   const chestSlots = [];
   const itemTextureCache = new Map();
-  const ITEM_TEXTURE_CACHE_VERSION = 5;
+  const ITEM_TEXTURE_CACHE_VERSION = 6;
   const qaRuntime = {
     runTimer: QA_SELF_TEST_CONFIG.runInterval,
     saveRoundTripTimer: QA_SELF_TEST_CONFIG.saveRoundTripInterval,
@@ -2082,10 +2124,13 @@
     categoryStatus: new Map(),
     scenarioStatus: new Map(),
     currentScenarioId: null,
+    featureCoverage: Object.create(null),
+    actionStats: Object.create(null),
     pendingAssertions: [],
     nextHarvestProbeSeq: 1,
     harvestProbeResults: new Map(),
     harvestAssertionInconclusiveCount: 0,
+    savedDebugSettings: null,
   };
 
   const state = {
@@ -2163,6 +2208,9 @@
     playerName: SETTINGS_DEFAULTS.playerName,
     musicVolume: SETTINGS_DEFAULTS.musicVolume,
     sfxVolume: SETTINGS_DEFAULTS.sfxVolume,
+    graphicsPreset: SETTINGS_DEFAULTS.graphicsPreset,
+    renderScale: SETTINGS_DEFAULTS.renderScale,
+    graphicsEffectsLevel: SETTINGS_DEFAULTS.graphicsEffectsLevel,
     debugUnlocked: SETTINGS_DEFAULTS.debugUnlocked,
     debugMoses: false,
     debugInfiniteResources: SETTINGS_DEFAULTS.debugInfiniteResources,
@@ -2173,6 +2221,7 @@
     debugContinentalShift: false,
     debugPlaceRepairedBoat: false,
     debugBoatPlacePending: false,
+    debugLinkedCavePlacement: null,
     debugIslandDrag: null,
     debugSpeedMultiplier: SETTINGS_DEFAULTS.debugSpeedMultiplier,
     debugWorldSpeedMultiplier: SETTINGS_DEFAULTS.debugWorldSpeedMultiplier,
@@ -2233,6 +2282,12 @@
     robotPausePingTimer: 0.2,
     localName: "",
     localColor: "",
+    joinStartedAt: 0,
+    joinRetryTimer: NET_CONFIG.joinReconnectBase,
+    joinAttempts: 0,
+    joinFallbackSnapshotApplied: false,
+    joinTimeoutNotified: false,
+    hostConnPendingSince: 0,
   };
 
   const audio = {
@@ -2371,11 +2426,16 @@
   }
 
   function updatePlayerNameUI() {
-    if (!menuPlayerNameInput) return;
-    if (document.activeElement === menuPlayerNameInput) return;
     const name = sanitizePlayerName(net.localName || state.playerName || "", "");
-    if (menuPlayerNameInput.value !== name) {
-      menuPlayerNameInput.value = name;
+    if (menuPlayerNameInput && document.activeElement !== menuPlayerNameInput) {
+      if (menuPlayerNameInput.value !== name) {
+        menuPlayerNameInput.value = name;
+      }
+    }
+    if (playerNameInput && document.activeElement !== playerNameInput) {
+      if (playerNameInput.value !== name) {
+        playerNameInput.value = name;
+      }
     }
   }
 
@@ -2487,6 +2547,55 @@
     return `rgb(${nr}, ${ng}, ${nb})`;
   }
 
+  function colorToRgb(color) {
+    if (typeof color !== "string") return [255, 255, 255];
+    const trimmed = color.trim();
+    if (trimmed.startsWith("#")) return hexToRgb(trimmed);
+    const rgbMatch = trimmed.match(/rgba?\(\s*([0-9.]+)\s*,\s*([0-9.]+)\s*,\s*([0-9.]+)/i);
+    if (rgbMatch) {
+      return [
+        clamp(Math.round(Number(rgbMatch[1]) || 0), 0, 255),
+        clamp(Math.round(Number(rgbMatch[2]) || 0), 0, 255),
+        clamp(Math.round(Number(rgbMatch[3]) || 0), 0, 255),
+      ];
+    }
+    return [255, 255, 255];
+  }
+
+  function mixColor(colorA, colorB, t = 0.5) {
+    const blend = clamp(Number(t) || 0, 0, 1);
+    const a = colorToRgb(colorA);
+    const b = colorToRgb(colorB);
+    const r = Math.round(lerp(a[0], b[0], blend));
+    const g = Math.round(lerp(a[1], b[1], blend));
+    const bch = Math.round(lerp(a[2], b[2], blend));
+    return `rgb(${r}, ${g}, ${bch})`;
+  }
+
+  function getBiomeRockVisualStyle(biome, baseColor, isBiomeStone = false) {
+    const paletteByBiome = {
+      temperate: { accent: "#8cae6b", vein: "#5c7651", speck: "#d5e3bf" },
+      jungle: { accent: "#58b283", vein: "#2f7352", speck: "#b8e6cf" },
+      snow: { accent: "#d7ecff", vein: "#8ca8c2", speck: "#f7fdff" },
+      volcanic: { accent: "#d2815c", vein: "#723d31", speck: "#f0b293" },
+      mangrove: { accent: "#79ba98", vein: "#3f725a", speck: "#c4e7d7" },
+      redwood: { accent: "#7ba777", vein: "#466847", speck: "#bad7b8" },
+      ashlands: { accent: "#a78b84", vein: "#5e4b49", speck: "#d9c3bb" },
+      marsh: { accent: "#80b79a", vein: "#426f59", speck: "#c5e6d8" },
+      mushroom: { accent: "#cc9ae4", vein: "#7b4b96", speck: "#efd7fb" },
+    };
+    const key = String(biome?.key || BIOME_KEYS.plains);
+    const palette = paletteByBiome[key] || paletteByBiome[BIOME_KEYS.plains];
+    const accentBlend = isBiomeStone ? 0.34 : 0.22;
+    const base = mixColor(baseColor, palette.accent, accentBlend);
+    return {
+      base,
+      patch: mixColor(base, palette.accent, 0.28),
+      vein: palette.vein,
+      speck: palette.speck,
+    };
+  }
+
   function lerp(a, b, t) {
     return a + (b - a) * t;
   }
@@ -2536,6 +2645,47 @@
     return clamp(num, 0, 1);
   }
 
+  function normalizeGraphicsPreset(value, fallback = SETTINGS_DEFAULTS.graphicsPreset) {
+    const key = String(value || "").toLowerCase();
+    if (GRAPHICS_PRESET_IDS.includes(key)) return key;
+    return fallback;
+  }
+
+  function clampRenderScale(value) {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return SETTINGS_DEFAULTS.renderScale;
+    return clamp(num, 0.55, 1.2);
+  }
+
+  function clampGraphicsEffectsLevel(value) {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return SETTINGS_DEFAULTS.graphicsEffectsLevel;
+    return clamp(Math.round(num), 0, 3);
+  }
+
+  function getGraphicsPresetConfig(preset) {
+    const normalized = normalizeGraphicsPreset(preset);
+    return GRAPHICS_PRESET_CONFIG[normalized] || null;
+  }
+
+  function nearlyEqual(a, b, epsilon = 0.001) {
+    return Math.abs((Number(a) || 0) - (Number(b) || 0)) <= epsilon;
+  }
+
+  function syncGraphicsPresetWithCurrentValues() {
+    let matchedPreset = "custom";
+    for (const [presetId, preset] of Object.entries(GRAPHICS_PRESET_CONFIG)) {
+      if (
+        nearlyEqual(state.renderScale, preset.renderScale)
+        && state.graphicsEffectsLevel === preset.effectsLevel
+      ) {
+        matchedPreset = presetId;
+        break;
+      }
+    }
+    state.graphicsPreset = matchedPreset;
+  }
+
   function clampDebugSpeedMultiplier(value) {
     const num = Number(value);
     if (!Number.isFinite(num)) return SETTINGS_DEFAULTS.debugSpeedMultiplier;
@@ -2558,6 +2708,9 @@
     const payload = {
       musicVolume: clampVolume(state.musicVolume, SETTINGS_DEFAULTS.musicVolume),
       sfxVolume: clampVolume(state.sfxVolume, SETTINGS_DEFAULTS.sfxVolume),
+      graphicsPreset: normalizeGraphicsPreset(state.graphicsPreset),
+      renderScale: clampRenderScale(state.renderScale),
+      graphicsEffectsLevel: clampGraphicsEffectsLevel(state.graphicsEffectsLevel),
       debugUnlocked: !!state.debugUnlocked,
       debugInfiniteResources: !!state.debugInfiniteResources,
       debugInfiniteHealth: !!state.debugInfiniteHealth,
@@ -2584,6 +2737,18 @@
         const data = JSON.parse(raw);
         state.musicVolume = clampVolume(data.musicVolume, SETTINGS_DEFAULTS.musicVolume);
         state.sfxVolume = clampVolume(data.sfxVolume, SETTINGS_DEFAULTS.sfxVolume);
+        state.renderScale = clampRenderScale(data.renderScale);
+        state.graphicsEffectsLevel = clampGraphicsEffectsLevel(data.graphicsEffectsLevel);
+        state.graphicsPreset = normalizeGraphicsPreset(data.graphicsPreset);
+        if (state.graphicsPreset !== "custom") {
+          const preset = getGraphicsPresetConfig(state.graphicsPreset);
+          if (preset) {
+            state.renderScale = clampRenderScale(preset.renderScale);
+            state.graphicsEffectsLevel = clampGraphicsEffectsLevel(preset.effectsLevel);
+          }
+        } else {
+          syncGraphicsPresetWithCurrentValues();
+        }
         // Debug access is session-based: always start locked on every load/join.
         state.debugUnlocked = false;
         // Always start sessions with infinite debug cheats off; users can toggle them per run.
@@ -2597,6 +2762,9 @@
       state.playerName = SETTINGS_DEFAULTS.playerName;
       state.musicVolume = SETTINGS_DEFAULTS.musicVolume;
       state.sfxVolume = SETTINGS_DEFAULTS.sfxVolume;
+      state.graphicsPreset = SETTINGS_DEFAULTS.graphicsPreset;
+      state.renderScale = SETTINGS_DEFAULTS.renderScale;
+      state.graphicsEffectsLevel = SETTINGS_DEFAULTS.graphicsEffectsLevel;
       state.debugUnlocked = false;
       state.debugInfiniteResources = SETTINGS_DEFAULTS.debugInfiniteResources;
       state.debugInfiniteHealth = SETTINGS_DEFAULTS.debugInfiniteHealth;
@@ -2637,6 +2805,58 @@
     }
   }
 
+  function updateGraphicsSettingsUI() {
+    const renderPercent = Math.round(clampRenderScale(state.renderScale) * 100);
+    const preset = normalizeGraphicsPreset(state.graphicsPreset);
+    if (graphicsPresetInput) {
+      graphicsPresetInput.value = preset;
+    }
+    if (menuGraphicsPresetInput) {
+      menuGraphicsPresetInput.value = preset;
+    }
+    if (renderScaleInput) {
+      renderScaleInput.value = String(renderPercent);
+    }
+    if (menuRenderScaleInput) {
+      menuRenderScaleInput.value = String(renderPercent);
+    }
+    if (renderScaleValue) {
+      renderScaleValue.textContent = `${renderPercent}%`;
+    }
+    if (menuRenderScaleValue) {
+      menuRenderScaleValue.textContent = `${renderPercent}%`;
+    }
+  }
+
+  function setGraphicsPreset(presetId, persist = true) {
+    const preset = normalizeGraphicsPreset(presetId);
+    state.graphicsPreset = preset;
+    if (preset !== "custom") {
+      const cfg = getGraphicsPresetConfig(preset);
+      if (cfg) {
+        state.renderScale = clampRenderScale(cfg.renderScale);
+        state.graphicsEffectsLevel = clampGraphicsEffectsLevel(cfg.effectsLevel);
+      }
+    } else {
+      syncGraphicsPresetWithCurrentValues();
+    }
+    updateGraphicsSettingsUI();
+    requestResize();
+    if (persist) saveUserSettings();
+  }
+
+  function setRenderScaleFromPercent(percent, persist = true) {
+    state.renderScale = clampRenderScale((Number(percent) || 100) / 100);
+    syncGraphicsPresetWithCurrentValues();
+    updateGraphicsSettingsUI();
+    requestResize();
+    if (persist) saveUserSettings();
+  }
+
+  function getGraphicsEffectsLevel() {
+    return clampGraphicsEffectsLevel(state.graphicsEffectsLevel);
+  }
+
   function getDebugSpeedMultiplier() {
     if (!state.debugUnlocked) return 1;
     return clampDebugSpeedMultiplier(state.debugSpeedMultiplier);
@@ -2655,9 +2875,10 @@
 
   function updateDebugSpeedUI() {
     const mult = clampDebugSpeedMultiplier(state.debugSpeedMultiplier);
+    const busy = !!mpAutotest.active;
     if (debugSpeedInput) {
       debugSpeedInput.value = String(Math.round(mult * 100));
-      debugSpeedInput.disabled = !state.debugUnlocked;
+      debugSpeedInput.disabled = !state.debugUnlocked || busy;
     }
     if (debugSpeedValue) {
       debugSpeedValue.textContent = `${mult.toFixed(1)}x`;
@@ -2666,9 +2887,10 @@
 
   function updateDebugWorldSpeedUI() {
     const mult = clampDebugWorldSpeedMultiplier(state.debugWorldSpeedMultiplier);
+    const busy = !!mpAutotest.active;
     if (debugWorldSpeedInput) {
       debugWorldSpeedInput.value = String(Math.round(mult * 100));
-      debugWorldSpeedInput.disabled = !state.debugUnlocked;
+      debugWorldSpeedInput.disabled = !state.debugUnlocked || busy;
     }
     if (debugWorldSpeedValue) {
       debugWorldSpeedValue.textContent = `${mult.toFixed(1)}x`;
@@ -2677,9 +2899,10 @@
 
   function updateDebugFovUI() {
     const mult = clampDebugFovMultiplier(state.debugFovMultiplier);
+    const busy = !!mpAutotest.active;
     if (debugFovInput) {
       debugFovInput.value = String(Math.round(mult * 100));
-      debugFovInput.disabled = !state.debugUnlocked;
+      debugFovInput.disabled = !state.debugUnlocked || busy;
     }
     if (debugFovValue) {
       debugFovValue.textContent = `${mult.toFixed(1)}x`;
@@ -2771,6 +2994,7 @@
       state.debugContinentalShift = false;
       state.debugPlaceRepairedBoat = false;
       state.debugBoatPlacePending = false;
+      state.debugLinkedCavePlacement = null;
       state.debugIslandDrag = null;
       state.debugSpeedMultiplier = 1;
       state.debugWorldSpeedMultiplier = 1;
@@ -2789,6 +3013,7 @@
     updateDebugRepairableShipButton();
     updateContinentalShiftButton();
     updateDebugPlaceBoatButton();
+    updateDebugCaveSpawnButtons();
     updateDebugSpeedUI();
     updateDebugWorldSpeedUI();
     updateDebugFovUI();
@@ -4933,6 +5158,25 @@
     return map;
   }
 
+  function createMpAutotestFeatureCoverage() {
+    const coverage = Object.create(null);
+    for (const spec of MP_AUTOTEST_FEATURE_SPECS) {
+      coverage[spec.id] = {
+        id: spec.id,
+        label: spec.label,
+        requiredInStress: !!spec.requiredInStress,
+        attempts: 0,
+        passCount: 0,
+        failCount: 0,
+        warnCount: 0,
+        status: "pending",
+        lastDetail: "",
+        lastStep: 0,
+      };
+    }
+    return coverage;
+  }
+
   function mpAutotestEnsureCategoryMaps() {
     if (!(mpAutotest.categoryStatus instanceof Map) || mpAutotest.categoryStatus.size === 0) {
       mpAutotest.categoryStatus = createMpAutotestCategoryStatusMap();
@@ -4940,6 +5184,130 @@
     if (!(mpAutotest.scenarioStatus instanceof Map) || mpAutotest.scenarioStatus.size === 0) {
       mpAutotest.scenarioStatus = createMpAutotestScenarioStatusMap();
     }
+  }
+
+  function mpAutotestEnsureFeatureCoverage() {
+    if (!mpAutotest.featureCoverage || typeof mpAutotest.featureCoverage !== "object") {
+      mpAutotest.featureCoverage = createMpAutotestFeatureCoverage();
+      return;
+    }
+    for (const spec of MP_AUTOTEST_FEATURE_SPECS) {
+      if (!mpAutotest.featureCoverage[spec.id]) {
+        mpAutotest.featureCoverage[spec.id] = createMpAutotestFeatureCoverage()[spec.id];
+      }
+    }
+  }
+
+  function mpAutotestMarkFeature(featureId, status = "attempt", detail = "") {
+    if (!featureId) return;
+    mpAutotestEnsureFeatureCoverage();
+    const entry = mpAutotest.featureCoverage[featureId];
+    if (!entry) return;
+    const next = String(status || "attempt");
+    if (next === "attempt") {
+      entry.attempts += 1;
+      if (entry.status === "pending") entry.status = "running";
+    } else if (next === "fail") {
+      entry.failCount += 1;
+      entry.status = "fail";
+    } else if (next === "warn") {
+      entry.warnCount += 1;
+      if (entry.status !== "fail") entry.status = "warn";
+    } else if (next === "skip") {
+      if (entry.status === "pending") entry.status = "skip";
+    } else {
+      entry.passCount += 1;
+      if (entry.status === "pending" || entry.status === "running" || entry.status === "skip") {
+        entry.status = "pass";
+      }
+    }
+    if (detail) entry.lastDetail = String(detail);
+    entry.lastStep = mpAutotest.step;
+  }
+
+  function mpAutotestBuildFeatureSummaryLines() {
+    mpAutotestEnsureFeatureCoverage();
+    const lines = ["feature coverage:"];
+    for (const spec of MP_AUTOTEST_FEATURE_SPECS) {
+      const entry = mpAutotest.featureCoverage[spec.id];
+      if (!entry) continue;
+      const suffix = entry.lastDetail ? ` (${entry.lastDetail})` : "";
+      lines.push(
+        `- ${spec.id} [${String(entry.status || "pending").toUpperCase()}] attempts=${entry.attempts} pass=${entry.passCount} fail=${entry.failCount}${suffix}`
+      );
+    }
+    return lines;
+  }
+
+  function mpAutotestRecordActionStat(kind, status = "attempt", detail = "") {
+    const key = String(kind || "").trim();
+    if (!key) return;
+    if (!mpAutotest.actionStats || typeof mpAutotest.actionStats !== "object") {
+      mpAutotest.actionStats = Object.create(null);
+    }
+    if (!mpAutotest.actionStats[key]) {
+      mpAutotest.actionStats[key] = {
+        kind: key,
+        attempts: 0,
+        passCount: 0,
+        warnCount: 0,
+        failCount: 0,
+        lastDetail: "",
+        lastStep: 0,
+      };
+    }
+    const entry = mpAutotest.actionStats[key];
+    const next = String(status || "attempt");
+    if (next === "attempt") entry.attempts += 1;
+    else if (next === "pass") entry.passCount += 1;
+    else if (next === "warn") entry.warnCount += 1;
+    else if (next === "fail") entry.failCount += 1;
+    if (detail) entry.lastDetail = String(detail);
+    entry.lastStep = mpAutotest.step;
+  }
+
+  function mpAutotestBuildActionSummaryLines() {
+    const stats = mpAutotest.actionStats && typeof mpAutotest.actionStats === "object"
+      ? mpAutotest.actionStats
+      : Object.create(null);
+    const keys = Object.keys(stats).sort();
+    const lines = ["action stats:"];
+    for (const key of keys) {
+      const entry = stats[key];
+      if (!entry) continue;
+      const suffix = entry.lastDetail ? ` (${entry.lastDetail})` : "";
+      lines.push(
+        `- ${key}: attempts=${entry.attempts} pass=${entry.passCount} warn=${entry.warnCount} fail=${entry.failCount}${suffix}`
+      );
+    }
+    if (lines.length === 1) lines.push("- none");
+    return lines;
+  }
+
+  function mpAutotestValidateFeatureCoverage() {
+    mpAutotestEnsureFeatureCoverage();
+    const stressMode = !!mpAutotest.mode?.stress;
+    const missing = [];
+    for (const spec of MP_AUTOTEST_FEATURE_SPECS) {
+      const entry = mpAutotest.featureCoverage[spec.id];
+      if (!entry) continue;
+      const requires = stressMode ? !!spec.requiredInStress : false;
+      if (requires && entry.failCount > 0) {
+        entry.status = "fail";
+        if (!entry.lastDetail) entry.lastDetail = "failed during run";
+        missing.push(spec.id);
+        continue;
+      }
+      if (entry.passCount > 0) continue;
+      if (requires) {
+        entry.status = "fail";
+        if (!entry.lastDetail) entry.lastDetail = "not exercised";
+        missing.push(spec.id);
+      } else if (entry.status === "pending") {
+        entry.status = "skip";
+      }
+    }
+    return missing;
   }
 
   function mpAutotestMarkCategory(categoryId, status = "pass", reason = "", options = null) {
@@ -5598,21 +5966,52 @@
     if (!spec) return null;
     switch (spec.id) {
       case "S1":
-        return ["walkSweep", "travel", "harvest", "dropCycle", "chestTransfer", "stationCycle", "animalSync"];
+        return ["walkSweep", "travel", "harvest", "bridgePlace", "dropItemCycle", "dropCycle", "chestTransfer", "craftRecipe", "stationCycle", "villageOps", "animalSync"];
       case "S2":
-        return ["caveTrip", "walkSweep", "harvest", "dropCycle", "travel"];
+        return ["caveSpawn", "caveTrip", "walkSweep", "harvest", "dropItemCycle", "dropCycle", "travel"];
       case "S3":
         return mpAutotest.mode?.stress
-          ? ["combat", "spam", "animalSync", "walkSweep", "dropCycle"]
-          : ["combat", "animalSync", "walkSweep"];
+          ? ["combat", "mobKill", "spam", "animalSync", "walkSweep", "dropCycle"]
+          : ["combat", "mobKill", "animalSync", "walkSweep"];
       case "S4":
-        return ["houseWalk", "sleepWake", "dayNight", "walkSweep"];
+        return ["housePlace", "houseWalk", "sleepWake", "dayNight", "walkSweep"];
       case "S5":
-        return ["disconnectRejoin", "travel", "harvest", "combat", "chestTransfer"];
+        return ["disconnectRejoin", "boatRide", "travel", "harvest", "combat", "chestTransfer"];
       case "S6":
-        return ["regenAccel", "dayNight", "harvest", "stationCycle", "walkSweep"];
+        return ["regenAccel", "dayNight", "harvest", "craftRecipe", "stationCycle", "walkSweep"];
       default:
         return null;
+    }
+  }
+
+  function mpAutotestMarkFeatureAttemptsForActionKind(kind) {
+    const id = String(kind || "");
+    if (!id) return;
+    if (id === "chestTransfer") {
+      mpAutotestMarkFeature("inventory", "attempt", "running");
+    } else if (id === "dropItemCycle" || id === "dropCycle") {
+      mpAutotestMarkFeature("dropItems", "attempt", "running");
+    } else if (id === "caveTrip" || id === "caveSpawn") {
+      mpAutotestMarkFeature("caves", "attempt", "running");
+    } else if (id === "villageOps") {
+      mpAutotestMarkFeature("villages", "attempt", "running");
+    } else if (id === "housePlace" || id === "houseWalk") {
+      mpAutotestMarkFeature("houses", "attempt", "running");
+    } else if (id === "sleepWake") {
+      mpAutotestMarkFeature("sleeping", "attempt", "running");
+    } else if (id === "boatRide") {
+      mpAutotestMarkFeature("boat", "attempt", "running");
+    } else if (id === "bridgePlace") {
+      mpAutotestMarkFeature("bridges", "attempt", "running");
+    } else if (id === "harvest") {
+      mpAutotestMarkFeature("treeBreak", "attempt", "running");
+    } else if (id === "stationCycle") {
+      mpAutotestMarkFeature("stations", "attempt", "running");
+      mpAutotestMarkFeature("crafting", "attempt", "running");
+    } else if (id === "craftRecipe" || id === "craftEdge") {
+      mpAutotestMarkFeature("crafting", "attempt", "running");
+    } else if (id === "mobKill" || id === "combat") {
+      mpAutotestMarkFeature("mobKills", "attempt", "running");
     }
   }
 
@@ -5622,10 +6021,22 @@
     if (kind === "walkSweep" || kind === "travel") {
       mpAutotestMarkCategory("G", "pass", "Movement sync path exercised");
       mpAutotestMarkCategory("L", "pass", "Movement frame sampling active");
+    } else if (kind === "bridgePlace") {
+      mpAutotestMarkCategory("G", "pass", "Bridge placement path exercised");
+      mpAutotestMarkFeature("bridges", "pass", "bridge place request completed");
+    } else if (kind === "housePlace") {
+      mpAutotestMarkCategory("H", "pass", "House placement path exercised");
+      mpAutotestMarkFeature("houses", "pass", "house placement request completed");
+    } else if (kind === "dropItemCycle" || kind === "dropCycle") {
+      mpAutotestMarkCategory("D", "pass", "Drop spawn/pickup pipeline exercised");
+      mpAutotestMarkFeature("dropItems", "pass", "drop lifecycle exercised");
     } else if (kind === "combat") {
       mpAutotestMarkCategory("B", "pass", "Combat request/HP sync exercised");
       mpAutotestMarkCategory("A", "pass", "Mob hitbox/render drift checks active");
       mpAutotestMarkCategory("G", "pass", "Moving entity sync checks active");
+    } else if (kind === "mobKill") {
+      mpAutotestMarkCategory("B", "pass", "Mob kill path exercised");
+      mpAutotestMarkFeature("mobKills", "pass", "mob kill request completed");
     } else if (kind === "animalSync") {
       mpAutotestMarkCategory("F", "pass", "Animal AI movement probe exercised");
       mpAutotestMarkCategory("A", "pass", "Animal hitbox/render drift checks active");
@@ -5633,14 +6044,33 @@
     } else if (kind === "caveTrip") {
       mpAutotestMarkCategory("C", "pass", "Cave enter/room sync exercised");
       mpAutotestMarkCategory("D", "pass", "Cave resource/drop path exercised");
-    } else if (kind === "harvest" || kind === "dropCycle") {
+      mpAutotestMarkFeature("caves", "pass", "cave room sync exercised");
+    } else if (kind === "caveSpawn") {
+      mpAutotestMarkCategory("C", "pass", "Cave spawn/snapshot path exercised");
+      mpAutotestMarkFeature("caves", "pass", "cave spawn exercised");
+    } else if (kind === "harvest") {
       mpAutotestMarkCategory("D", "pass", "Harvest/drop pipeline exercised");
+      mpAutotestMarkFeature("treeBreak", "pass", "resource harvest exercised");
     } else if (kind === "houseWalk") {
       mpAutotestMarkCategory("H", "pass", "House enter/exit path exercised");
+      mpAutotestMarkFeature("houses", "pass", "house enter/exit exercised");
     } else if (kind === "sleepWake") {
       mpAutotestMarkCategory("I", "pass", "Sleep/wake path exercised");
+      mpAutotestMarkFeature("sleeping", "pass", "sleep/wake exercised");
     } else if (kind === "dayNight") {
       mpAutotestMarkCategory("K", "pass", "Time advancement/regeneration path exercised");
+    } else if (kind === "boatRide") {
+      mpAutotestMarkCategory("G", "pass", "Boat board/control path exercised");
+      mpAutotestMarkFeature("boat", "pass", "boat board/control exercised");
+    } else if (kind === "chestTransfer") {
+      mpAutotestMarkFeature("inventory", "pass", "chest transfer exercised");
+    } else if (kind === "stationCycle") {
+      mpAutotestMarkFeature("stations", "pass", "station cycle exercised");
+      mpAutotestMarkFeature("crafting", "pass", "station recipe crafted");
+    } else if (kind === "craftEdge" || kind === "craftRecipe") {
+      mpAutotestMarkFeature("crafting", "pass", "crafting rule exercised");
+    } else if (kind === "villageOps") {
+      mpAutotestMarkFeature("villages", "pass", "village spawn/visit exercised");
     }
     mpAutotestMarkCategory("E", "pass", "Runner advancing");
     mpAutotestMarkCategory("J", "warn", "Animation checks use state-level proxies only");
@@ -5656,6 +6086,7 @@
     if (text.includes("damage") || text.includes("hp ")) out.add("B");
     if (text.includes("cave")) out.add("C");
     if (text.includes("ledger") || text.includes("harvest") || text.includes("drop")) out.add("D");
+    if (text.includes("craft")) out.add("D");
     if (text.includes("runner") || text.includes("stall") || text.includes("timeout") || text.includes("freeze")) out.add("E");
     if (text.includes("animal")) out.add("F");
     if (text.includes("sync") || text.includes("drift") || text.includes("snapshot")) out.add("G");
@@ -7035,6 +7466,194 @@
     return world.drops[0] || null;
   }
 
+  function mpAutotestFindBridgePlacementTile(world, centerTx, centerTy, radius = 18) {
+    if (!world || !Number.isInteger(centerTx) || !Number.isInteger(centerTy)) return null;
+    const maxRadius = Math.max(2, Math.floor(radius));
+    for (let r = 1; r <= maxRadius; r += 1) {
+      for (let dy = -r; dy <= r; dy += 1) {
+        for (let dx = -r; dx <= r; dx += 1) {
+          if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+          const tx = centerTx + dx;
+          const ty = centerTy + dy;
+          if (!inBounds(tx, ty, world.size)) continue;
+          const place = canPlaceItemAt(world, false, "bridge", tx, ty);
+          if (place?.ok) return { tx, ty };
+        }
+      }
+    }
+    return null;
+  }
+
+  function mpAutotestFindBoatPlacementTile(world, centerTx, centerTy, radius = 30) {
+    if (!world || !Number.isInteger(centerTx) || !Number.isInteger(centerTy)) return null;
+    const maxRadius = Math.max(4, Math.floor(radius));
+    for (let r = 2; r <= maxRadius; r += 1) {
+      for (let dy = -r; dy <= r; dy += 1) {
+        for (let dx = -r; dx <= r; dx += 1) {
+          if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+          const tx = centerTx + dx;
+          const ty = centerTy + dy;
+          if (!inBounds(tx, ty, world.size)) continue;
+          const place = canPlaceItemAt(world, false, DEBUG_REPAIRED_BOAT_ITEM_ID, tx, ty);
+          if (place?.ok) return { tx, ty };
+        }
+      }
+    }
+    return null;
+  }
+
+  function mpAutotestEnsureFixtureBoat(client = null) {
+    const world = state.surfaceWorld || state.world;
+    if (!world) return null;
+    let structure = state.structures.find((entry) => (
+      entry && !entry.removed && entry.type === "abandoned_ship"
+    )) || null;
+    if (!structure) {
+      ensureSingleAbandonedShip(world);
+      structure = state.structures.find((entry) => (
+        entry && !entry.removed && entry.type === "abandoned_ship"
+      )) || null;
+    }
+    if (!structure && client) {
+      const player = mpAutotestFindClientPlayer(client);
+      if (!player) return null;
+      const baseTx = Math.floor(player.x / CONFIG.tileSize);
+      const baseTy = Math.floor(player.y / CONFIG.tileSize);
+      const tile = mpAutotestFindBoatPlacementTile(world, baseTx, baseTy, 34);
+      if (tile) {
+        const placed = placeDebugRepairedBoatAt(world, tile.tx, tile.ty);
+        if (placed?.ok) structure = placed.structure || null;
+      }
+    }
+    if (!structure) return null;
+    const ship = ensureAbandonedShipMeta(structure);
+    if (!ship) return null;
+    ship.repaired = true;
+    ship.vx = 0;
+    ship.vy = 0;
+    return structure;
+  }
+
+  function mpAutotestEnsureFixtureVillage(client = null) {
+    const world = state.surfaceWorld || state.world;
+    if (!world) return null;
+    const existing = getVillageCenters(world, { includePlayerSpawned: true });
+    if (existing.length > 0) return existing[0];
+    const anchor = client ? mpAutotestFindClientPlayer(client) : state.player;
+    const baseTx = Math.floor((Number(anchor?.x) || ((state.spawnTile?.x || 0) + 0.5) * CONFIG.tileSize) / CONFIG.tileSize);
+    const baseTy = Math.floor((Number(anchor?.y) || ((state.spawnTile?.y || 0) + 0.5) * CONFIG.tileSize) / CONFIG.tileSize);
+    const attempts = [
+      { dx: 0, dy: 0 },
+      { dx: 6, dy: 0 },
+      { dx: -6, dy: 0 },
+      { dx: 0, dy: 6 },
+      { dx: 0, dy: -6 },
+      { dx: 8, dy: 8 },
+      { dx: -8, dy: 8 },
+      { dx: 8, dy: -8 },
+      { dx: -8, dy: -8 },
+    ];
+    for (const attempt of attempts) {
+      const tx = clamp(baseTx + attempt.dx, 0, world.size - 1);
+      const ty = clamp(baseTy + attempt.dy, 0, world.size - 1);
+      const result = spawnVillageAt(world, tx, ty, mpAutotest.rng, { spawnedByPlayer: true });
+      if (result?.ok) break;
+    }
+    const centers = getVillageCenters(world, { includePlayerSpawned: true });
+    if (centers.length <= 0) return null;
+    return findNearestTarget(
+      centers.map((entry, idx) => ({ key: `v-${idx}`, x: entry.x, y: entry.y })),
+      (baseTx + 0.5) * CONFIG.tileSize,
+      (baseTy + 0.5) * CONFIG.tileSize
+    );
+  }
+
+  function mpAutotestFindFreeInteriorPlacementTile(house, fallback = null) {
+    const interior = getHouseInterior(house);
+    if (!interior) return null;
+    const centerTx = Math.floor(interior.width * 0.5);
+    const centerTy = Math.floor(interior.height * 0.55);
+    for (let r = 0; r <= Math.max(interior.width, interior.height); r += 1) {
+      for (let dy = -r; dy <= r; dy += 1) {
+        for (let dx = -r; dx <= r; dx += 1) {
+          if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+          const tx = centerTx + dx;
+          const ty = centerTy + dy;
+          if (tx < 0 || ty < 0 || tx >= interior.width || ty >= interior.height) continue;
+          if (ty === interior.height - 1 && tx === Math.floor(interior.width / 2)) continue;
+          if (getInteriorStructureAt(house, tx, ty)) continue;
+          return { tx, ty };
+        }
+      }
+    }
+    return fallback;
+  }
+
+  function mpAutotestApplyHostMutations(mutations) {
+    if (!Array.isArray(mutations) || mutations.length <= 0) return true;
+    const world = state.surfaceWorld || state.world;
+    if (!world) return false;
+    let changed = false;
+    for (const mutation of mutations) {
+      if (!mutation || typeof mutation !== "object") continue;
+      if (mutation.type === "spawnCaveV2") {
+        if (!CAVE_V2_ENABLED) continue;
+        const tx = Math.floor(Number(mutation.tx));
+        const ty = Math.floor(Number(mutation.ty));
+        if (!Number.isInteger(tx) || !Number.isInteger(ty) || !inBounds(tx, ty, world.size)) continue;
+        const entry = upsertRuntimeCaveV2Entrance(world, tx, ty, mutation.caveId || null);
+        if (entry) {
+          getOrCreateCaveV2(world, entry);
+          changed = true;
+        }
+      } else if (mutation.type === "spawnVillage") {
+        const tx = Math.floor(Number(mutation.tx));
+        const ty = Math.floor(Number(mutation.ty));
+        if (!Number.isInteger(tx) || !Number.isInteger(ty)) continue;
+        const result = spawnVillageAt(world, tx, ty, mpAutotest.rng, { spawnedByPlayer: true });
+        if (result?.ok) changed = true;
+      } else if (mutation.type === "weakenMonster") {
+        const id = Number(mutation.id);
+        if (!Number.isInteger(id) || !Array.isArray(world.monsters)) continue;
+        const monster = world.monsters.find((entry) => entry && entry.id === id) || null;
+        if (!monster) continue;
+        if (!Number.isFinite(monster.maxHp) || monster.maxHp < 1) monster.maxHp = 1;
+        if (!Number.isFinite(monster.hp) || monster.hp > 1) {
+          monster.hp = 1;
+          changed = true;
+        }
+      }
+    }
+    if (changed) markDirty();
+    return true;
+  }
+
+  function mpAutotestBuildRequestId(clientId, kind) {
+    const owner = clientId ? String(clientId) : "host";
+    const tag = String(kind || "req").replace(/[^a-z0-9_-]+/gi, "").toLowerCase() || "req";
+    const seq = Number.isFinite(mpAutotest.nextSeq)
+      ? Math.max(1, Math.floor(mpAutotest.nextSeq))
+      : 1;
+    return `${owner}-${tag}-${seq}`;
+  }
+
+  function mpAutotestHasPendingHarvestAssertion(worldLabel, resId, caveId = null, caveLayer = 0) {
+    if (!Array.isArray(mpAutotest.pendingAssertions) || !Number.isInteger(resId)) return false;
+    const normalizedWorld = worldLabel === "cave" ? "cave" : "surface";
+    const normalizedLayer = normalizeCaveLayerIndex(caveLayer);
+    for (const assertion of mpAutotest.pendingAssertions) {
+      if (!assertion || assertion.type !== "harvest") continue;
+      if (assertion.world !== normalizedWorld) continue;
+      if (assertion.resId !== resId) continue;
+      if (normalizedWorld === "cave") {
+        if (!Number.isInteger(caveId) || assertion.caveId !== caveId) continue;
+        if (normalizeCaveLayerIndex(assertion.caveLayer ?? 0) !== normalizedLayer) continue;
+      }
+      return true;
+    }
+    return false;
+  }
+
   function mpAutotestBuildPlayerUpdatePayload(client, x, y, extra = null) {
     const seq = mpAutotestNextClientPlayerSeq(client);
     const payload = {
@@ -7216,7 +7835,11 @@
           clientPlayer.y
         );
         if (resources.length === 0) return null;
-        const picked = resources[Math.floor(mpAutotest.rng() * resources.length)];
+        const available = resources.filter((candidate) => (
+          !mpAutotestHasPendingHarvestAssertion("surface", candidate.idx)
+        ));
+        const source = available.length > 0 ? available : resources;
+        const picked = source[Math.floor(mpAutotest.rng() * source.length)];
         const rx = Number(picked.entry.x);
         const ry = Number(picked.entry.y);
         if (!Number.isFinite(rx) || !Number.isFinite(ry)) return null;
@@ -7270,6 +7893,214 @@
         });
         break;
       }
+      case "bridgePlace": {
+        const baseTx = Math.floor(clientPlayer.x / CONFIG.tileSize);
+        const baseTy = Math.floor(clientPlayer.y / CONFIG.tileSize);
+        const tile = mpAutotestFindBridgePlacementTile(world, baseTx, baseTy, 26);
+        if (!tile) return null;
+        const placeX = (tile.tx + 0.5) * CONFIG.tileSize;
+        const placeY = (tile.ty + 0.5) * CONFIG.tileSize;
+        descriptor.note = `bridge place ${tile.tx},${tile.ty}`;
+        descriptor.ledgerRule = "conserve";
+        descriptor.forceReliable = true;
+        descriptor.payloads.push(
+          ...mpAutotestBuildWalkPayloads(client, clientPlayer.x, clientPlayer.y, placeX, placeY, 5)
+        );
+        descriptor.payloads.push({
+          type: "place",
+          requestId: mpAutotestBuildRequestId(client.id, "bridge"),
+          itemId: "bridge",
+          tx: tile.tx,
+          ty: tile.ty,
+        });
+        break;
+      }
+      case "dropItemCycle": {
+        const dropX = clientPlayer.x + (mpAutotest.rng() - 0.5) * CONFIG.tileSize * 0.5;
+        const dropY = clientPlayer.y + (mpAutotest.rng() - 0.5) * CONFIG.tileSize * 0.5;
+        descriptor.note = "drop item + pickup cycle";
+        descriptor.ledgerRule = "allowAny";
+        descriptor.forceReliable = true;
+        descriptor.payloads.push(mpAutotestBuildPlayerUpdatePayload(client, dropX, dropY));
+        descriptor.payloads.push({
+          type: "dropItem",
+          world: "surface",
+          x: dropX,
+          y: dropY,
+          itemId: "wood",
+          qty: 1,
+        });
+        descriptor.payloads.push({
+          type: "dropPickup",
+          world: "surface",
+          x: dropX,
+          y: dropY,
+          itemId: "wood",
+          qty: 1,
+        });
+        break;
+      }
+      case "craftRecipe": {
+        descriptor.note = "craft recipe cycle";
+        descriptor.ledgerRule = "allowAny";
+        break;
+      }
+      case "housePlace": {
+        const house = mpAutotestEnsureFixtureHouse();
+        if (!house) return null;
+        const interior = getHouseInterior(house);
+        if (!interior) return null;
+        const houseKey = getHouseKey(house);
+        if (!houseKey) return null;
+        const interiorTile = mpAutotestFindFreeInteriorPlacementTile(house, {
+          tx: Math.floor(interior.width * 0.5),
+          ty: Math.floor(interior.height * 0.55),
+        });
+        if (!interiorTile) return null;
+        const worldX = (house.tx + 0.5) * CONFIG.tileSize;
+        const worldY = (house.ty + 0.5) * CONFIG.tileSize;
+        const houseX = clamp(interiorTile.tx + 0.5, 0.75, Math.max(0.75, interior.width - 0.75));
+        const houseY = clamp(interiorTile.ty + 0.5, 0.75, Math.max(0.75, interior.height - 0.75));
+        descriptor.note = `house place @ ${house.tx},${house.ty}`;
+        descriptor.ledgerRule = "conserve";
+        descriptor.forceReliable = true;
+        descriptor.payloads.push(
+          ...mpAutotestBuildWalkPayloads(client, clientPlayer.x, clientPlayer.y, worldX, worldY, 5)
+        );
+        descriptor.payloads.push(mpAutotestBuildPlayerUpdatePayload(client, worldX, worldY, {
+          inHut: true,
+          houseKey,
+          houseX,
+          houseY,
+          inCave: false,
+          caveId: null,
+        }));
+        descriptor.payloads.push({
+          type: "housePlace",
+          requestId: mpAutotestBuildRequestId(client.id, "house"),
+          houseTx: house.tx,
+          houseTy: house.ty,
+          tx: interiorTile.tx,
+          ty: interiorTile.ty,
+          itemId: "bed",
+        });
+        descriptor.payloads.push(mpAutotestBuildPlayerUpdatePayload(client, worldX, worldY, {
+          inHut: false,
+          houseKey: null,
+          houseX: null,
+          houseY: null,
+          inCave: false,
+          caveId: null,
+        }));
+        break;
+      }
+      case "caveSpawn": {
+        if (!CAVE_V2_ENABLED) return null;
+        const baseTx = Math.floor(clientPlayer.x / CONFIG.tileSize);
+        const baseTy = Math.floor(clientPlayer.y / CONFIG.tileSize);
+        const tile = findOpenSurfaceTileNear(world, baseTx, baseTy, 14);
+        if (!tile) return null;
+        const caveId = getCaveV2EntranceStableId(world, tile.tx, tile.ty);
+        const caveX = (tile.tx + 0.5) * CONFIG.tileSize;
+        const caveY = (tile.ty + 0.5) * CONFIG.tileSize;
+        descriptor.note = `spawn caveV2 @ ${tile.tx},${tile.ty}`;
+        descriptor.ledgerRule = "conserve";
+        descriptor.forceReliable = true;
+        descriptor.hostMutations = [
+          { type: "spawnCaveV2", tx: tile.tx, ty: tile.ty, caveId },
+        ];
+        descriptor.payloads.push(
+          ...mpAutotestBuildWalkPayloads(client, clientPlayer.x, clientPlayer.y, caveX, caveY, 6)
+        );
+        break;
+      }
+      case "villageOps": {
+        const village = mpAutotestEnsureFixtureVillage(client);
+        if (!village || !Number.isFinite(village.x) || !Number.isFinite(village.y)) return null;
+        descriptor.note = `village ops near ${Math.floor(village.x / CONFIG.tileSize)},${Math.floor(village.y / CONFIG.tileSize)}`;
+        descriptor.ledgerRule = "conserve";
+        descriptor.forceReliable = true;
+        descriptor.payloads.push(
+          ...mpAutotestBuildWalkPayloads(client, clientPlayer.x, clientPlayer.y, village.x, village.y, 7)
+        );
+        break;
+      }
+      case "boatRide": {
+        const boatStructure = mpAutotestEnsureFixtureBoat(client);
+        if (!boatStructure) return null;
+        const boatCenter = getStructureCenterWorld(boatStructure);
+        if (!boatCenter) return null;
+        descriptor.note = `boat ride ${boatStructure.tx},${boatStructure.ty}`;
+        descriptor.ledgerRule = "allowAny";
+        descriptor.forceReliable = true;
+        descriptor.payloads.push(
+          ...mpAutotestBuildWalkPayloads(
+            client,
+            clientPlayer.x,
+            clientPlayer.y,
+            boatCenter.x,
+            boatCenter.y,
+            7
+          )
+        );
+        descriptor.payloads.push({
+          type: "shipAction",
+          tx: boatStructure.tx,
+          ty: boatStructure.ty,
+          action: "board",
+        });
+        descriptor.payloads.push({
+          type: "shipControl",
+          tx: boatStructure.tx,
+          ty: boatStructure.ty,
+          inputX: 0.95,
+          inputY: 0.18,
+        });
+        descriptor.payloads.push({
+          type: "shipControl",
+          tx: boatStructure.tx,
+          ty: boatStructure.ty,
+          inputX: 0.65,
+          inputY: -0.35,
+        });
+        descriptor.payloads.push({
+          type: "shipAction",
+          tx: boatStructure.tx,
+          ty: boatStructure.ty,
+          action: "leave",
+        });
+        break;
+      }
+      case "mobKill": {
+        const monster = mpAutotestEnsureFixtureMonster(client);
+        if (!monster) return null;
+        const px = monster.x - CONFIG.tileSize * 0.42;
+        const py = monster.y - CONFIG.tileSize * 0.28;
+        descriptor.note = `mob kill ${monster.type}#${monster.id}`;
+        descriptor.ledgerRule = "allowAny";
+        descriptor.forceReliable = true;
+        descriptor.hostMutations = [{ type: "weakenMonster", id: monster.id }];
+        descriptor.payloads.push(mpAutotestBuildPlayerUpdatePayload(client, px, py));
+        for (let i = 0; i < 3; i += 1) {
+          descriptor.payloads.push({
+            type: "attack",
+            world: "surface",
+            x: px,
+            y: py,
+            aimX: monster.x,
+            aimY: monster.y,
+            targetKind: "monster",
+            targetId: monster.id,
+            unlocks: normalizeUnlocks({
+              pickaxe: true,
+              orePickaxe: true,
+              relicPickaxe: true,
+              sword: true,
+            }),
+          });
+        }
+        break;
+      }
       case "craftEdge": {
         descriptor.note = "craft inventory-full edge checks";
         // This action only runs local invariant checks and sends no gameplay payloads.
@@ -7291,6 +8122,7 @@
         }
         descriptor.note = `chest update @ ${chest.tx},${chest.ty}`;
         descriptor.ledgerRule = "conserve";
+        descriptor.forceReliable = true;
         descriptor.payloads.push(mpAutotestBuildPlayerUpdatePayload(client, centerX, centerY));
         descriptor.payloads.push({
           type: "chestUpdate",
@@ -7416,6 +8248,35 @@
         break;
       }
       case "caveTrip": {
+        if (CAVE_V2_ENABLED) {
+          const entrances = getRuntimeCaveV2Entrances(world);
+          let entrance = Array.isArray(entrances) && entrances.length > 0
+            ? entrances[Math.floor(mpAutotest.rng() * entrances.length)]
+            : null;
+          if (!entrance) {
+            const baseTx = Math.floor(clientPlayer.x / CONFIG.tileSize);
+            const baseTy = Math.floor(clientPlayer.y / CONFIG.tileSize);
+            const tile = findOpenSurfaceTileNear(world, baseTx, baseTy, 14);
+            if (!tile) return null;
+            entrance = {
+              tx: tile.tx,
+              ty: tile.ty,
+              caveId: getCaveV2EntranceStableId(world, tile.tx, tile.ty),
+            };
+            descriptor.hostMutations = [
+              { type: "spawnCaveV2", tx: tile.tx, ty: tile.ty, caveId: entrance.caveId },
+            ];
+          }
+          const caveX = (entrance.tx + 0.5) * CONFIG.tileSize;
+          const caveY = (entrance.ty + 0.5) * CONFIG.tileSize;
+          descriptor.note = `caveV2 trip ${entrance.caveId}`;
+          descriptor.ledgerRule = "allowAny";
+          descriptor.forceReliable = true;
+          descriptor.payloads.push(
+            ...mpAutotestBuildWalkPayloads(client, clientPlayer.x, clientPlayer.y, caveX, caveY, 8)
+          );
+          break;
+        }
         if (!Array.isArray(world.caves) || world.caves.length === 0) return null;
         const cave = world.caves[Math.floor(mpAutotest.rng() * world.caves.length)];
         const caveLayerWorld = cave ? ensureCaveLayerWorld(cave, 0, world) : null;
@@ -7424,6 +8285,7 @@
         const caveY = (caveLayerWorld.entrance.ty + 0.5) * CONFIG.tileSize;
         descriptor.note = `cave trip cave#${cave.id}`;
         descriptor.ledgerRule = "allowAny";
+        descriptor.forceReliable = true;
         descriptor.payloads.push(mpAutotestBuildPlayerUpdatePayload(client, caveX, caveY, {
           inCave: true,
           caveId: cave.id,
@@ -7453,13 +8315,14 @@
         const caveHarvestTarget = Array.isArray(caveLayerWorld.resources)
           ? caveLayerWorld.resources
             .map((entry, idx) => ({ entry, idx }))
-            .filter(({ entry }) => (
+            .filter(({ entry, idx }) => (
               entry
               && !entry.removed
               && isResourceInteractable(entry)
               && Number.isFinite(entry.hp)
               && entry.hp > 0
               && canHarvestResource(entry, harvestProbePlayer).ok
+              && !mpAutotestHasPendingHarvestAssertion("cave", idx, cave.id, 0)
             ))
           : null;
         const caveHarvestCandidates = mpAutotestBuildReachableHarvestCandidates(
@@ -7516,6 +8379,7 @@
         const endHouseY = clamp(0.9 + mpAutotest.rng() * Math.max(0.2, interior.height - 1.8), minY, maxY);
         descriptor.note = `house walk ${houseKey}`;
         descriptor.ledgerRule = "conserve";
+        descriptor.forceReliable = true;
         descriptor.payloads.push(
           ...mpAutotestBuildWalkPayloads(
             client,
@@ -7574,6 +8438,7 @@
         const houseY = clamp((bed.ty + 0.5), 0.75, Math.max(0.75, interior.height - 0.75));
         descriptor.note = `sleep/wake ${houseKey}`;
         descriptor.ledgerRule = "conserve";
+        descriptor.forceReliable = true;
         descriptor.payloads.push(
           ...mpAutotestBuildWalkPayloads(client, clientPlayer.x, clientPlayer.y, worldX, worldY, 4)
         );
@@ -7615,24 +8480,118 @@
   }
 
   function mpAutotestRunCraftEdgeCheck() {
-    const inventoryA = createEmptyInventory(INVENTORY_SIZE);
-    inventoryA[0] = { id: "stick", qty: 2 };
-    for (let i = 1; i < inventoryA.length; i += 1) {
-      inventoryA[i] = { id: "stone", qty: MAX_STACK };
+    const prevInfiniteResources = !!state.debugInfiniteResources;
+    if (prevInfiniteResources) {
+      state.debugInfiniteResources = false;
     }
-    const allowsA = canCraftWithInventoryReplacement(inventoryA, { stick: 2 }, { sawmill: 1 });
-    const inventoryB = createEmptyInventory(INVENTORY_SIZE);
-    inventoryB[0] = { id: "wood", qty: 98 };
-    for (let i = 1; i < inventoryB.length; i += 1) {
-      inventoryB[i] = { id: "stone", qty: MAX_STACK };
+    try {
+      const inventoryA = createEmptyInventory(INVENTORY_SIZE);
+      inventoryA[0] = { id: "stick", qty: 2 };
+      for (let i = 1; i < inventoryA.length; i += 1) {
+        inventoryA[i] = { id: "stone", qty: MAX_STACK };
+      }
+      const allowsA = canCraftWithInventoryReplacement(inventoryA, { stick: 2 }, { sawmill: 1 });
+      const inventoryB = createEmptyInventory(INVENTORY_SIZE);
+      inventoryB[0] = { id: "wood", qty: 98 };
+      for (let i = 1; i < inventoryB.length; i += 1) {
+        inventoryB[i] = { id: "stone", qty: MAX_STACK };
+      }
+      const allowsB = canCraftWithInventoryReplacement(inventoryB, { wood: 10 }, { sawmill: 1 });
+      if (!allowsA || allowsB) {
+        return {
+          ok: false,
+          reason: `Craft inventory-full rule mismatch (Example A=${allowsA ? "pass" : "fail"}, Example B=${allowsB ? "fail" : "pass"})`,
+          details: { subsystem: "crafting" },
+        };
+      }
+      return { ok: true, reason: "" };
+    } finally {
+      if (prevInfiniteResources) {
+        state.debugInfiniteResources = true;
+      }
     }
-    const allowsB = canCraftWithInventoryReplacement(inventoryB, { wood: 10 }, { sawmill: 1 });
-    if (!allowsA || allowsB) {
-      const reason = `Craft inventory-full rule mismatch (Example A=${allowsA ? "pass" : "fail"}, Example B=${allowsB ? "fail" : "pass"})`;
-      mpAutotestFail(reason, { subsystem: "crafting" });
-      return false;
+  }
+
+  function mpAutotestPickBasicCraftRecipe() {
+    if (!Array.isArray(CRAFTING_RECIPES) || CRAFTING_RECIPES.length <= 0) return null;
+    for (const recipe of CRAFTING_RECIPES) {
+      if (!recipe || typeof recipe !== "object") continue;
+      if (isUpgradeRecipe(recipe)) continue;
+      if (!recipe.cost || typeof recipe.cost !== "object") continue;
+      const output = getRecipeOutput(recipe);
+      if (!output || Object.keys(output).length <= 0) continue;
+      if (recipe.id === "small_house" || recipe.id === "medium_house" || recipe.id === "large_house") continue;
+      if (recipe.id === "rescue_beacon") continue;
+      return recipe;
     }
-    return true;
+    return null;
+  }
+
+  function mpAutotestRunCraftRecipeCycle() {
+    if (!Array.isArray(state.inventory) || state.inventory.length <= 0) {
+      return { ok: false, reason: "Craft recipe cycle missing inventory", details: { subsystem: "crafting" } };
+    }
+    const recipe = mpAutotestPickBasicCraftRecipe();
+    if (!recipe) {
+      return { ok: false, reason: "Craft recipe cycle found no eligible recipe", details: { subsystem: "crafting" } };
+    }
+    const output = getRecipeOutput(recipe);
+    const outputEntries = normalizeOutputEntries(output);
+    if (outputEntries.length <= 0) {
+      return { ok: false, reason: `Craft recipe ${recipe.id || recipe.name || "unknown"} has no output`, details: { subsystem: "crafting" } };
+    }
+    const beforeTotals = Object.create(null);
+    for (const slot of state.inventory) {
+      if (!slot || !slot.id || !Number.isFinite(slot.qty) || slot.qty <= 0) continue;
+      beforeTotals[slot.id] = (beforeTotals[slot.id] || 0) + Math.max(0, Math.floor(slot.qty));
+    }
+    for (const [itemId, qtyRaw] of Object.entries(recipe.cost || {})) {
+      const qty = Math.max(0, Math.floor(Number(qtyRaw) || 0));
+      if (!itemId || qty <= 0) continue;
+      const have = beforeTotals[itemId] || 0;
+      if (have < qty) addItem(state.inventory, itemId, qty - have);
+    }
+    if (!canCraftWithInventoryReplacement(state.inventory, recipe.cost, output)) {
+      for (let i = 0; i < state.inventory.length; i += 1) {
+        const slot = state.inventory[i];
+        if (!slot || !slot.id) continue;
+        slot.id = null;
+        slot.qty = 0;
+        break;
+      }
+      if (!canCraftWithInventoryReplacement(state.inventory, recipe.cost, output)) {
+        return {
+          ok: false,
+          reason: `Craft recipe cycle cannot satisfy inventory-full rules for ${recipe.id || recipe.name || "recipe"}`,
+          details: { subsystem: "crafting" },
+        };
+      }
+    }
+    craftRecipe(recipe);
+    const afterTotals = Object.create(null);
+    for (const slot of state.inventory) {
+      if (!slot || !slot.id || !Number.isFinite(slot.qty) || slot.qty <= 0) continue;
+      afterTotals[slot.id] = (afterTotals[slot.id] || 0) + Math.max(0, Math.floor(slot.qty));
+    }
+    let outputIncreased = false;
+    for (const [itemId, qty] of outputEntries) {
+      if ((afterTotals[itemId] || 0) >= (beforeTotals[itemId] || 0) + qty) {
+        outputIncreased = true;
+        break;
+      }
+    }
+    if (!outputIncreased) {
+      return {
+        ok: false,
+        reason: `Craft recipe cycle produced no detectable output for ${recipe.id || recipe.name || "recipe"}`,
+        details: { subsystem: "crafting" },
+      };
+    }
+    return {
+      ok: true,
+      reason: "",
+      recipeId: recipe.id || recipe.name || "recipe",
+    };
   }
 
   function mpAutotestRunStationCycle() {
@@ -7662,11 +8621,44 @@
     const client = mpAutotestFindClient(descriptor.clientId);
     if (!client && descriptor.kind !== "dayNight") return false;
     mpAutotest.lastAction = `${descriptor.kind} (${descriptor.clientId || "host"})`;
+    mpAutotestMarkFeatureAttemptsForActionKind(descriptor.kind);
+
+    if (Array.isArray(descriptor.hostMutations) && descriptor.hostMutations.length > 0) {
+      mpAutotestApplyHostMutations(descriptor.hostMutations);
+    }
 
     if (descriptor.kind === "craftEdge") {
-      if (!mpAutotestRunCraftEdgeCheck()) return false;
+      const craftEdgeResult = mpAutotestRunCraftEdgeCheck();
+      if (!craftEdgeResult.ok) {
+        const reason = craftEdgeResult.reason || "Craft edge invariant failed";
+        mpAutotestMarkFeature("crafting", "fail", reason);
+        mpAutotestMarkCategory("D", "warn", reason);
+        descriptor.resultStatus = "warn";
+        mpAutotestLogLine(`WARN: ${reason}`);
+      }
+    } else if (descriptor.kind === "craftRecipe") {
+      const craftCycleResult = mpAutotestRunCraftRecipeCycle();
+      if (!craftCycleResult.ok) {
+        const reason = craftCycleResult.reason || "Craft recipe cycle failed";
+        mpAutotestMarkFeature("crafting", "fail", reason);
+        mpAutotestMarkCategory("D", "warn", reason);
+        descriptor.resultStatus = "warn";
+        mpAutotestLogLine(`WARN: ${reason}`);
+      } else {
+        const recipeId = craftCycleResult.recipeId || "recipe";
+        mpAutotestMarkFeature("crafting", "pass", `crafted ${recipeId}`);
+      }
     } else if (descriptor.kind === "stationCycle") {
-      mpAutotestRunStationCycle();
+      const stationOk = mpAutotestRunStationCycle();
+      if (!stationOk) {
+        const reason = "Station cycle failed";
+        mpAutotestMarkFeature("stations", "fail", reason);
+        mpAutotestMarkCategory("D", "warn", reason);
+        descriptor.resultStatus = "warn";
+        mpAutotestLogLine(`WARN: ${reason}`);
+      } else {
+        mpAutotestMarkFeature("stations", "pass", "station refine complete");
+      }
     } else if (descriptor.kind === "dayNight") {
       state.timeOfDay = CONFIG.dayLength - 0.06;
       state.isNight = false;
@@ -7747,11 +8739,19 @@
       for (const payload of descriptor.payloads || []) {
         const reliableAutotestPayload = descriptor.kind === "harvest"
           || descriptor.kind === "caveTrip";
-        mpAutotestSendFromClient(client, payload, { reliable: reliableAutotestPayload });
+        const reliable = !!descriptor.forceReliable || reliableAutotestPayload;
+        mpAutotestSendFromClient(client, payload, { reliable });
       }
       if (descriptor.kind === "spam" && Number.isInteger(descriptor.repeatCraftChecks) && descriptor.repeatCraftChecks > 0) {
         for (let i = 0; i < descriptor.repeatCraftChecks; i += 1) {
-          if (!mpAutotestRunCraftEdgeCheck()) return false;
+          const craftEdgeResult = mpAutotestRunCraftEdgeCheck();
+          if (!craftEdgeResult.ok) {
+            const reason = craftEdgeResult.reason || "Craft edge invariant failed (spam)";
+            mpAutotestMarkFeature("crafting", "fail", reason);
+            mpAutotestMarkCategory("D", "warn", reason);
+            descriptor.resultStatus = "warn";
+            mpAutotestLogLine(`WARN: ${reason}`);
+          }
         }
       }
       if (descriptor.kind === "spam" && descriptor.concurrentHarvest && descriptor.partnerClientId) {
@@ -7776,7 +8776,7 @@
               relicPickaxe: true,
               sword: true,
             }),
-          }, { reliable: false });
+          }, { reliable: true });
         }
       }
     }
@@ -8080,6 +9080,8 @@
     const errorCode = `MPA-${String(details?.subsystem || "general").replace(/[^a-z0-9]+/gi, "_").replace(/^_+|_+$/g, "").toUpperCase() || "GENERAL"}`;
     const categoryLines = mpAutotestBuildCategorySummaryLines();
     const scenarioLines = mpAutotestBuildScenarioSummaryLines();
+    const featureLines = mpAutotestBuildFeatureSummaryLines();
+    const actionLines = mpAutotestBuildActionSummaryLines();
     const report = [
       "MP AUTOTEST FAILURE REPORT",
       `errorCode: ${errorCode}`,
@@ -8102,6 +9104,10 @@
       ...categoryLines,
       "",
       ...scenarioLines,
+      "",
+      ...featureLines,
+      "",
+      ...actionLines,
       "",
       ...diagnosticsLines,
       "",
@@ -8162,6 +9168,8 @@
     })();
     for (const line of mpAutotestBuildCategorySummaryLines()) mpAutotestLogLine(line);
     for (const line of mpAutotestBuildScenarioSummaryLines()) mpAutotestLogLine(line);
+    for (const line of mpAutotestBuildFeatureSummaryLines()) mpAutotestLogLine(line);
+    for (const line of mpAutotestBuildActionSummaryLines()) mpAutotestLogLine(line);
     mpAutotestLogLine(`Multiplayer Autotest: FAIL (${failCount}) - see log`);
     console.error(`[MP AUTOTEST] FAIL (${failCount})`, reason, details || "");
     mpAutotestLogLine(`FAIL: ${reason}`);
@@ -8199,6 +9207,14 @@
 
   function mpAutotestPass() {
     if (!mpAutotest.active) return;
+    const missingFeatures = mpAutotestValidateFeatureCoverage();
+    if (missingFeatures.length > 0) {
+      mpAutotestFail(
+        `Feature coverage incomplete (${missingFeatures.join(", ")})`,
+        { subsystem: "coverage", missingFeatures }
+      );
+      return;
+    }
     mpAutotest.failReason = "";
     mpAutotest.failReport = "";
     mpAutotestFinalizeScenarioStatuses("pass");
@@ -8217,6 +9233,8 @@
     }
     for (const line of mpAutotestBuildCategorySummaryLines()) mpAutotestLogLine(line);
     for (const line of mpAutotestBuildScenarioSummaryLines()) mpAutotestLogLine(line);
+    for (const line of mpAutotestBuildFeatureSummaryLines()) mpAutotestLogLine(line);
+    for (const line of mpAutotestBuildActionSummaryLines()) mpAutotestLogLine(line);
     mpAutotestLogLine("Multiplayer Autotest: PASS");
     console.log("[MP AUTOTEST] PASS");
     mpAutotestLogLine(`PASS: ${mpAutotest.mode?.label || "Autotest"} completed (${mpAutotest.step} steps).`);
@@ -8349,8 +9367,11 @@
     if (!mpAutotest.active) return;
     const descriptor = mpAutotestChooseNextDescriptor();
     if (!descriptor) return;
+    mpAutotestRecordActionStat(descriptor.kind, "attempt", descriptor.note || "");
     const ok = mpAutotestRunActionDescriptor(descriptor, !!mpAutotest.replayBundle);
     if (!ok) return;
+    const status = descriptor.resultStatus === "warn" ? "warn" : "pass";
+    mpAutotestRecordActionStat(descriptor.kind, status, descriptor.note || "");
     const note = descriptor.note ? ` - ${descriptor.note}` : "";
     mpAutotestLogLine(`step ${mpAutotest.step}: ${descriptor.kind} (${descriptor.clientId || "host"})${note}`);
     mpAutotestForceReliableSync();
@@ -8434,12 +9455,33 @@
     const restoreSeed = opts.restoreSeed !== false;
     const keepLog = !!opts.keepLog;
     const previousSeed = mpAutotest.savedSeed || null;
+    const restoreDebug = mpAutotest.savedDebugSettings && typeof mpAutotest.savedDebugSettings === "object"
+      ? { ...mpAutotest.savedDebugSettings }
+      : null;
     mpAutotest.active = false;
     mpAutotestStopLoopback();
     if (restoreSeed && previousSeed) {
       loadOrCreateGame(previousSeed);
       updateAllSlotUI();
       setPrompt(`Returned to seed: ${previousSeed}`, 1.2);
+    }
+    if (restoreDebug && state.debugUnlocked) {
+      state.debugInfiniteResources = !!restoreDebug.debugInfiniteResources;
+      state.debugInfiniteHealth = !!restoreDebug.debugInfiniteHealth;
+      state.debugSpeedMultiplier = clampDebugSpeedMultiplier(restoreDebug.debugSpeedMultiplier);
+      state.debugWorldSpeedMultiplier = clampDebugWorldSpeedMultiplier(restoreDebug.debugWorldSpeedMultiplier);
+      state.debugFovMultiplier = clampDebugFovMultiplier(restoreDebug.debugFovMultiplier);
+    }
+    updateInfiniteResourcesButton();
+    updateInfiniteHealthButton();
+    updateDebugSpeedUI();
+    updateDebugWorldSpeedUI();
+    updateDebugFovUI();
+    if (buildMenu && !buildMenu.classList.contains("hidden")) {
+      renderBuildMenu();
+    }
+    if (stationMenu && !stationMenu.classList.contains("hidden")) {
+      renderStationMenu();
     }
     mpAutotest.mode = null;
     mpAutotest.customFault = null;
@@ -8470,10 +9512,13 @@
     mpAutotest.categoryStatus = createMpAutotestCategoryStatusMap();
     mpAutotest.scenarioStatus = createMpAutotestScenarioStatusMap();
     mpAutotest.currentScenarioId = null;
+    mpAutotest.featureCoverage = createMpAutotestFeatureCoverage();
+    mpAutotest.actionStats = Object.create(null);
     mpAutotest.pendingAssertions = [];
     mpAutotest.nextHarvestProbeSeq = 1;
     mpAutotest.harvestProbeResults = new Map();
     mpAutotest.harvestAssertionInconclusiveCount = 0;
+    mpAutotest.savedDebugSettings = null;
     mpAutotest._lastProgressUiAt = -999;
     if (!keepLog) {
       mpAutotest.logLines = ["Multiplayer autotest idle."];
@@ -8619,7 +9664,36 @@
       updateAllSlotUI();
     }
 
+    mpAutotest.savedDebugSettings = {
+      debugInfiniteResources: !!state.debugInfiniteResources,
+      debugInfiniteHealth: !!state.debugInfiniteHealth,
+      debugSpeedMultiplier: clampDebugSpeedMultiplier(state.debugSpeedMultiplier),
+      debugWorldSpeedMultiplier: clampDebugWorldSpeedMultiplier(state.debugWorldSpeedMultiplier),
+      debugFovMultiplier: clampDebugFovMultiplier(state.debugFovMultiplier),
+    };
+    state.debugInfiniteResources = false;
+    state.debugInfiniteHealth = false;
+    state.debugSpeedMultiplier = 1;
+    state.debugWorldSpeedMultiplier = 1;
+    state.debugFovMultiplier = 1;
+    updateInfiniteResourcesButton();
+    updateInfiniteHealthButton();
+    updateDebugSpeedUI();
+    updateDebugWorldSpeedUI();
+    updateDebugFovUI();
+    if (buildMenu && !buildMenu.classList.contains("hidden")) {
+      renderBuildMenu();
+    }
+    if (stationMenu && !stationMenu.classList.contains("hidden")) {
+      renderStationMenu();
+    }
+
     mpAutotest.active = true;
+    updateInfiniteResourcesButton();
+    updateInfiniteHealthButton();
+    updateDebugSpeedUI();
+    updateDebugWorldSpeedUI();
+    updateDebugFovUI();
     mpAutotest.mode = mode;
     mpAutotest.customFault = replayBundle?.fault && typeof replayBundle.fault === "object"
       ? mpAutotestClone(replayBundle.fault, null)
@@ -8661,6 +9735,8 @@
     mpAutotest.categoryStatus = createMpAutotestCategoryStatusMap();
     mpAutotest.scenarioStatus = createMpAutotestScenarioStatusMap();
     mpAutotest.currentScenarioId = null;
+    mpAutotest.featureCoverage = createMpAutotestFeatureCoverage();
+    mpAutotest.actionStats = Object.create(null);
     mpAutotest.pendingAssertions = [];
     mpAutotest.nextHarvestProbeSeq = 1;
     mpAutotest.harvestProbeResults = new Map();
@@ -8757,6 +9833,7 @@
   function updateInfiniteResourcesButton() {
     if (!infiniteResourcesBtn) return;
     const enabled = isInfiniteResourcesEnabled();
+    infiniteResourcesBtn.disabled = !state.debugUnlocked || !!mpAutotest.active;
     infiniteResourcesBtn.textContent = enabled
       ? "Infinite Resources: On"
       : "Infinite Resources: Off";
@@ -8791,6 +9868,7 @@
   function updateInfiniteHealthButton() {
     if (!infiniteHealthBtn) return;
     const enabled = isInfiniteHealthEnabled();
+    infiniteHealthBtn.disabled = !state.debugUnlocked || !!mpAutotest.active;
     infiniteHealthBtn.textContent = enabled
       ? "Infinite Health: On"
       : "Infinite Health: Off";
@@ -8839,6 +9917,20 @@
       ? "Place Boat (Repaired): On"
       : "Place Boat (Repaired): Off";
     debugPlaceBoatBtn.setAttribute("aria-pressed", enabled ? "true" : "false");
+  }
+
+  function updateDebugCaveSpawnButtons() {
+    if (spawnCaveBtn) {
+      spawnCaveBtn.disabled = !state.debugUnlocked;
+      spawnCaveBtn.textContent = "Spawn Cave Here";
+    }
+    if (!spawnLinkedCaveBtn) return;
+    const pending = state.debugLinkedCavePlacement;
+    spawnLinkedCaveBtn.disabled = !state.debugUnlocked;
+    spawnLinkedCaveBtn.textContent = pending
+      ? "Place Linked Cave B"
+      : "Spawn Linked Caves";
+    spawnLinkedCaveBtn.setAttribute("aria-pressed", pending ? "true" : "false");
   }
 
   function ensureAudioContext() {
@@ -11669,6 +12761,15 @@
     }
   }
 
+  function resetJoinHandshakeState() {
+    net.joinStartedAt = 0;
+    net.joinRetryTimer = NET_CONFIG.joinReconnectBase;
+    net.joinAttempts = 0;
+    net.joinFallbackSnapshotApplied = false;
+    net.joinTimeoutNotified = false;
+    net.hostConnPendingSince = 0;
+  }
+
   function resetNetSequenceState() {
     net.snapshotSeq = 0;
     net.motionSeq = 0;
@@ -11688,6 +12789,7 @@
       net.hostPlayerSeqByPeer = new Map();
     }
     resetDebugSyncAuditState();
+    resetJoinHandshakeState();
   }
 
   function nextNetSequence(counterKey) {
@@ -11760,6 +12862,7 @@
     net.motionTimer = NET_CONFIG.motionInterval;
     net.playerTimer = NET_CONFIG.playerSendInterval;
     net.helloRetryTimer = NET_CONFIG.helloRetryInterval;
+    resetJoinHandshakeState();
     net.roomId = roomId;
     net.hostId = `${roomId}-host`;
     if (roomDisplay) {
@@ -11862,6 +12965,7 @@
     net.motionTimer = NET_CONFIG.motionInterval;
     net.playerTimer = NET_CONFIG.playerSendInterval;
     net.helloRetryTimer = NET_CONFIG.helloRetryInterval;
+    resetJoinHandshakeState();
     net.enabled = true;
     const profile = getLocalProfile();
     net.localName = profile.name;
@@ -11914,6 +13018,7 @@
     net.motionTimer = NET_CONFIG.motionInterval;
     net.playerTimer = NET_CONFIG.playerSendInterval;
     net.helloRetryTimer = NET_CONFIG.helloRetryInterval;
+    resetJoinHandshakeState();
     net.enabled = true;
     const profile = getLocalProfile();
     net.localName = profile.name;
@@ -12005,10 +13110,7 @@
     }
     hideStartScreen();
     initMultiplayerJoin(roomId);
-    if (!state.world) {
-      loadOrCreateGame();
-      updateAllSlotUI();
-    }
+    setPrompt("Connecting...", 0.8);
   }
 
   function connectAsHostCandidate() {
@@ -12044,6 +13146,8 @@
     net.players.clear();
     resetNetSequenceState();
     net.helloRetryTimer = NET_CONFIG.helloRetryInterval;
+    net.joinStartedAt = performance.now();
+    net.joinRetryTimer = NET_CONFIG.joinReconnectBase;
     const peer = new Peer(undefined, PEER_OPTIONS);
     net.peer = peer;
     peer.on("open", (id) => {
@@ -12053,14 +13157,28 @@
     });
     peer.on("error", (err) => {
       console.warn("Peer error", err);
-      updateMpStatus("MP: Error");
+      if (!net.ready) {
+        net.joinRetryTimer = Math.min(
+          Math.max(0.1, Number(net.joinRetryTimer) || NET_CONFIG.joinReconnectBase),
+          0.2
+        );
+        updateMpStatus("MP: Reconnecting");
+      } else {
+        updateMpStatus("MP: Error");
+      }
     });
   }
 
   function connectToHost() {
     if (!net.peer) return;
+    if (net.hostConn) return;
+    net.joinAttempts = Math.max(0, Number(net.joinAttempts) || 0) + 1;
+    if (!Number.isFinite(net.joinStartedAt) || net.joinStartedAt <= 0) {
+      net.joinStartedAt = performance.now();
+    }
     const conn = net.peer.connect(net.hostId, { reliable: true });
     net.hostConn = conn;
+    net.hostConnPendingSince = performance.now();
     setupConnection(conn, false);
   }
 
@@ -12070,8 +13188,10 @@
     }
     conn.on("open", () => {
       if (!isHostSide) {
+        net.hostConnPendingSince = 0;
         sendHello();
         net.helloRetryTimer = NET_CONFIG.helloRetryInterval;
+        net.joinRetryTimer = NET_CONFIG.joinReconnectBase;
         updateMpStatus("MP: Connected");
       }
     });
@@ -12110,6 +13230,7 @@
         updateMpStatus("MP: Disconnected");
         net.ready = false;
         net.helloRetryTimer = NET_CONFIG.helloRetryInterval;
+        net.joinRetryTimer = Math.min(0.15, NET_CONFIG.joinReconnectBase);
         net.resyncTimer = 0;
         net.lastHostPacketAt = performance.now();
         net.lastSnapshotSeq = -1;
@@ -12122,11 +13243,28 @@
         if (net.hostConn === conn) {
           net.hostConn = null;
         }
+        net.hostConnPendingSince = 0;
         rollbackAllPendingClientRequests("Disconnected: pending actions rolled back");
       }
     });
     conn.on("error", (err) => {
       console.warn("Connection error", err);
+      if (!isHostSide && !net.ready) {
+        if (net.hostConn === conn) {
+          net.hostConn = null;
+        }
+        net.hostConnPendingSince = 0;
+        try {
+          conn.close();
+        } catch (closeErr) {
+          // ignore close errors
+        }
+        net.joinRetryTimer = Math.min(
+          Math.max(0.1, Number(net.joinRetryTimer) || NET_CONFIG.joinReconnectBase),
+          0.2
+        );
+        updateMpStatus("MP: Reconnecting");
+      }
     });
   }
 
@@ -12153,6 +13291,16 @@
         qaTrackCaveDisabledNetMessage("send", payload);
         conn.send(payload);
       }
+    }
+  }
+
+  function broadcastNetToReadyPeers(payload, exceptId = null) {
+    for (const [peerId, conn] of net.connections.entries()) {
+      if (peerId === exceptId) continue;
+      if (!conn?.open) continue;
+      if (!net.players.has(peerId)) continue;
+      qaTrackCaveDisabledNetMessage("send", payload);
+      conn.send(payload);
     }
   }
 
@@ -12279,7 +13427,16 @@
         if (!net.isHost) handleWelcome(message);
         break;
       case "snapshot":
-        if (!net.isHost) applyNetworkSnapshot(message);
+        if (!net.isHost) {
+          if (!net.ready) {
+            if (!net.joinFallbackSnapshotApplied) {
+              net.joinFallbackSnapshotApplied = true;
+              handleWelcome({ snapshot: message });
+            }
+          } else {
+            applyNetworkSnapshot(message);
+          }
+        }
         break;
       case "motion":
         if (!net.isHost) applyNetworkMotion(message);
@@ -13277,7 +14434,7 @@
     const anchoredBridgeSet = getAnchoredBridgeNetwork(world, bridgeSet);
     for (const entry of orderedStructures) {
       if (!entry) continue;
-      const normalized = { ...entry, type: normalizeLegacyStructureType(entry.type) };
+      const normalized = { ...entry, type: resolveStructureType(entry.type, entry.meta) };
       if (!isStructureValidOnLoad(world, normalized, bridgeSet, anchoredBridgeSet)) continue;
       const storageSize = getStorageSizeForStructureType(normalized.type, null);
       clearResourcesForFootprint(world, normalized.type, normalized.tx, normalized.ty);
@@ -13823,6 +14980,7 @@
     if (message.snapshot) {
       applyNetworkSnapshot(message.snapshot);
     }
+    net.joinFallbackSnapshotApplied = true;
     state.sleepSequence = null;
     net.ready = true;
     net.lastHostPacketAt = performance.now();
@@ -13870,6 +15028,8 @@
     updateHealthUI();
     state.inventory = sanitizeInventorySlots(state.inventory, INVENTORY_SIZE);
     net.helloRetryTimer = NET_CONFIG.helloRetryInterval;
+    resetJoinHandshakeState();
+    updateMpStatus("MP: Connected");
     updateAllSlotUI();
   }
 
@@ -15668,6 +16828,48 @@
       net.resyncTimer = 0;
     }
     if (!net.isHost) {
+      if (!Number.isFinite(net.joinRetryTimer)) {
+        net.joinRetryTimer = NET_CONFIG.joinReconnectBase;
+      }
+      if (!net.ready) {
+        if (!Number.isFinite(net.joinStartedAt) || net.joinStartedAt <= 0) {
+          net.joinStartedAt = performance.now();
+        }
+        const hostOpen = !!(net.hostConn && net.hostConn.open);
+        const hasHostConn = !!net.hostConn;
+        if (hasHostConn && !hostOpen && Number.isFinite(net.hostConnPendingSince) && net.hostConnPendingSince > 0) {
+          const pendingElapsed = (performance.now() - net.hostConnPendingSince) / 1000;
+          if (pendingElapsed >= NET_CONFIG.joinReconnectMax) {
+            try {
+              net.hostConn.close();
+            } catch (err) {
+              // ignore close errors
+            }
+            net.hostConn = null;
+            net.hostConnPendingSince = 0;
+            net.joinRetryTimer = 0.1;
+          }
+        }
+        if (!hostOpen && !hasHostConn && net.peer && !net.peer.destroyed && net.peer.open) {
+          net.joinRetryTimer -= Math.max(0, Number(dt) || 0);
+          if (net.joinRetryTimer <= 0) {
+            connectToHost();
+            const retryBackoff = Math.min(
+              NET_CONFIG.joinReconnectMax,
+              NET_CONFIG.joinReconnectBase + Math.max(0, net.joinAttempts - 1) * 0.35
+            );
+            net.joinRetryTimer = retryBackoff;
+          }
+        } else if (hostOpen) {
+          net.joinRetryTimer = NET_CONFIG.joinReconnectBase;
+        }
+        const elapsed = (performance.now() - net.joinStartedAt) / 1000;
+        if (elapsed >= NET_CONFIG.joinHandshakeTimeout && !net.joinTimeoutNotified) {
+          net.joinTimeoutNotified = true;
+          updateMpStatus("MP: Join timeout");
+          setPrompt("Join timed out. Check code/host.", 2.0);
+        }
+      }
       if (!net.ready && net.hostConn?.open) {
         net.helloRetryTimer -= dt;
         if (net.helloRetryTimer <= 0) {
@@ -15700,13 +16902,13 @@
       if (net.motionTimer <= 0) {
         const motion = buildMotionUpdate();
         if (motion) {
-          broadcastNet(motion);
+          broadcastNetToReadyPeers(motion);
         }
         net.motionTimer = NET_CONFIG.motionInterval;
       }
       net.snapshotTimer -= dt;
       if (net.snapshotTimer <= 0) {
-        broadcastNet(buildSnapshot());
+        broadcastNetToReadyPeers(buildSnapshot());
         net.snapshotTimer = NET_CONFIG.snapshotInterval;
       }
     }
@@ -16152,6 +17354,26 @@
     return base;
   }
 
+  function applySavedArmorUnlocks(rawUnlocks, rawArmorUnlocks = null) {
+    const normalized = normalizeUnlocks(rawUnlocks);
+    if (!rawArmorUnlocks || typeof rawArmorUnlocks !== "object") return normalized;
+    for (const piece of SLIME_ARMOR.pieces) {
+      if (rawArmorUnlocks[piece.unlock]) {
+        normalized[piece.unlock] = true;
+      }
+    }
+    return normalized;
+  }
+
+  function serializeArmorUnlocks(unlocksRaw) {
+    const unlocks = normalizeUnlocks(unlocksRaw);
+    const payload = Object.create(null);
+    for (const piece of SLIME_ARMOR.pieces) {
+      payload[piece.unlock] = !!unlocks[piece.unlock];
+    }
+    return payload;
+  }
+
   function normalizeCheckpoint(raw) {
     if (!raw || typeof raw !== "object") return null;
     const x = Number(raw.x);
@@ -16506,6 +17728,51 @@
     }
   }
 
+  function getCaveV2ExitRunwayTileBounds(room, side, extraHalfWidth = 2, centerInset = 2) {
+    const normalized = normalizeCaveV2Direction(side);
+    if (!room || !normalized) return null;
+    const edge = getCaveV2ExitCenterTile(room, normalized);
+    if (!edge) return null;
+    const cx = Math.floor(room.sizeW / 2);
+    const cy = Math.floor(room.sizeH / 2);
+    const widen = Math.max(1, Math.floor(extraHalfWidth));
+    const inset = Math.max(1, Math.floor(centerInset));
+    if (normalized === "N" || normalized === "S") {
+      const minX = clamp(edge.laneMin - widen, 0, room.sizeW - 1);
+      const maxX = clamp(edge.laneMax + widen, 0, room.sizeW - 1);
+      const minY = normalized === "N" ? 0 : clamp(cy - inset, 0, room.sizeH - 1);
+      const maxY = normalized === "N" ? clamp(cy + inset, 0, room.sizeH - 1) : room.sizeH - 1;
+      return { minX, maxX, minY, maxY };
+    }
+    const minY = clamp(edge.laneMin - widen, 0, room.sizeH - 1);
+    const maxY = clamp(edge.laneMax + widen, 0, room.sizeH - 1);
+    const minX = normalized === "W" ? 0 : clamp(cx - inset, 0, room.sizeW - 1);
+    const maxX = normalized === "W" ? clamp(cx + inset, 0, room.sizeW - 1) : room.sizeW - 1;
+    return { minX, maxX, minY, maxY };
+  }
+
+  function carveCaveV2GuaranteedExitRunway(room, side, extraHalfWidth = 2, centerInset = 2) {
+    const bounds = getCaveV2ExitRunwayTileBounds(room, side, extraHalfWidth, centerInset);
+    if (!bounds) return;
+    carveCaveV2Rect(room, bounds.minX, bounds.minY, bounds.maxX, bounds.maxY);
+  }
+
+  function reserveCaveV2GuaranteedExitRunway(room, reserved, side, extraHalfWidth = 2, centerInset = 2, paddingTiles = 1) {
+    if (!room || !(reserved instanceof Set)) return;
+    const bounds = getCaveV2ExitRunwayTileBounds(room, side, extraHalfWidth, centerInset);
+    if (!bounds) return;
+    const pad = Math.max(0, Math.floor(paddingTiles));
+    const minX = clamp(bounds.minX - pad, 0, room.sizeW - 1);
+    const maxX = clamp(bounds.maxX + pad, 0, room.sizeW - 1);
+    const minY = clamp(bounds.minY - pad, 0, room.sizeH - 1);
+    const maxY = clamp(bounds.maxY + pad, 0, room.sizeH - 1);
+    for (let ty = minY; ty <= maxY; ty += 1) {
+      for (let tx = minX; tx <= maxX; tx += 1) {
+        reserved.add(`${tx},${ty}`);
+      }
+    }
+  }
+
   function getCaveV2RoomObstacleAnchors(room) {
     if (!room) return [];
     const anchors = [];
@@ -16685,6 +17952,7 @@
     for (const side of ["N", "S", "E", "W"]) {
       if (!room.exits?.[side]) continue;
       carveCaveV2SideCorridor(room, side);
+      carveCaveV2GuaranteedExitRunway(room, side, 2, 2);
       if (side === "N") carveCaveV2Rect(room, cx - guaranteedHalf, 0, cx + guaranteedHalf, cy + 1);
       else if (side === "S") carveCaveV2Rect(room, cx - guaranteedHalf, cy - 1, cx + guaranteedHalf, room.sizeH - 1);
       else if (side === "W") carveCaveV2Rect(room, 0, cy - guaranteedHalf, cx + 1, cy + guaranteedHalf);
@@ -16701,6 +17969,7 @@
     }
     if (cave && room.roomId === cave.entryRoomId && cave.entrySurfaceSide) {
       carveCaveV2SideCorridor(room, cave.entrySurfaceSide);
+      carveCaveV2GuaranteedExitRunway(room, cave.entrySurfaceSide, 2, 2);
       if (cave.entrySurfaceSide === "N") carveCaveV2Rect(room, cx - guaranteedHalf, 0, cx + guaranteedHalf, cy + 1);
       else if (cave.entrySurfaceSide === "S") carveCaveV2Rect(room, cx - guaranteedHalf, cy - 1, cx + guaranteedHalf, room.sizeH - 1);
       else if (cave.entrySurfaceSide === "W") carveCaveV2Rect(room, 0, cy - guaranteedHalf, cx + 1, cy + guaranteedHalf);
@@ -16729,6 +17998,13 @@
         }
       }
     }
+    for (const side of ["N", "S", "E", "W"]) {
+      if (!room.exits?.[side]) continue;
+      carveCaveV2GuaranteedExitRunway(room, side, 2, 2);
+    }
+    if (cave && room.roomId === cave.entryRoomId && cave.entrySurfaceSide) {
+      carveCaveV2GuaranteedExitRunway(room, cave.entrySurfaceSide, 2, 2);
+    }
     room.caveV2PassageRepairVersion = CAVE_V2_PASSAGE_REPAIR_VERSION;
     return true;
   }
@@ -16741,6 +18017,7 @@
     const reserved = new Set();
     for (const side of ["N", "S", "E", "W"]) {
       if (!room.exits?.[side]) continue;
+      reserveCaveV2GuaranteedExitRunway(room, reserved, side, 2, 2, 1);
       const laneRect = getCaveV2ExitLaneRectPx(room, side);
       if (!laneRect) continue;
       const minTx = clamp(Math.floor(laneRect.x / CONFIG.tileSize) - 1, 0, room.sizeW - 1);
@@ -16774,7 +18051,7 @@
       .filter((a) => a && !(a.tx === cx && a.ty === cy));
     for (const target of anchorTargets) {
       const path = findCaveV2TilePath(room, anchorCenter, target);
-      reserveCaveV2PathTiles(room, reserved, path, 1);
+      reserveCaveV2PathTiles(room, reserved, path, 2);
     }
     const candidates = [];
     for (let y = 2; y < room.sizeH - 2; y += 1) {
@@ -19021,18 +20298,18 @@
           const nearFloor = leftFloor || rightFloor || upFloor || downFloor;
           // Draw every blocked tile as a tangible rock block (never a flat void).
           // Far-from-passage tiles are darker, but still clearly "solid wall".
-          const blockShadeBase = nearFloor ? 0.56 : 0.44;
-          const blockShade = blockShadeBase + (((n >> 3) & 7) - 3) * 0.012;
-          const br = Math.floor(48 * blockShade + 9);
-          const bg = Math.floor(39 * blockShade + 8);
-          const bb = Math.floor(34 * blockShade + 10);
+          const blockShadeBase = nearFloor ? 0.72 : 0.64;
+          const blockShade = blockShadeBase + (((n >> 3) & 7) - 3) * 0.014;
+          const br = Math.floor(64 * blockShade + 14);
+          const bg = Math.floor(56 * blockShade + 12);
+          const bb = Math.floor(52 * blockShade + 14);
           ctx.fillStyle = `rgb(${br}, ${bg}, ${bb})`;
           ctx.fillRect(sx, sy, CONFIG.tileSize, CONFIG.tileSize);
 
           // Raised stone block bevel so blocked tiles read as solid obstacles.
-          const topEdgeAlpha = nearFloor ? 0.055 : 0.042;
-          const sideEdgeAlpha = nearFloor ? 0.048 : 0.038;
-          const bottomEdgeAlpha = nearFloor ? 0.19 : 0.165;
+          const topEdgeAlpha = nearFloor ? 0.12 : 0.09;
+          const sideEdgeAlpha = nearFloor ? 0.11 : 0.085;
+          const bottomEdgeAlpha = nearFloor ? 0.28 : 0.24;
           ctx.fillStyle = `rgba(255,255,255,${topEdgeAlpha})`;
           ctx.fillRect(sx, sy, CONFIG.tileSize, 2);
           ctx.fillStyle = `rgba(255,255,255,${sideEdgeAlpha})`;
@@ -19042,15 +20319,24 @@
           ctx.fillRect(sx + CONFIG.tileSize - 2, sy, 2, CONFIG.tileSize);
 
           if (downFloor) {
-            ctx.fillStyle = "rgba(255, 241, 210, 0.06)";
+            ctx.fillStyle = "rgba(255, 241, 210, 0.11)";
             ctx.fillRect(sx + 2, sy + CONFIG.tileSize - 4, CONFIG.tileSize - 4, 2);
           } else if (upFloor) {
-            ctx.fillStyle = "rgba(0,0,0,0.12)";
+            ctx.fillStyle = "rgba(0,0,0,0.16)";
             ctx.fillRect(sx + 2, sy + 2, CONFIG.tileSize - 4, 2);
           }
-          ctx.strokeStyle = nearFloor ? "rgba(0,0,0,0.24)" : "rgba(0,0,0,0.28)";
+          ctx.strokeStyle = nearFloor ? "rgba(0,0,0,0.3)" : "rgba(0,0,0,0.34)";
           ctx.lineWidth = 1;
           ctx.strokeRect(sx + 0.5, sy + 0.5, CONFIG.tileSize - 1, CONFIG.tileSize - 1);
+
+          // Stone block seam line to make these read as rigid solid obstacles.
+          const seamY = sy + Math.floor(CONFIG.tileSize * 0.53);
+          ctx.strokeStyle = nearFloor ? "rgba(18, 14, 12, 0.2)" : "rgba(18, 14, 12, 0.24)";
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(sx + 2, seamY + 0.5);
+          ctx.lineTo(sx + CONFIG.tileSize - 2, seamY + 0.5);
+          ctx.stroke();
 
           // Subtle crack texture so large blocked regions still read as cave wall mass.
           if (((n >> 1) & 15) === 3) {
@@ -19708,6 +20994,39 @@
     return BIOME_PICK_WEIGHTS.length - 1;
   }
 
+  function pickStarterBiome(rng) {
+    const mushroomId = BIOMES.findIndex((biome) => biome?.key === BIOME_KEYS.mushroom);
+    const starterMushroomChance = 0.0035; // Super rare starter biome roll.
+    if (mushroomId >= 0 && rng() < starterMushroomChance) {
+      return mushroomId;
+    }
+
+    let total = 0;
+    for (let i = 0; i < BIOME_PICK_WEIGHTS.length; i += 1) {
+      if (i === mushroomId) continue;
+      total += Math.max(0, Number(BIOME_PICK_WEIGHTS[i]) || 0);
+    }
+    if (!(total > 0)) {
+      return pickBiome(rng);
+    }
+
+    let roll = rng() * total;
+    for (let i = 0; i < BIOME_PICK_WEIGHTS.length; i += 1) {
+      if (i === mushroomId) continue;
+      const weight = Math.max(0, Number(BIOME_PICK_WEIGHTS[i]) || 0);
+      if (weight <= 0) continue;
+      roll -= weight;
+      if (roll <= 0) {
+        return i;
+      }
+    }
+
+    for (let i = 0; i < BIOMES.length; i += 1) {
+      if (i !== mushroomId) return i;
+    }
+    return 0;
+  }
+
   function getSurfaceBiomeIdAtTile(world, tx, ty) {
     if (!world || !Array.isArray(world.biomeGrid)) return 0;
     if (!inBounds(tx, ty, world.size)) return 0;
@@ -19745,6 +21064,44 @@
     return getSurfaceBiomeIdAtTile(world, Math.floor(island.x), Math.floor(island.y));
   }
 
+  function getIslandShapeRatioAtPoint(island, px, py) {
+    if (!island || !Number.isFinite(px) || !Number.isFinite(py)) return Infinity;
+    const radius = Math.max(0.1, Number(island.radius) || 0);
+    const cx = Number(island.x) || 0;
+    const cy = Number(island.y) || 0;
+    const stretchX = clamp(Number(island.shapeStretchX) || 1, 0.7, 1.45);
+    const stretchY = clamp(Number(island.shapeStretchY) || 1, 0.7, 1.45);
+    const cosRot = Number.isFinite(island.shapeCosRot) ? island.shapeCosRot : 1;
+    const sinRot = Number.isFinite(island.shapeSinRot) ? island.shapeSinRot : 0;
+    const localX = (((px - cx) * cosRot) + ((py - cy) * sinRot)) / (radius * stretchX);
+    const localY = ((-(px - cx) * sinRot) + ((py - cy) * cosRot)) / (radius * stretchY);
+    const radial = Math.hypot(localX, localY);
+    const radialSq = (localX * localX) + (localY * localY);
+    const lobeA = clamp(Number(island.shapeLobeA) || 0, -0.36, 0.36);
+    const lobeB = clamp(Number(island.shapeLobeB) || 0, -0.3, 0.3);
+    const lobeC = clamp(Number(island.shapeLobeC) || 0, -0.24, 0.24);
+    let boundary = 1
+      + lobeA * ((localX * localX) - (localY * localY))
+      + lobeB * (2 * localX * localY)
+      + lobeC * (radialSq - 0.55);
+    boundary = clamp(boundary, 0.62, 1.48);
+    return radial / Math.max(0.35, boundary);
+  }
+
+  function getIslandSignedDistanceAtPoint(island, px, py) {
+    if (!island) return Infinity;
+    const ratio = getIslandShapeRatioAtPoint(island, px, py);
+    if (!Number.isFinite(ratio)) return Infinity;
+    const radius = Math.max(1, Number(island.radius) || 1);
+    return (ratio - 1) * radius;
+  }
+
+  function getIslandFalloffAtPoint(island, px, py) {
+    const ratio = getIslandShapeRatioAtPoint(island, px, py);
+    if (!Number.isFinite(ratio)) return 0;
+    return clamp(1 - ratio, 0, 1);
+  }
+
   function getIslandForTile(world, tx, ty) {
     if (!world || !Array.isArray(world.islands) || !Number.isFinite(tx) || !Number.isFinite(ty)) return null;
     const px = tx + 0.5;
@@ -19753,7 +21110,7 @@
     let bestDelta = Infinity;
     for (const island of world.islands) {
       if (!island) continue;
-      const delta = Math.hypot(px - island.x, py - island.y) - island.radius;
+      const delta = getIslandSignedDistanceAtPoint(island, px, py);
       if (delta <= 0 && delta < bestDelta) {
         best = island;
         bestDelta = delta;
@@ -19779,7 +21136,7 @@
       let bestScore = Infinity;
       for (const island of world.islands) {
         if (!island) continue;
-        const score = Math.hypot(px - island.x, py - island.y) - island.radius;
+        const score = getIslandSignedDistanceAtPoint(island, px, py);
         if (score < bestScore) {
           closest = island;
           bestScore = score;
@@ -19816,6 +21173,10 @@
 
   function isGuardianMonsterType(type) {
     return type === "polar_bear" || type === "lion" || type === "wolf";
+  }
+
+  function shouldBlockSpawnIslandDayGuardian(world, island) {
+    return !!(island && isSpawnIsland(world, island) && !state.isNight);
   }
 
   function isDayImmuneMonster(monster) {
@@ -19873,7 +21234,7 @@
     for (let i = 0; i < islands.length; i += 1) {
       const island = islands[i];
       if (!island) continue;
-      const delta = Math.hypot(px - island.x, py - island.y) - island.radius;
+      const delta = getIslandSignedDistanceAtPoint(island, px, py);
       if (delta <= 0 && delta < bestDelta) {
         bestDelta = delta;
         bestIndex = i;
@@ -19963,10 +21324,7 @@
         for (let i = 0; i < world.islands.length; i += 1) {
           const island = world.islands[i];
           if (!island) continue;
-          const dx = x - island.x;
-          const dy = y - island.y;
-          const dist = Math.hypot(dx, dy);
-          const falloff = clamp(1 - dist / island.radius, 0, 1);
+          const falloff = getIslandFalloffAtPoint(island, x + 0.5, y + 0.5);
           if (falloff > base) {
             base = falloff;
             bestIndex = i;
@@ -20536,6 +21894,13 @@
       radius: island.radius,
       biomeId: island.biomeId,
       starter: !!island.starter,
+      shapeStretchX: island.shapeStretchX,
+      shapeStretchY: island.shapeStretchY,
+      shapeLobeA: island.shapeLobeA,
+      shapeLobeB: island.shapeLobeB,
+      shapeLobeC: island.shapeLobeC,
+      shapeCosRot: island.shapeCosRot,
+      shapeSinRot: island.shapeSinRot,
     }));
 
     const deltas = [];
@@ -22267,7 +23632,8 @@
     const islands = [];
     const islandScale = Math.max(1, size / 160);
     const baseCount = Math.floor((20 + rng() * 12) * Math.pow(islandScale, 1.08));
-    const requiredBiomes = BIOMES.map((_, index) => index).filter((id) => id !== 0);
+    const starterBiomeId = pickStarterBiome(rng);
+    const requiredBiomes = BIOMES.map((_, index) => index).filter((id) => id !== starterBiomeId);
     const islandCount = Math.max(baseCount, requiredBiomes.length + 1);
 
     function getIslandSpacingMetrics(x, y, radius, minGapScale = 0.82) {
@@ -22320,18 +23686,82 @@
       return null;
     }
 
+    function createIslandShapeProfile() {
+      const styleRoll = rng();
+      const rotation = rng() * Math.PI * 2;
+      let stretchX = 1;
+      let stretchY = 1;
+      let lobeA = 0;
+      let lobeB = 0;
+      let lobeC = 0;
+      let shapeStyle = "round";
+
+      if (styleRoll < 0.24) {
+        shapeStyle = "round";
+        stretchX = 0.94 + rng() * 0.14;
+        stretchY = 0.94 + rng() * 0.14;
+        lobeA = (rng() - 0.5) * 0.08;
+        lobeB = (rng() - 0.5) * 0.08;
+        lobeC = (rng() - 0.5) * 0.05;
+      } else if (styleRoll < 0.54) {
+        shapeStyle = "oval";
+        const stretch = 1.12 + rng() * 0.22;
+        if (rng() < 0.5) {
+          stretchX = stretch;
+          stretchY = clamp(2 - stretch, 0.76, 1.18);
+        } else {
+          stretchY = stretch;
+          stretchX = clamp(2 - stretch, 0.76, 1.18);
+        }
+        lobeA = (rng() - 0.5) * 0.11;
+        lobeB = (rng() - 0.5) * 0.1;
+        lobeC = (rng() - 0.5) * 0.06;
+      } else if (styleRoll < 0.82) {
+        shapeStyle = "lumpy";
+        stretchX = 0.86 + rng() * 0.34;
+        stretchY = 0.86 + rng() * 0.34;
+        lobeA = (rng() - 0.5) * 0.26;
+        lobeB = (rng() - 0.5) * 0.2;
+        lobeC = (rng() - 0.5) * 0.12;
+      } else {
+        shapeStyle = "rugged";
+        stretchX = 0.9 + rng() * 0.28;
+        stretchY = 0.84 + rng() * 0.3;
+        lobeA = (rng() - 0.5) * 0.2;
+        lobeB = (rng() - 0.5) * 0.16;
+        lobeC = (rng() - 0.5) * 0.16;
+      }
+
+      return {
+        shapeStyle,
+        shapeRotation: rotation,
+        shapeCosRot: Math.cos(rotation),
+        shapeSinRot: Math.sin(rotation),
+        shapeStretchX: clamp(stretchX, 0.74, 1.42),
+        shapeStretchY: clamp(stretchY, 0.74, 1.42),
+        shapeLobeA: clamp(lobeA, -0.32, 0.32),
+        shapeLobeB: clamp(lobeB, -0.26, 0.26),
+        shapeLobeC: clamp(lobeC, -0.2, 0.2),
+      };
+    }
+
+    function createIslandRecord(x, y, radius, biomeId, starter = false) {
+      return {
+        x,
+        y,
+        radius,
+        biomeId,
+        starter: !!starter,
+        ...createIslandShapeProfile(),
+      };
+    }
+
     const starterRadius = 18 + rng() * 6;
     const starterPos = {
       x: size * 0.5 + (rng() - 0.5) * size * 0.1,
       y: size * 0.5 + (rng() - 0.5) * size * 0.1,
     };
-    islands.push({
-      x: starterPos.x,
-      y: starterPos.y,
-      radius: starterRadius,
-      biomeId: 0,
-      starter: true,
-    });
+    islands.push(createIslandRecord(starterPos.x, starterPos.y, starterRadius, starterBiomeId, true));
 
     for (const biomeId of requiredBiomes) {
       const baseRadius = 8 + rng() * 10;
@@ -22340,13 +23770,7 @@
         const radius = Math.max(6, baseRadius - shrink * 1.3);
         const pos = placeIsland(radius);
         if (!pos) continue;
-        islands.push({
-          x: pos.x,
-          y: pos.y,
-          radius,
-          biomeId,
-          starter: false,
-        });
+        islands.push(createIslandRecord(pos.x, pos.y, radius, biomeId, false));
         placed = true;
         break;
       }
@@ -22364,13 +23788,7 @@
         const y = clamp(starterPos.y + Math.sin(angle) * ring, radius + edgePad, size - radius - edgePad);
         const metrics = getIslandSpacingMetrics(x, y, radius, 0.75);
         if (metrics.minGap < -1.2) continue;
-        islands.push({
-          x,
-          y,
-          radius,
-          biomeId,
-          starter: false,
-        });
+        islands.push(createIslandRecord(x, y, radius, biomeId, false));
         break;
       }
     }
@@ -22379,13 +23797,7 @@
       const radius = 6 + rng() * 11;
       const pos = placeIsland(radius);
       if (!pos) continue;
-      islands.push({
-        x: pos.x,
-        y: pos.y,
-        radius,
-        biomeId: pickBiome(rng),
-        starter: false,
-      });
+      islands.push(createIslandRecord(pos.x, pos.y, radius, pickBiome(rng), false));
     }
 
     function getBiomeIslandCounts() {
@@ -22426,18 +23838,13 @@
     function ensureBiomeIslandCoverage() {
       const lockedIslands = new Set(islands.filter((island) => island?.starter));
       let biomeCounts = getBiomeIslandCounts();
-      for (let biomeId = 1; biomeId < BIOMES.length; biomeId += 1) {
+      for (let biomeId = 0; biomeId < BIOMES.length; biomeId += 1) {
+        if (biomeId === starterBiomeId) continue;
         if (biomeCounts[biomeId] > 0) continue;
         const radius = 6.4 + rng() * 3.4;
         const pos = placeIsland(radius, 0.72);
         if (pos) {
-          const island = {
-            x: pos.x,
-            y: pos.y,
-            radius,
-            biomeId,
-            starter: false,
-          };
+          const island = createIslandRecord(pos.x, pos.y, radius, biomeId, false);
           islands.push(island);
           lockedIslands.add(island);
           biomeCounts = getBiomeIslandCounts();
@@ -22449,13 +23856,13 @@
           const edgePad = forcedRadius + 12;
           const angle = biomeId * 2.3999632297 + rng() * 0.35;
           const ring = Math.max(size * 0.23, forcedRadius + 18);
-          const forcedIsland = {
-            x: clamp(starterPos.x + Math.cos(angle) * ring, edgePad, size - edgePad),
-            y: clamp(starterPos.y + Math.sin(angle) * ring, edgePad, size - edgePad),
-            radius: forcedRadius,
+          const forcedIsland = createIslandRecord(
+            clamp(starterPos.x + Math.cos(angle) * ring, edgePad, size - edgePad),
+            clamp(starterPos.y + Math.sin(angle) * ring, edgePad, size - edgePad),
+            forcedRadius,
             biomeId,
-            starter: false,
-          };
+            false
+          );
           islands.push(forcedIsland);
           lockedIslands.add(forcedIsland);
           biomeCounts = getBiomeIslandCounts();
@@ -22591,10 +23998,7 @@
         let bestIndex = -1;
         for (let i = 0; i < islands.length; i += 1) {
           const island = islands[i];
-          const dx = x - island.x;
-          const dy = y - island.y;
-          const dist = Math.hypot(dx, dy);
-          const falloff = clamp(1 - dist / island.radius, 0, 1);
+          const falloff = getIslandFalloffAtPoint(island, x + 0.5, y + 0.5);
           if (falloff > base) {
             base = falloff;
             bestIndex = i;
@@ -23327,23 +24731,23 @@
     let msg = String(text).trim();
     if (!msg) return "";
     const exactMap = new Map([
-      ["Press E to enter house", "ⓔ Enter house"],
-      ["Press E to leave house", "ⓔ Exit house"],
-      ["Press E to open chest", "ⓔ Open chest"],
-      ["Press E to sleep", "ⓔ Sleep"],
-      ["Press E to set dock checkpoint", "ⓔ Set dock spawn"],
-      ["Enter Cave (E)", "ⓔ Enter cave"],
-      ["Exit to Surface (E)", "ⓔ Exit cave"],
+      ["Press E to enter house", "Enter house (E)"],
+      ["Press E to leave house", "Exit house (E)"],
+      ["Press E to open chest", "Open chest (E)"],
+      ["Press E to sleep", "Sleep (E)"],
+      ["Press E to set dock checkpoint", "Set dock spawn (E)"],
+      ["Enter Cave (E)", "Enter cave (E)"],
+      ["Exit to Surface (E)", "Exit cave (E)"],
       ["Explore cave passages", "Explore passages"],
-      ["Follow the lit passage to exit", "Follow light → exit"],
-      ["Press Space / Tap Attack", "⚔ Attack"],
+      ["Follow the lit passage to exit", "Follow lit passage to exit"],
+      ["Press Space / Tap Attack", "Attack (Space)"],
       ["Crafting Bench", "Craft bench"],
       ["Not enough resources", "Need mats"],
       ["Missing required upgrade", "Need prior tier"],
       ["Build a small house first", "Need small house"],
       ["Upgrade to medium house first", "Need medium house"],
       ["Inventory full", "Bag full"],
-      ["Inventory full: overflow dropped nearby", "Bag full • dropped nearby"],
+      ["Inventory full: overflow dropped nearby", "Bag full, dropped nearby"],
       ["Checkpoint set at dock", "Dock spawn set"],
       ["Checkpoint unchanged", "Spawn unchanged"],
       ["Invalid room code", "Bad room code"],
@@ -23354,21 +24758,27 @@
       ["Chest open", "Chest"],
       ["Station open", "Station"],
       ["Repairing abandoned ship", "Repairing ship"],
-      ["Press E to board abandoned ship", "ⓔ Board ship"],
-      ["Press E to repair abandoned ship", "ⓔ Repair ship"],
-      ["WASD/Stick to steer, E to disembark", "🧭 Steer • ⓔ Exit"],
-      ["Passenger, press E to disembark", "Passenger • ⓔ Exit"],
+      ["Press E to board abandoned ship", "Board ship (E)"],
+      ["Press E to repair abandoned ship", "Repair ship (E)"],
+      ["WASD/Stick to steer, E to disembark", "Steer boat (WASD), exit (E)"],
+      ["Passenger, press E to disembark", "Passenger, exit (E)"],
       ["Stand near a crafting bench", "Move to bench"],
     ]);
     if (exactMap.has(msg)) return exactMap.get(msg);
+    const raw = msg;
+    if (/^Press Space \/ Tap Attack to /i.test(raw)) {
+      msg = `${raw.replace(/^Press Space \/ Tap Attack to /i, "").trim()} (Space)`;
+    } else if (/^Press Space \/ Tap Attack$/i.test(raw)) {
+      msg = "Attack (Space)";
+    } else if (/^Press E to /i.test(raw)) {
+      msg = `${raw.replace(/^Press E to /i, "").trim()} (E)`;
+    } else if (/^(.+)\(E\)$/i.test(raw)) {
+      msg = raw.trim();
+    } else {
+      msg = raw;
+    }
     msg = msg
-      .replace(/^Press E to /i, "ⓔ ")
-      .replace(/^Press Space \/ Tap Attack to /i, "⚔ ")
-      .replace(/^Press E to use /i, "ⓔ ")
-      .replace(/^Press E to inspect /i, "ⓔ Inspect ")
-      .replace(/^Press E to open /i, "ⓔ Open ")
-      .replace(/^Press E to enter /i, "ⓔ Enter ")
-      .replace(/^Press E to leave /i, "ⓔ Exit ")
+      .replace(/[ⓔ⚔🧭•→]/g, " ")
       .replace(/\bInventory\b/gi, "Bag")
       .replace(/\bresources\b/gi, "mats")
       .replace(/\babandoned ship\b/gi, "ship")
@@ -23405,13 +24815,13 @@
     const normalized = value.toLowerCase();
     if (normalized.includes("fail") || normalized.includes("error")) {
       saveStatus.dataset.state = "error";
-      saveStatus.textContent = "!";
+      saveStatus.textContent = "Save failed";
     } else if (normalized.includes("saving")) {
       saveStatus.dataset.state = "saving";
-      saveStatus.textContent = "…";
+      saveStatus.textContent = "Saving game";
     } else {
       saveStatus.dataset.state = "saved";
-      saveStatus.textContent = "✓";
+      saveStatus.textContent = "Saved game";
     }
   }
 
@@ -23531,6 +24941,9 @@
     }
     if (newRunBtn) {
       newRunBtn.disabled = netIsClientReady();
+    }
+    if (restartSeedBtn) {
+      restartSeedBtn.disabled = netIsClientReady();
     }
   }
 
@@ -23755,6 +25168,7 @@
     const surface = state.surfaceWorld || state.world;
     if (!surface) return;
     const seedKey = getSeedSaveKey(surface.seed);
+    const playerUnlocks = normalizeUnlocks(state.player.unlocks);
 
     const surfaceState = serializePersistedWorldState(surface, {
       includeAnimals: true,
@@ -23770,7 +25184,8 @@
         x: state.player.x,
         y: state.player.y,
         toolTier: state.player.toolTier,
-        unlocks: normalizeUnlocks(state.player.unlocks),
+        unlocks: playerUnlocks,
+        armorUnlocks: serializeArmorUnlocks(playerUnlocks),
         checkpoint: normalizeCheckpoint(state.player.checkpoint),
         maxHp: state.player.maxHp,
         hp: state.player.hp,
@@ -23914,6 +25329,7 @@
       const player = data.player && typeof data.player === "object"
         ? data.player
         : Object.create(null);
+      const migratedUnlocks = applySavedArmorUnlocks(player.unlocks, player.armorUnlocks);
       return {
         ...data,
         version: SAVE_VERSION,
@@ -23922,6 +25338,8 @@
         caveV2: data.caveV2 && typeof data.caveV2 === "object" ? data.caveV2 : null,
         player: {
           ...player,
+          unlocks: migratedUnlocks,
+          armorUnlocks: serializeArmorUnlocks(migratedUnlocks),
           inCave: !!player.inCave,
           caveId: Number.isInteger(player.caveId) ? player.caveId : null,
           caveLayer: normalizeCaveLayerIndex(player.caveLayer ?? 0),
@@ -23941,6 +25359,8 @@
           x: data.player?.x ?? 0,
           y: data.player?.y ?? 0,
           toolTier: 1,
+          unlocks: applySavedArmorUnlocks(data.player?.unlocks, data.player?.armorUnlocks),
+          armorUnlocks: serializeArmorUnlocks(applySavedArmorUnlocks(data.player?.unlocks, data.player?.armorUnlocks)),
           maxHp: 100,
           hp: 100,
           inCave: false,
@@ -23971,6 +25391,8 @@
           x: data.player?.x ?? 0,
           y: data.player?.y ?? 0,
           toolTier: data.player?.toolTier ?? 1,
+          unlocks: applySavedArmorUnlocks(data.player?.unlocks, data.player?.armorUnlocks),
+          armorUnlocks: serializeArmorUnlocks(applySavedArmorUnlocks(data.player?.unlocks, data.player?.armorUnlocks)),
           maxHp: 100,
           hp: 100,
           inCave: false,
@@ -24001,6 +25423,8 @@
           x: data.player?.x ?? 0,
           y: data.player?.y ?? 0,
           toolTier: data.player?.toolTier ?? 1,
+          unlocks: applySavedArmorUnlocks(data.player?.unlocks, data.player?.armorUnlocks),
+          armorUnlocks: serializeArmorUnlocks(applySavedArmorUnlocks(data.player?.unlocks, data.player?.armorUnlocks)),
           maxHp: data.player?.maxHp ?? 100,
           hp: data.player?.hp ?? 100,
           inCave: data.player?.inCave ?? false,
@@ -24031,6 +25455,8 @@
           x: data.player?.x ?? 0,
           y: data.player?.y ?? 0,
           toolTier: data.player?.toolTier ?? 1,
+          unlocks: applySavedArmorUnlocks(data.player?.unlocks, data.player?.armorUnlocks),
+          armorUnlocks: serializeArmorUnlocks(applySavedArmorUnlocks(data.player?.unlocks, data.player?.armorUnlocks)),
           maxHp: data.player?.maxHp ?? 100,
           hp: data.player?.hp ?? 100,
           inCave: data.player?.inCave ?? false,
@@ -24065,7 +25491,8 @@
         x: data.player?.x ?? 0,
         y: data.player?.y ?? 0,
         toolTier: data.player?.toolTier ?? 1,
-        unlocks: normalizeUnlocks(data.player?.unlocks),
+        unlocks: applySavedArmorUnlocks(data.player?.unlocks, data.player?.armorUnlocks),
+        armorUnlocks: serializeArmorUnlocks(applySavedArmorUnlocks(data.player?.unlocks, data.player?.armorUnlocks)),
         checkpoint: normalizeCheckpoint(data.player?.checkpoint),
         maxHp: data.player?.maxHp ?? 100,
         hp: data.player?.hp ?? 100,
@@ -24889,6 +26316,7 @@
   function isStructureValidOnLoad(world, entry, bridgeSet, anchoredBridgeSet = null) {
     if (!entry || !inBounds(entry.tx, entry.ty, world.size)) return false;
     if (REMOVED_STRUCTURE_TYPES.has(entry.type)) return false;
+    if (!STRUCTURE_DEFS[entry.type]) return false;
     const idx = tileIndex(entry.tx, entry.ty, world.size);
     const baseLand = world.tiles[idx] === 1;
 
@@ -25118,6 +26546,33 @@
       if (lower.includes("small")) return "small_house";
     }
     return type;
+  }
+
+  function inferHouseTypeFromMeta(houseMeta) {
+    if (!houseMeta || typeof houseMeta !== "object") return null;
+    const tier = normalizeLegacyStructureType(houseMeta.tier);
+    if (isHouseType(tier)) {
+      return tier === "hut" ? "small_house" : tier;
+    }
+    const width = Number(houseMeta.width);
+    const height = Number(houseMeta.height);
+    if (width >= 8 || height >= 6) return "large_house";
+    if (width >= 6 || height >= 5) return "medium_house";
+    if (width >= 1 || height >= 1) return "small_house";
+    return null;
+  }
+
+  function resolveStructureType(type, meta = null) {
+    const normalized = normalizeLegacyStructureType(type);
+    if (isHouseType(normalized)) {
+      return normalized === "hut" ? "small_house" : normalized;
+    }
+    if (typeof normalized === "string" && STRUCTURE_DEFS[normalized]) {
+      return normalized;
+    }
+    const inferredHouseType = inferHouseTypeFromMeta(meta?.house);
+    if (inferredHouseType) return inferredHouseType;
+    return normalized;
   }
 
   function getStructureFootprint(type) {
@@ -25588,9 +27043,10 @@
   }
 
   function addStructure(type, tx, ty, options = {}) {
+    const resolvedType = resolveStructureType(type, options.meta);
     const structure = {
       id: state.structures.length,
-      type,
+      type: resolvedType,
       tx,
       ty,
       removed: false,
@@ -27439,6 +28895,7 @@
     state.shipControlSendTimer = 0;
     state.nearShip = null;
     state.debugBoatPlacePending = false;
+    state.debugLinkedCavePlacement = null;
     state.ambientFish = [];
     state.ambientFishSpawnTimer = 0;
 
@@ -27620,7 +29077,7 @@
         const anchoredBridgeSet = getAnchoredBridgeNetwork(world, bridgeSet);
         for (const entry of orderedStructures) {
           if (!entry) continue;
-          const normalized = { ...entry, type: normalizeLegacyStructureType(entry.type) };
+          const normalized = { ...entry, type: resolveStructureType(entry.type, entry.meta) };
           if (!isStructureValidOnLoad(world, normalized, bridgeSet, anchoredBridgeSet)) continue;
           const storageSize = getStorageSizeForStructureType(normalized.type, null);
           clearResourcesForFootprint(world, normalized.type, normalized.tx, normalized.ty);
@@ -27651,7 +29108,7 @@
         x: caveV2SavedReturnPos?.x ?? preparedSave.player?.x ?? (spawnTile.x + 0.5) * CONFIG.tileSize,
         y: caveV2SavedReturnPos?.y ?? preparedSave.player?.y ?? (spawnTile.y + 0.5) * CONFIG.tileSize,
         toolTier: preparedSave.player?.toolTier ?? 1,
-        unlocks: normalizeUnlocks(preparedSave.player?.unlocks),
+        unlocks: applySavedArmorUnlocks(preparedSave.player?.unlocks, preparedSave.player?.armorUnlocks),
         checkpoint: normalizeCheckpoint(preparedSave.player?.checkpoint) ?? {
           x: (spawnTile.x + 0.5) * CONFIG.tileSize,
           y: (spawnTile.y + 0.5) * CONFIG.tileSize,
@@ -27763,6 +29220,7 @@
       state.shipControlSendTimer = 0;
       state.nearShip = null;
       state.debugBoatPlacePending = false;
+      state.debugLinkedCavePlacement = null;
       state.dirty = (!layoutCompatible)
         || villagesAdded
         || villageBlacksmithsAdded > 0
@@ -27931,7 +29389,7 @@
       const pick = PICKAXE_TIER_DATA[level] || PICKAXE_TIER_DATA[2];
       return { pickaxeTier: level, label: pick.name };
     }
-    if (resource.type === "biomeStone") return { pickaxeTier: 4, label: "Gold Pickaxe" };
+    if (resource.type === "biomeStone") return { pickaxeTier: 6, label: "Diamond Pickaxe" };
     return null;
   }
 
@@ -30551,114 +32009,7 @@
     if (!iconCtx) return;
     iconCtx.clearRect(0, 0, size, size);
     const frameCtx = iconCtx;
-    const visual = ITEM_VISUALS[itemId] || ITEM_VISUALS.wood;
-    const border = visual.border || "#9dbbd9";
-    const bg = visual.bg || "#355372";
-    const shellGradient = frameCtx.createLinearGradient(0, 0, 0, size);
-    shellGradient.addColorStop(0, tintColor(bg, -0.25));
-    shellGradient.addColorStop(1, tintColor(bg, -0.48));
-    drawRoundedRect(frameCtx, 0.8, 0.8, size - 1.6, size - 1.6, 7);
-    frameCtx.fillStyle = shellGradient;
-    frameCtx.fill();
-
-    const faceGradient = frameCtx.createLinearGradient(0, 2, 0, size - 2);
-    faceGradient.addColorStop(0, tintColor(bg, 0.26));
-    faceGradient.addColorStop(0.5, tintColor(bg, 0.04));
-    faceGradient.addColorStop(1, tintColor(bg, -0.22));
-    drawRoundedRect(frameCtx, 1.6, 1.6, size - 3.2, size - 3.2, 6.2);
-    frameCtx.fillStyle = faceGradient;
-    frameCtx.fill();
-
-    const edgeGloss = frameCtx.createLinearGradient(0, 0, size, size);
-    edgeGloss.addColorStop(0, "rgba(255,255,255,0.22)");
-    edgeGloss.addColorStop(0.5, "rgba(255,255,255,0.04)");
-    edgeGloss.addColorStop(1, "rgba(255,255,255,0)");
-    frameCtx.fillStyle = edgeGloss;
-    drawRoundedRect(frameCtx, 2.1, 2.1, size - 4.2, size - 4.2, 5.3);
-    frameCtx.fill();
-
-    frameCtx.save();
-    drawRoundedRect(frameCtx, 1.1, 1.1, size - 2.2, size - 2.2, 6);
-    frameCtx.clip();
-    const seed = Array.from(itemId || "item").reduce(
-      (acc, ch, idx) => (((acc * 33) ^ (ch.charCodeAt(0) + idx * 17)) >>> 0),
-      2166136261
-    );
-    const seededNoise = (n) => {
-      const x = Math.sin((seed + n * 12.9898) * 0.013) * 43758.5453;
-      return x - Math.floor(x);
-    };
-    const noiseCount = Math.max(12, Math.floor(size * 0.95));
-    for (let i = 0; i < noiseCount; i += 1) {
-      const px = 1 + seededNoise(i * 1.37) * (size - 2);
-      const py = 1 + seededNoise(i * 2.11) * (size - 2);
-      const dot = 0.45 + seededNoise(i * 3.17) * 0.8;
-      frameCtx.fillStyle = `rgba(255,255,255,${0.02 + seededNoise(i * 2.53) * 0.05})`;
-      frameCtx.fillRect(px, py, dot, dot);
-    }
-    const sheen = frameCtx.createLinearGradient(0, 0, 0, size * 0.72);
-    sheen.addColorStop(0, "rgba(255,255,255,0.28)");
-    sheen.addColorStop(1, "rgba(255,255,255,0)");
-    frameCtx.fillStyle = sheen;
-    frameCtx.fillRect(0, 0, size, size * 0.72);
-    const rimShadow = frameCtx.createRadialGradient(
-      size * 0.5,
-      size * 0.56,
-      size * 0.18,
-      size * 0.5,
-      size * 0.56,
-      size * 0.72
-    );
-    rimShadow.addColorStop(0, "rgba(0,0,0,0)");
-    rimShadow.addColorStop(1, "rgba(0,0,0,0.22)");
-    frameCtx.fillStyle = rimShadow;
-    frameCtx.fillRect(0, 0, size, size);
-
-    const cornerShade = frameCtx.createRadialGradient(
-      size * 0.92,
-      size * 0.88,
-      size * 0.03,
-      size * 0.92,
-      size * 0.88,
-      size * 0.34,
-    );
-    cornerShade.addColorStop(0, "rgba(0,0,0,0.16)");
-    cornerShade.addColorStop(1, "rgba(0,0,0,0)");
-    frameCtx.fillStyle = cornerShade;
-    frameCtx.fillRect(0, 0, size, size);
-    frameCtx.restore();
-
-    drawRoundedRect(frameCtx, 0.8, 0.8, size - 1.6, size - 1.6, 7);
-    frameCtx.strokeStyle = tintColor(border, -0.32);
-    frameCtx.lineWidth = 1.15;
-    frameCtx.stroke();
-    drawRoundedRect(frameCtx, 1.6, 1.6, size - 3.2, size - 3.2, 6.2);
-    frameCtx.strokeStyle = tintColor(border, -0.22);
-    frameCtx.lineWidth = 0.9;
-    frameCtx.stroke();
-    drawRoundedRect(frameCtx, 2.1, 2.1, size - 4.2, size - 4.2, 5);
-    frameCtx.strokeStyle = tintColor(border, 0.08);
-    frameCtx.lineWidth = 0.9;
-    frameCtx.stroke();
-    drawRoundedRect(frameCtx, 3.15, 3.15, size - 6.3, size - 6.3, 4.3);
-    frameCtx.strokeStyle = "rgba(255,255,255,0.2)";
-    frameCtx.lineWidth = 0.75;
-    frameCtx.stroke();
-
-    if (size >= 24) {
-      frameCtx.fillStyle = "rgba(255, 255, 255, 0.25)";
-      const studR = Math.max(0.6, size * 0.028);
-      const inset = 4.2;
-      frameCtx.beginPath();
-      frameCtx.arc(inset, inset, studR, 0, Math.PI * 2);
-      frameCtx.arc(size - inset, inset, studR, 0, Math.PI * 2);
-      frameCtx.fill();
-      frameCtx.fillStyle = "rgba(0,0,0,0.18)";
-      frameCtx.beginPath();
-      frameCtx.arc(inset + 0.2, inset + 0.2, studR, 0, Math.PI * 2);
-      frameCtx.arc(size - inset + 0.2, inset + 0.2, studR, 0, Math.PI * 2);
-      frameCtx.fill();
-    }
+    // Render only the item glyph itself (no mini frame panel) so icons read clearly.
 
     const glyphCanvas = document.createElement("canvas");
     glyphCanvas.width = size;
@@ -32759,21 +34110,42 @@
     return recipe.id ? { [recipe.id]: qty } : {};
   }
 
-  function createRecipeItemChip(itemId, qty, met = false) {
+  function createRecipeItemChip(itemId, qty, met = false, availableQty = null) {
+    const requiredQty = Math.max(1, Number.isFinite(qty) ? Math.floor(qty) : Number(qty) || 1);
+    const hasAvailability = Number.isFinite(availableQty);
+    const normalizedAvailable = hasAvailability ? Math.max(0, Math.floor(availableQty)) : null;
+    const itemName = ITEMS[itemId]?.name ?? String(itemId || "").replace(/_/g, " ").trim() || "Item";
     const chip = document.createElement("span");
     chip.className = "recipe-cost-chip";
     if (met) chip.classList.add("met");
-    chip.setAttribute("aria-label", `${ITEMS[itemId]?.name ?? itemId} x${qty}`);
+    if (hasAvailability && !met) chip.classList.add("missing");
+    if (hasAvailability) {
+      chip.setAttribute("aria-label", `${itemName} ${normalizedAvailable}/${requiredQty}`);
+    } else {
+      chip.setAttribute("aria-label", `${itemName} x${requiredQty}`);
+    }
 
     const icon = document.createElement("img");
     icon.className = "recipe-cost-chip-icon";
-    icon.alt = ITEMS[itemId]?.name ?? itemId;
-    icon.src = getItemTextureUrl(itemId, 24);
+    icon.alt = itemName;
+    icon.src = getItemTextureUrl(itemId, 36);
+    icon.decoding = "async";
     chip.appendChild(icon);
+
+    const name = document.createElement("span");
+    name.className = "recipe-cost-chip-name";
+    name.textContent = itemName;
+    name.title = itemName;
+    chip.appendChild(name);
 
     const amount = document.createElement("span");
     amount.className = "recipe-cost-chip-qty";
-    amount.textContent = `×${qty}`;
+    if (hasAvailability) {
+      amount.textContent = `${normalizedAvailable}/${requiredQty}`;
+      amount.classList.add(met ? "met" : "missing");
+    } else {
+      amount.textContent = `×${requiredQty}`;
+    }
     chip.appendChild(amount);
     return chip;
   }
@@ -32788,13 +34160,16 @@
     for (let i = 0; i < inputEntries.length; i += 1) {
       const [itemId, qty] = inputEntries[i];
       if (!ITEMS[itemId]) continue;
+      const requiredQty = Math.max(1, Number.isFinite(qty) ? Math.floor(qty) : Number(qty) || 1);
+      const availableQty = countItem(inv, itemId);
+      const met = availableQty >= requiredQty;
       if (wroteInput) {
         const plus = document.createElement("span");
         plus.className = "recipe-flow-sep";
         plus.textContent = "+";
         container.appendChild(plus);
       }
-      container.appendChild(createRecipeItemChip(itemId, qty, countItem(inv, itemId) >= qty));
+      container.appendChild(createRecipeItemChip(itemId, requiredQty, met, availableQty));
       wroteInput = true;
     }
 
@@ -32809,13 +34184,14 @@
       for (let i = 0; i < outputEntries.length; i += 1) {
         const [itemId, qty] = outputEntries[i];
         if (!ITEMS[itemId]) continue;
+        const outputQty = Math.max(1, Number.isFinite(qty) ? Math.floor(qty) : Number(qty) || 1);
         if (wroteOutput) {
           const plus = document.createElement("span");
           plus.className = "recipe-flow-sep";
           plus.textContent = "+";
           container.appendChild(plus);
         }
-        container.appendChild(createRecipeItemChip(itemId, qty, false));
+        container.appendChild(createRecipeItemChip(itemId, outputQty, false));
         wroteOutput = true;
       }
     }
@@ -32828,13 +34204,16 @@
     for (let i = 0; i < entries.length; i += 1) {
       const [itemId, qty] = entries[i];
       if (!ITEMS[itemId]) continue;
+      const requiredQty = Math.max(1, Number.isFinite(qty) ? Math.floor(qty) : Number(qty) || 1);
+      const availableQty = countItem(inventory, itemId);
+      const met = availableQty >= requiredQty;
       if (wrote) {
         const plus = document.createElement("span");
         plus.className = "recipe-flow-sep";
         plus.textContent = "+";
         container.appendChild(plus);
       }
-      container.appendChild(createRecipeItemChip(itemId, qty, countItem(inventory, itemId) >= qty));
+      container.appendChild(createRecipeItemChip(itemId, requiredQty, met, availableQty));
       wrote = true;
     }
   }
@@ -32953,6 +34332,9 @@
       updateAllSlotUI();
       if (net.enabled) sendPlayerUpdate();
       markDirty();
+      if (!netIsClientReady()) {
+        saveGame();
+      }
       playSfx("ui");
       const armorPoints = getArmorPoints(state.player);
       if (SLIME_ARMOR.pieces.some((piece) => piece.unlock === unlockKey)) {
@@ -33719,6 +35101,59 @@
     markDirty();
   }
 
+  function getDebugCaveSpawnTile(world) {
+    if (!world || !state.player) return null;
+    const startTx = Math.floor(state.player.x / CONFIG.tileSize);
+    const startTy = Math.floor(state.player.y / CONFIG.tileSize);
+    return findOpenSurfaceTileNear(world, startTx, startTy, 10);
+  }
+
+  function findRuntimeCaveV2EntranceAtTile(world, tx, ty) {
+    if (!world || !Number.isInteger(tx) || !Number.isInteger(ty)) return null;
+    const entrances = getRuntimeCaveV2Entrances(world);
+    for (const entry of entrances) {
+      if (!entry) continue;
+      if (entry.tx === tx && entry.ty === ty) return entry;
+    }
+    return null;
+  }
+
+  function upsertRuntimeCaveV2Entrance(world, tx, ty, caveId = null) {
+    if (!CAVE_V2_ENABLED || !world || !Number.isInteger(tx) || !Number.isInteger(ty)) return null;
+    const entrances = getRuntimeCaveV2Entrances(world);
+    const key = buildCaveV2EntranceSurfaceKey(world, tx, ty);
+    let entry = findRuntimeCaveV2EntranceAtTile(world, tx, ty);
+    if (!entry) {
+      entry = {
+        tx,
+        ty,
+        key,
+        caveId: caveId || getCaveV2EntranceStableId(world, tx, ty),
+      };
+      entrances.push(entry);
+      return entry;
+    }
+    entry.tx = tx;
+    entry.ty = ty;
+    entry.key = entry.key || key;
+    if (caveId) {
+      entry.caveId = caveId;
+    } else if (!entry.caveId) {
+      entry.caveId = getCaveV2EntranceStableId(world, tx, ty);
+    }
+    return entry;
+  }
+
+  function clearDebugLinkedCavePlacement(silent = false) {
+    if (!state.debugLinkedCavePlacement) return false;
+    state.debugLinkedCavePlacement = null;
+    updateDebugCaveSpawnButtons();
+    if (!silent) {
+      setPrompt("Linked cave placement canceled", 1.1);
+    }
+    return true;
+  }
+
   function spawnDebugCaveAtPlayer() {
     if (!state.player) return;
     if (state.inCave) {
@@ -33730,20 +35165,98 @@
       return;
     }
     const world = state.surfaceWorld || state.world;
-    if (!world) return;
-    const startTx = Math.floor(state.player.x / CONFIG.tileSize);
-    const startTy = Math.floor(state.player.y / CONFIG.tileSize);
-    const tile = findOpenSurfaceTileNear(world, startTx, startTy, 10);
+    if (!world || !CAVE_V2_ENABLED) {
+      setPrompt("CaveV2 unavailable", 1.2);
+      return;
+    }
+    if (state.debugLinkedCavePlacement) {
+      clearDebugLinkedCavePlacement(true);
+    }
+    const tile = getDebugCaveSpawnTile(world);
     if (!tile) {
       setPrompt("No spot for cave nearby", 1.2);
       return;
     }
-    const cave = addSurfaceCave(world, tile.tx, tile.ty, null, { spawnedByPlayer: true });
-    if (!cave) {
+    const entrance = upsertRuntimeCaveV2Entrance(world, tile.tx, tile.ty, null);
+    if (!entrance) {
       setPrompt("Cave spawn failed", 1.2);
       return;
     }
     setPrompt("Debug cave spawned", 1.2);
+    markDirty();
+    if (net.isHost && net.connections.size > 0) {
+      broadcastNet(buildSnapshot());
+    }
+  }
+
+  function spawnDebugLinkedCaveAtPlayer() {
+    if (!state.player) return;
+    if (state.inCave) {
+      setPrompt("Leave cave first", 1);
+      return;
+    }
+    if (netIsClientReady()) {
+      setPrompt("Host only", 1);
+      return;
+    }
+    const world = state.surfaceWorld || state.world;
+    if (!world || !CAVE_V2_ENABLED) {
+      setPrompt("CaveV2 unavailable", 1.2);
+      return;
+    }
+    const tile = getDebugCaveSpawnTile(world);
+    if (!tile) {
+      setPrompt("No spot for cave nearby", 1.2);
+      return;
+    }
+    const islandIndex = getSurfaceIslandIndexForTile(world, tile.tx, tile.ty);
+    const pending = state.debugLinkedCavePlacement;
+    if (!pending) {
+      const firstEntrance = upsertRuntimeCaveV2Entrance(world, tile.tx, tile.ty, null);
+      if (!firstEntrance) {
+        setPrompt("Linked cave A failed", 1.2);
+        return;
+      }
+      state.debugLinkedCavePlacement = {
+        caveId: String(firstEntrance.caveId || getCaveV2EntranceStableId(world, tile.tx, tile.ty)),
+        firstTx: firstEntrance.tx,
+        firstTy: firstEntrance.ty,
+        firstIslandIndex: islandIndex,
+      };
+      updateDebugCaveSpawnButtons();
+      setPrompt("Linked cave A set. Move island, place cave B.", 1.8);
+      markDirty();
+      if (net.isHost && net.connections.size > 0) {
+        broadcastNet(buildSnapshot());
+      }
+      return;
+    }
+    if (tile.tx === pending.firstTx && tile.ty === pending.firstTy) {
+      setPrompt("Move to a different island for cave B", 1.3);
+      return;
+    }
+    if (
+      Number.isInteger(pending.firstIslandIndex)
+      && Number.isInteger(islandIndex)
+      && pending.firstIslandIndex === islandIndex
+    ) {
+      setPrompt("Cave B must be on a different island", 1.3);
+      return;
+    }
+    const firstEntrance = upsertRuntimeCaveV2Entrance(
+      world,
+      pending.firstTx,
+      pending.firstTy,
+      pending.caveId
+    );
+    const secondEntrance = upsertRuntimeCaveV2Entrance(world, tile.tx, tile.ty, pending.caveId);
+    if (!firstEntrance || !secondEntrance) {
+      setPrompt("Linked cave B failed", 1.2);
+      return;
+    }
+    state.debugLinkedCavePlacement = null;
+    updateDebugCaveSpawnButtons();
+    setPrompt("Linked cave pair connected", 1.4);
     markDirty();
     if (net.isHost && net.connections.size > 0) {
       broadcastNet(buildSnapshot());
@@ -33834,6 +35347,10 @@
       setPrompt("Host only", 1);
       return;
     }
+    if (mpAutotest.active) {
+      setPrompt("Stop MP autotest first", 1.2);
+      return;
+    }
     state.debugInfiniteResources = !state.debugInfiniteResources;
     updateInfiniteResourcesButton();
     saveUserSettings();
@@ -33858,6 +35375,10 @@
     }
     if (netIsClientReady()) {
       setPrompt("Host only", 1);
+      return;
+    }
+    if (mpAutotest.active) {
+      setPrompt("Stop MP autotest first", 1.2);
       return;
     }
     state.debugInfiniteHealth = !state.debugInfiniteHealth;
@@ -34006,6 +35527,25 @@
     );
     if (seed === null) return;
     switchToSeed(seed);
+  }
+
+  function restartCurrentSeed() {
+    if (netIsClientReady()) {
+      setPrompt("Host only", 1);
+      return;
+    }
+    const currentSeed = normalizeSeedValue(state.surfaceWorld?.seed || getStoredActiveSeed() || "island-1");
+    closeSettingsPanel();
+    if (debugPanel) debugPanel.classList.add("hidden");
+    closeStationMenu();
+    closeChest();
+    closeInventory();
+    startNewGame(currentSeed);
+    saveGame();
+    setPrompt(`Restarted seed: ${currentSeed}`, 1.3);
+    if (net.isHost && net.connections.size > 0) {
+      broadcastNet(buildSnapshot());
+    }
   }
 
   function handleKeyDown(event) {
@@ -35229,6 +36769,25 @@
     return count;
   }
 
+  function scalePassiveAnimalCapByIslandSize(baseCap, island) {
+    const safeBase = Math.max(1, Math.floor(Number(baseCap) || 1));
+    const radius = Math.max(0, Number(island?.radius) || 0);
+    if (!Number.isFinite(radius) || radius <= 0) return safeBase;
+
+    // Small islands should stay lightly populated.
+    if (radius <= 7.5) return 1;
+    if (radius <= 10.5) return 2;
+
+    // Larger islands can hold more friendly animals.
+    let scaled = safeBase;
+    if (radius >= 16) scaled += 1;
+    if (radius >= 20) scaled += 1;
+    if (radius >= 24) scaled += 1;
+    if (radius >= 28) scaled += 1;
+
+    return clamp(scaled, 2, safeBase + 4);
+  }
+
   function getPassiveAnimalIslandCap(world, island, spawnIsland = null) {
     if (!world || !island) return Infinity;
     if (isMushroomBiomeId(getIslandBiomeId(world, island))) {
@@ -35236,9 +36795,11 @@
     }
     const resolvedSpawnIsland = spawnIsland || getSpawnIsland(world, state.spawnTile);
     if (resolvedSpawnIsland && island === resolvedSpawnIsland) {
-      return Math.max(1, Math.floor(Number(SURFACE_PASSIVE_ANIMAL_CONFIG.spawnIslandMax) || 1));
+      const spawnIslandBaseCap = Math.max(1, Math.floor(Number(SURFACE_PASSIVE_ANIMAL_CONFIG.spawnIslandMax) || 1));
+      return scalePassiveAnimalCapByIslandSize(spawnIslandBaseCap, island);
     }
-    return Math.max(1, Math.floor(Number(SURFACE_PASSIVE_ANIMAL_CONFIG.maxPerIsland) || 1));
+    const baseCap = Math.max(1, Math.floor(Number(SURFACE_PASSIVE_ANIMAL_CONFIG.maxPerIsland) || 1));
+    return scalePassiveAnimalCapByIslandSize(baseCap, island);
   }
 
   function countHarvestAnimalsOnIsland(world, island) {
@@ -35996,8 +37557,8 @@
       ? options.guardianType
       : getGuardianTypeForBiomeId(biomeId, island);
     if (!guardianType) return false;
-    // Explicit design rule: plains wolves never spawn on the player spawn island.
-    if (guardianType === "wolf" && isSpawnIsland(world, island)) return false;
+    // Spawn island daytime safety: no guardian hostiles spawn on spawn island during day.
+    if (shouldBlockSpawnIslandDayGuardian(world, island)) return false;
     const sameTypeOnIsland = countGuardiansOnIslandByType(world, island, guardianType);
     if (sameTypeOnIsland > 0 && !options?.allowExtraTypeOnIsland) return false;
     const currentOnIsland = countGuardiansOnIsland(world, island);
@@ -36025,7 +37586,7 @@
       const biomeId = getIslandBiomeId(world, island);
       const guardianType = getGuardianTypeForBiomeId(biomeId, island);
       if (!guardianType) return false;
-      if (guardianType === "wolf" && isSpawnIsland(world, island)) return false;
+      if (shouldBlockSpawnIslandDayGuardian(world, island)) return false;
       return true;
     });
     if (targetIslands.length === 0) return;
@@ -37600,7 +39161,7 @@
   }
 
   function updateAmbientFish(dt) {
-    if (state.inCave || state.player?.inHut) {
+    if (state.inCave || state.player?.inHut || getGraphicsEffectsLevel() < 2) {
       if (state.ambientFish.length > 0) state.ambientFish = [];
       state.ambientFishSpawnTimer = 0;
       return;
@@ -39674,6 +41235,12 @@
 
   function update(dt) {
     if (!state.world || !state.player) {
+      if (net.enabled) {
+        if (!net.isHost && !net.ready) {
+          setPrompt("Connecting...", 0.5);
+        }
+        netTick(dt);
+      }
       runDebugQaSelfTests(dt);
       runMultiplayerAutotest(dt);
       updatePrompt(dt);
@@ -39709,7 +41276,15 @@
       return;
     }
     if (net.enabled && !net.isHost && !net.ready) {
+      // Join handshake phase: keep networking active but avoid expensive world simulation
+      // until authoritative host snapshot is accepted.
       setPrompt("Connecting...", 0.5);
+      netTick(dt);
+      runDebugSyncAudit(dt);
+      runMultiplayerAutotest(dt);
+      updateAudio(dt);
+      runDebugQaSelfTests(dt);
+      return;
     }
     const sleeping = updateSleepSequence(dt);
     if (!sleeping) {
@@ -39872,6 +41447,52 @@
         ctx.lineTo(cx + radius * 0.44, cy - radius * 0.2);
         ctx.stroke();
       }
+    }
+  }
+
+  function drawBiomeRockAccents(cx, cy, radius, style, seed, options = null) {
+    if (!style) return;
+    const isBiomeStone = !!options?.isBiomeStone;
+    const patchCount = isBiomeStone ? 3 : 2;
+
+    ctx.fillStyle = "rgba(0,0,0,0.06)";
+    ctx.beginPath();
+    ctx.ellipse(cx, cy + radius * 0.62, radius * 0.55, radius * 0.18, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = style.patch;
+    for (let i = 0; i < patchCount; i += 1) {
+      const ox = (((seed >> (i * 5 + 3)) & 15) - 7) * 0.22;
+      const oy = (((seed >> (i * 4 + 9)) & 15) - 7) * 0.18;
+      const rx = radius * (0.16 + (((seed >> (i * 3 + 4)) & 7) / 42));
+      const ry = radius * (0.11 + (((seed >> (i * 3 + 7)) & 7) / 48));
+      const rot = (((seed >> (i * 6 + 11)) & 15) - 7) * 0.04;
+      ctx.beginPath();
+      ctx.ellipse(cx + ox, cy + oy, rx, ry, rot, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    ctx.strokeStyle = style.vein;
+    ctx.lineWidth = isBiomeStone ? 1.25 : 1.05;
+    const veinCount = isBiomeStone ? 3 : 2;
+    for (let i = 0; i < veinCount; i += 1) {
+      const vx = (((seed >> (i * 4 + 13)) & 15) - 7) * 0.14;
+      const vy = (((seed >> (i * 5 + 17)) & 15) - 7) * 0.12;
+      ctx.beginPath();
+      ctx.moveTo(cx - radius * 0.4 + vx, cy - radius * 0.08 + vy);
+      ctx.lineTo(cx + radius * 0.36 + vx * 0.55, cy - radius * 0.28 + vy * 0.35);
+      ctx.stroke();
+    }
+
+    ctx.fillStyle = style.speck;
+    const speckCount = isBiomeStone ? 5 : 3;
+    for (let i = 0; i < speckCount; i += 1) {
+      const ox = (((seed >> (i * 3 + 5)) & 15) - 7) * 0.22;
+      const oy = (((seed >> (i * 4 + 21)) & 15) - 7) * 0.2;
+      const sr = isBiomeStone ? 0.95 : 0.8;
+      ctx.beginPath();
+      ctx.arc(cx + ox, cy + oy, sr, 0, Math.PI * 2);
+      ctx.fill();
     }
   }
 
@@ -40784,39 +42405,6 @@
       ctx.fill();
     }
 
-    const monsterR = type === "slime_large"
-      ? 15.5
-      : type === "slime_medium"
-        ? 12
-        : type === "slime_small"
-          ? 9
-          : type === "polar_bear"
-            ? 14.5
-            : type === "lion"
-              ? 13.8
-              : type === "wolf"
-                ? 12.8
-                : type === "marsh_stalker"
-                  ? 13.2
-                  : 12.5;
-    ctx.strokeStyle = "rgba(8, 11, 18, 0.38)";
-    ctx.lineWidth = 1.2;
-    ctx.beginPath();
-    ctx.arc(screen.x, screen.y + 1.2, monsterR, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.fillStyle = "rgba(255,255,255,0.12)";
-    ctx.beginPath();
-    ctx.ellipse(
-      screen.x - facingX * (monsterR * 0.2),
-      screen.y - monsterR * 0.44,
-      monsterR * 0.34,
-      monsterR * 0.17,
-      -0.25 * facingX,
-      0,
-      Math.PI * 2
-    );
-    ctx.fill();
-
     drawMonsterBurning(monster, screen);
 
     if (monster.hitTimer > 0) {
@@ -41019,57 +42607,66 @@
     ctx.restore();
   }
 
-  function drawOceanBackdrop(camera, nowSeconds = 0) {
+  function drawOceanBackdrop(camera, nowSeconds = 0, effectsLevel = 1) {
+    const quality = clampGraphicsEffectsLevel(effectsLevel);
+    if (quality <= 0) return;
     const width = getCameraViewWidth(camera);
     const height = getCameraViewHeight(camera);
     if (width <= 0 || height <= 0) return;
 
     const pulse = Math.sin(nowSeconds * 0.18) * 0.5 + 0.5;
     const skyReflection = ctx.createLinearGradient(0, 0, 0, height);
-    skyReflection.addColorStop(0, `rgba(114, 210, 244, ${0.08 + pulse * 0.03})`);
-    skyReflection.addColorStop(0.42, "rgba(78, 168, 219, 0.05)");
-    skyReflection.addColorStop(1, "rgba(14, 58, 102, 0.03)");
+    skyReflection.addColorStop(0, `rgba(114, 210, 244, ${0.03 + pulse * 0.012})`);
+    skyReflection.addColorStop(0.42, "rgba(78, 168, 219, 0.022)");
+    skyReflection.addColorStop(1, "rgba(14, 58, 102, 0.014)");
     ctx.fillStyle = skyReflection;
     ctx.fillRect(0, 0, width, height);
 
-    const currentBands = Math.max(4, Math.ceil(width / 260));
+    const bandDensity = quality >= 3 ? 1.2 : quality >= 2 ? 1 : 0.55;
+    const currentBands = Math.max(2, Math.ceil((width / 340) * bandDensity));
     for (let i = 0; i < currentBands; i += 1) {
       const lane = (i + 1) / (currentBands + 1);
       const y = height * lane + Math.sin(nowSeconds * 0.55 + i * 1.7) * 16;
       const drift = Math.sin(nowSeconds * 0.85 + i * 1.3) * 28;
-      ctx.strokeStyle = `rgba(196, 236, 255, ${0.025 + ((i % 3) * 0.008)})`;
-      ctx.lineWidth = 1 + (i % 2);
+      ctx.strokeStyle = `rgba(196, 236, 255, ${0.01 + ((i % 3) * 0.003)})`;
+      ctx.lineWidth = 1;
       ctx.beginPath();
       ctx.moveTo(-40, y + drift * 0.08);
       ctx.quadraticCurveTo(width * 0.35, y - 10 + drift * 0.16, width + 40, y + drift * 0.1);
       ctx.stroke();
     }
 
-    const depthVignette = ctx.createRadialGradient(
-      width * 0.5,
-      height * 0.35,
-      Math.min(width, height) * 0.08,
-      width * 0.5,
-      height * 0.35,
-      Math.max(width, height) * 0.78,
-    );
-    depthVignette.addColorStop(0, "rgba(0, 0, 0, 0)");
-    depthVignette.addColorStop(1, "rgba(4, 14, 32, 0.12)");
-    ctx.fillStyle = depthVignette;
-    ctx.fillRect(0, 0, width, height);
+    if (quality >= 2) {
+      const depthVignette = ctx.createRadialGradient(
+        width * 0.5,
+        height * 0.35,
+        Math.min(width, height) * 0.08,
+        width * 0.5,
+        height * 0.35,
+        Math.max(width, height) * 0.78,
+      );
+      depthVignette.addColorStop(0, "rgba(0, 0, 0, 0)");
+      depthVignette.addColorStop(1, "rgba(4, 14, 32, 0.08)");
+      ctx.fillStyle = depthVignette;
+      ctx.fillRect(0, 0, width, height);
+    }
   }
 
-  function drawOceanTileDecor(world, tx, ty, screenX, screenY, nowSeconds = 0) {
+  function drawOceanTileDecor(world, tx, ty, screenX, screenY, nowSeconds = 0, effectsLevel = 1) {
+    const quality = clampGraphicsEffectsLevel(effectsLevel);
+    if (quality <= 0) return;
     if (!world || !Array.isArray(world.tiles)) return;
     const seedInt = Number.isFinite(world.seedInt) ? world.seedInt : seedToInt(String(world.seed || "island-1"));
     const baseHash = ((tx * 92837111) ^ (ty * 689287499) ^ (seedInt * 283923481)) >>> 0;
-    const shimmerHit = (baseHash % OCEAN_DECOR_CONFIG.shimmerMod) === 4;
+    const sparse = quality <= 1;
+    const shimmerMod = sparse ? OCEAN_DECOR_CONFIG.shimmerMod * 2 : OCEAN_DECOR_CONFIG.shimmerMod;
+    const shimmerHit = (baseHash % shimmerMod) === 4;
     const causticHit = (baseHash % OCEAN_DECOR_CONFIG.causticMod) === 8;
     const foamHit = (baseHash % OCEAN_DECOR_CONFIG.foamMod) === 13;
-    const bubbleHit = (baseHash % OCEAN_DECOR_CONFIG.bubbleMod) === 21;
-    const coralHit = (baseHash % OCEAN_DECOR_CONFIG.coralMod) === 11;
-    const reefHit = (baseHash % OCEAN_DECOR_CONFIG.reefMod) === 39;
-    const kelpHit = (baseHash % OCEAN_DECOR_CONFIG.kelpMod) === 51;
+    const bubbleHit = !sparse && (baseHash % OCEAN_DECOR_CONFIG.bubbleMod) === 21;
+    const coralHit = !sparse && (baseHash % OCEAN_DECOR_CONFIG.coralMod) === 11;
+    const reefHit = !sparse && (baseHash % OCEAN_DECOR_CONFIG.reefMod) === 39;
+    const kelpHit = !sparse && (baseHash % OCEAN_DECOR_CONFIG.kelpMod) === 51;
     if (!shimmerHit && !causticHit && !foamHit && !bubbleHit && !coralHit && !reefHit && !kelpHit) return;
 
     const ts = CONFIG.tileSize;
@@ -41085,7 +42682,7 @@
     const downLand = ty < size - 1 && !!world.tiles[tileIndex(tx, ty + 1, size)];
 
     if (shimmerHit) {
-      const shimmerAlpha = 0.04 + (((baseHash >> 5) & 7) * 0.008);
+      const shimmerAlpha = 0.015 + (((baseHash >> 5) & 7) * 0.004);
       const wave = Math.sin((nowSeconds * 2.1) + ((baseHash & 255) * 0.042));
       const len = ts * (0.22 + (((baseHash >> 9) & 7) * 0.032));
       ctx.strokeStyle = `rgba(216, 244, 255, ${shimmerAlpha * (0.7 + 0.3 * (wave * 0.5 + 0.5))})`;
@@ -41099,7 +42696,7 @@
     if (causticHit && nearShoreCount <= 1) {
       const phase = nowSeconds * 0.9 + ((baseHash >> 4) & 31) * 0.17;
       const skew = Math.sin(phase) * 0.9;
-      ctx.strokeStyle = "rgba(212, 247, 255, 0.055)";
+      ctx.strokeStyle = "rgba(212, 247, 255, 0.022)";
       ctx.lineWidth = 1;
       ctx.beginPath();
       ctx.moveTo(cx - ts * 0.22, cy - ts * 0.08 + skew);
@@ -41157,7 +42754,7 @@
     }
 
     if (foamHit && (leftLand || rightLand || upLand || downLand)) {
-      const foamAlpha = 0.08 + (((baseHash >> 6) & 7) * 0.01);
+      const foamAlpha = 0.04 + (((baseHash >> 6) & 7) * 0.006);
       const edgeWobble = Math.sin(nowSeconds * 1.3 + (baseHash & 15)) * 0.9;
       ctx.fillStyle = `rgba(236, 249, 255, ${foamAlpha})`;
       if (leftLand) ctx.fillRect(screenX, screenY + 2 + edgeWobble, 2, ts - 4);
@@ -41181,7 +42778,8 @@
     }
   }
 
-  function drawAmbientFish(camera) {
+  function drawAmbientFish(camera, effectsLevel = 2) {
+    if (clampGraphicsEffectsLevel(effectsLevel) < 2) return;
     if (!Array.isArray(state.ambientFish) || state.ambientFish.length === 0) return;
     const cameraViewWidth = getCameraViewWidth(camera);
     const cameraViewHeight = getCameraViewHeight(camera);
@@ -42470,7 +44068,91 @@
     }
   }
 
+  function drawHouseTextureFallback(structure, camera, normalizedType = null) {
+    const houseType = normalizedType || normalizeLegacyStructureType(structure?.type);
+    if (!isHouseType(houseType)) return false;
+    const footprint = getStructureFootprint(houseType);
+    const worldX = (Number.isFinite(structure?.tx) ? structure.tx : 0) * CONFIG.tileSize;
+    const worldY = (Number.isFinite(structure?.ty) ? structure.ty : 0) * CONFIG.tileSize;
+    const topLeft = worldToScreen(worldX, worldY, camera);
+    const w = Math.max(10, footprint.w * CONFIG.tileSize - 2);
+    const h = Math.max(10, footprint.h * CONFIG.tileSize - 2);
+    const x = topLeft.x + 1;
+    const y = topLeft.y + 1;
+    const centerX = x + w * 0.5;
+    const lift = houseType === "large_house" ? Math.floor(h * 0.14) : (houseType === "medium_house" ? Math.floor(h * 0.08) : 0);
+    const wallTop = y + Math.max(5, Math.floor(h * 0.24)) - lift;
+    const wallBottom = y + h - 2;
+    const wallH = Math.max(8, wallBottom - wallTop);
+    const wallInset = houseType === "large_house" ? Math.max(6, Math.floor(w * 0.16)) : (houseType === "medium_house" ? Math.max(4, Math.floor(w * 0.12)) : 2);
+    const wallX = x + wallInset;
+    const wallW = Math.max(10, w - wallInset * 2);
+
+    ctx.fillStyle = "rgba(0,0,0,0.18)";
+    ctx.beginPath();
+    ctx.ellipse(centerX, y + h - 1, Math.max(9, w * 0.42), Math.max(3, h * 0.12), 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = "#cfa272";
+    ctx.fillRect(wallX, wallTop, wallW, wallH);
+    ctx.fillStyle = "rgba(106, 75, 46, 0.32)";
+    ctx.fillRect(wallX, wallBottom - 3, wallW, 3);
+    ctx.fillStyle = "rgba(255,255,255,0.08)";
+    ctx.fillRect(wallX, wallTop, wallW, 2);
+
+    const roofPeakY = Math.max(y - 5, wallTop - (houseType === "large_house" ? 12 : (houseType === "medium_house" ? 9 : 6)));
+    const roofLeft = wallX - 2;
+    const roofRight = wallX + wallW + 2;
+    ctx.fillStyle = "#886539";
+    ctx.beginPath();
+    ctx.moveTo(roofLeft, wallTop + 2);
+    ctx.lineTo(centerX, roofPeakY);
+    ctx.lineTo(roofRight, wallTop + 2);
+    ctx.quadraticCurveTo(centerX, wallTop + 7, roofLeft, wallTop + 2);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = "rgba(255, 233, 177, 0.18)";
+    ctx.lineWidth = 1;
+    for (let i = 0; i < 7; i += 1) {
+      const t = i / 6;
+      const sx = roofLeft + 2 + t * (roofRight - roofLeft - 4);
+      const sy = wallTop + 2 - Math.sin(t * Math.PI) * Math.max(2, wallTop - roofPeakY - 2);
+      ctx.beginPath();
+      ctx.moveTo(sx, wallTop + 3);
+      ctx.lineTo((sx + centerX) * 0.5, sy + 1);
+      ctx.stroke();
+    }
+
+    const doorW = clamp(Math.floor(w * 0.16), 8, 14);
+    const doorH = clamp(Math.floor(h * 0.22), 9, 13);
+    const doorX = Math.floor(centerX - doorW * 0.5);
+    const doorY = wallBottom - doorH + 1;
+    ctx.fillStyle = "#3a2a1b";
+    ctx.fillRect(doorX, doorY, doorW, doorH);
+    ctx.fillStyle = "rgba(214, 179, 107, 0.85)";
+    ctx.beginPath();
+    ctx.arc(doorX + doorW - 2, doorY + doorH * 0.56, 1.1, 0, Math.PI * 2);
+    ctx.fill();
+
+    const winY = wallTop + Math.max(3, Math.floor(wallH * 0.2));
+    const winW = clamp(Math.floor(w * 0.1), 6, 10);
+    const winH = clamp(Math.floor(h * 0.09), 5, 7);
+    const leftWX = wallX + 5;
+    const rightWX = wallX + wallW - 5 - winW;
+    ctx.fillStyle = "rgba(247, 224, 170, 0.8)";
+    ctx.fillRect(leftWX, winY, winW, winH);
+    if (wallW >= 30) ctx.fillRect(rightWX, winY, winW, winH);
+    if (houseType === "large_house") {
+      const upperW = 6;
+      const upperX = Math.floor(centerX - upperW / 2);
+      ctx.fillRect(upperX, wallTop + 2, upperW, 4);
+    }
+    return true;
+  }
+
   function drawStructureFallback(structure, camera) {
+    const normalizedType = resolveStructureType(structure?.type, structure?.meta);
+    if (drawHouseTextureFallback(structure, camera, normalizedType)) return;
     const footprint = getStructureFootprint(structure.type);
     const worldX = (Number.isFinite(structure.tx) ? structure.tx : 0) * CONFIG.tileSize;
     const worldY = (Number.isFinite(structure.ty) ? structure.ty : 0) * CONFIG.tileSize;
@@ -42500,9 +44182,10 @@
       }
       return;
     }
-    const normalizedType = normalizeLegacyStructureType(structure.type);
+    const normalizedType = resolveStructureType(structure.type, structure.meta);
     if (normalizedType !== structure.type && STRUCTURE_DEFS[normalizedType]) {
       structure.type = normalizedType;
+      if (isHouseType(structure.type)) ensureHouseMeta(structure);
     }
     if (!STRUCTURE_DEFS[structure.type]) {
       ctx.save();
@@ -42675,9 +44358,11 @@
     ctx.fillRect(0, 0, cameraViewWidth, cameraViewHeight);
 
     if (cycle.sunAlpha > 0.02) {
-      const horizonY = cameraViewHeight * 0.89;
       const sunX = lerp(cameraViewWidth * -0.08, cameraViewWidth * 1.08, cycle.sunProgress);
-      const sunY = horizonY - (cycle.sunElevation * cameraViewHeight * 0.6);
+      // Keep the sun in the sky band so it never reads as "in the ocean."
+      const sunBandTop = cameraViewHeight * 0.07;
+      const sunBandBottom = cameraViewHeight * 0.42;
+      const sunY = lerp(sunBandBottom, sunBandTop, cycle.sunElevation);
       const sunColorDay = [255, 245, 198];
       const sunColorTwilight = [255, 166, 108];
       const sunColor = mixRgbColor(sunColorDay, sunColorTwilight, cycle.twilightStrength * 0.92);
@@ -44030,6 +45715,56 @@
     ctx.restore();
   }
 
+  function drawPendingLinkedCavePlacementGuide(camera, cameraViewWidth, cameraViewHeight) {
+    const pending = state.debugLinkedCavePlacement;
+    if (!pending || !state.player || state.inCave || state.player.inHut) return;
+    const startX = (pending.firstTx + 0.5) * CONFIG.tileSize - camera.x;
+    const startY = (pending.firstTy + 0.5) * CONFIG.tileSize - camera.y;
+    const endX = state.player.x - camera.x;
+    const endY = state.player.y - camera.y;
+    const margin = 64;
+    const minX = Math.min(startX, endX);
+    const maxX = Math.max(startX, endX);
+    const minY = Math.min(startY, endY);
+    const maxY = Math.max(startY, endY);
+    if (
+      maxX < -margin
+      || maxY < -margin
+      || minX > cameraViewWidth + margin
+      || minY > cameraViewHeight + margin
+    ) {
+      return;
+    }
+    const now = performance.now();
+    const pulse = 0.45 + 0.55 * (0.5 + 0.5 * Math.sin(now * 0.006));
+    ctx.save();
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.setLineDash([2.4, 8.2]);
+    ctx.lineDashOffset = -(now * 0.045);
+    const guideGrad = ctx.createLinearGradient(startX, startY, endX, endY);
+    guideGrad.addColorStop(0, `rgba(139, 226, 255, ${0.55 + pulse * 0.24})`);
+    guideGrad.addColorStop(0.6, `rgba(199, 239, 255, ${0.45 + pulse * 0.2})`);
+    guideGrad.addColorStop(1, `rgba(255, 247, 186, ${0.48 + pulse * 0.22})`);
+    ctx.strokeStyle = guideGrad;
+    ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    ctx.moveTo(startX, startY);
+    ctx.lineTo(endX, endY);
+    ctx.stroke();
+
+    ctx.setLineDash([]);
+    ctx.fillStyle = `rgba(255, 244, 181, ${0.64 + pulse * 0.26})`;
+    ctx.beginPath();
+    ctx.arc(endX, endY, 3.2 + pulse * 1.6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "rgba(165, 235, 255, 0.8)";
+    ctx.beginPath();
+    ctx.arc(startX, startY, 3.1, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
   function render() {
     if (!state.world || !state.player) return;
 
@@ -44057,6 +45792,7 @@
           cool: (rand2d((activeCaveRoomId + 1) * 59, state.activeCave?.id || 0, 9131) - 0.5) * 5,
         }
       : null;
+    const graphicsEffectsLevel = getGraphicsEffectsLevel();
     const oceanNowSeconds = performance.now() * 0.001;
     ctx.setTransform(dpr * cameraScale, 0, 0, dpr * cameraScale, 0, 0);
 
@@ -44065,8 +45801,8 @@
       ctx.fillRect(0, 0, cameraViewWidth, cameraViewHeight);
     } else {
       drawSurfaceSkyAmbience(camera, oceanNowSeconds);
-      drawOceanBackdrop(camera, oceanNowSeconds);
-      drawAmbientFish(camera);
+      drawOceanBackdrop(camera, oceanNowSeconds, graphicsEffectsLevel);
+      drawAmbientFish(camera, graphicsEffectsLevel);
     }
 
     const startX = Math.max(0, Math.floor(camera.x / CONFIG.tileSize) - 1);
@@ -44081,7 +45817,7 @@
         const screenY = y * CONFIG.tileSize - camera.y;
         if (!state.world.tiles[idx]) {
           if (!state.inCave) {
-            drawOceanTileDecor(state.world, x, y, screenX, screenY, oceanNowSeconds);
+            drawOceanTileDecor(state.world, x, y, screenX, screenY, oceanNowSeconds, graphicsEffectsLevel);
           }
           continue;
         }
@@ -44356,6 +46092,7 @@
           ctx.restore();
         }
       }
+      drawPendingLinkedCavePlacementGuide(camera, cameraViewWidth, cameraViewHeight);
     }
 
     if (state.inCave) {
@@ -44833,15 +46570,13 @@
       } else if (res.type === "biomeStone") {
         const color = biome.stoneColor ?? "#c9c3b0";
         const stoneSeed = (((res.id || 0) * 2654435761) ^ ((res.tx || 0) * 19349663) ^ ((res.ty || 0) * 83492791)) >>> 0;
-        drawFacetedRockNode(screen.x, screen.y, 12.8, tintColor(color, 0.04), {
+        const style = getBiomeRockVisualStyle(biome, color, true);
+        drawFacetedRockNode(screen.x, screen.y, 12.8, style.base, {
           seed: stoneSeed,
-          ridges: 5,
+          ridges: 6,
           sparkle: false,
         });
-        ctx.fillStyle = "rgba(198, 210, 224, 0.12)";
-        ctx.beginPath();
-        ctx.arc(screen.x + 2, screen.y - 5, 2, 0, Math.PI * 2);
-        ctx.fill();
+        drawBiomeRockAccents(screen.x, screen.y, 12.8, style, stoneSeed, { isBiomeStone: true });
       } else {
         const oreKind = res.oreKind || "iron_ore";
         const oreColor = ORE_COLORS[oreKind] || "#8d5aa3";
@@ -44855,7 +46590,11 @@
         const rockSeed = (((res.id || 0) * 1597334677) ^ ((res.tx || 0) * 3812015801) ^ ((res.ty || 0) * 95868949)) >>> 0;
         const isOre = res.type === "ore";
         const isCrystalOre = oreKind === "diamond" || oreKind === "emerald";
-        drawFacetedRockNode(screen.x, screen.y, isOre ? 11.4 : 12.2, color, {
+        const stoneStyle = !isOre && !state.inCave
+          ? getBiomeRockVisualStyle(biome, color, false)
+          : null;
+        const drawColor = stoneStyle?.base || color;
+        drawFacetedRockNode(screen.x, screen.y, isOre ? 11.4 : 12.2, drawColor, {
           seed: rockSeed,
           ridges: isOre ? 5 : 4,
           sparkle: isOre,
@@ -44881,11 +46620,15 @@
             ctx.stroke();
           }
         } else {
-          const mossTint = state.inCave ? "rgba(102, 120, 136, 0.1)" : "rgba(130, 178, 126, 0.16)";
-          ctx.fillStyle = mossTint;
-          ctx.beginPath();
-          ctx.ellipse(screen.x - 2.5, screen.y + 1.8, 4.6, 2.4, -0.2, 0, Math.PI * 2);
-          ctx.fill();
+          if (stoneStyle) {
+            drawBiomeRockAccents(screen.x, screen.y, 12.2, stoneStyle, rockSeed);
+          } else {
+            const mossTint = state.inCave ? "rgba(102, 120, 136, 0.1)" : "rgba(130, 178, 126, 0.16)";
+            ctx.fillStyle = mossTint;
+            ctx.beginPath();
+            ctx.ellipse(screen.x - 2.5, screen.y + 1.8, 4.6, 2.4, -0.2, 0, Math.PI * 2);
+            ctx.fill();
+          }
         }
       }
 
@@ -45334,12 +47077,13 @@
     const coarse = isCoarsePointerDevice();
     const dprCap = coarse ? MOBILE_RENDER_DPR_CAP : DESKTOP_RENDER_DPR_CAP;
     const maxPixels = coarse ? MOBILE_RENDER_MAX_PIXELS : DESKTOP_RENDER_MAX_PIXELS;
-    let nextDpr = Math.min(nativeDpr, dprCap);
+    const renderScale = clampRenderScale(state?.renderScale ?? SETTINGS_DEFAULTS.renderScale);
+    let nextDpr = Math.min(nativeDpr, dprCap) * renderScale;
     const estimatedPixels = width * height * nextDpr * nextDpr;
     if (estimatedPixels > maxPixels && width > 0 && height > 0) {
       nextDpr = Math.sqrt(maxPixels / (width * height));
     }
-    return clamp(nextDpr, 1, nativeDpr);
+    return clamp(nextDpr, 0.5, nativeDpr);
   }
 
   function applyViewportCssVars(width, height) {
@@ -45771,6 +47515,7 @@
     setStartMenuView("main");
     setSettingsTab("settings");
     updateVolumeUI();
+    updateGraphicsSettingsUI();
     updatePlayerNameUI();
     ensureInfiniteHealthDebugButton();
     setDebugUnlocked(state.debugUnlocked, false);
@@ -45784,6 +47529,7 @@
     updateDebugRepairableShipButton();
     updateContinentalShiftButton();
     updateDebugPlaceBoatButton();
+    updateDebugCaveSpawnButtons();
     if (settingsPanel) settingsPanel.classList.add("hidden");
 
     window.addEventListener("resize", requestResize);
@@ -45878,6 +47624,11 @@
         promptNewSeed();
       });
     }
+    if (restartSeedBtn) {
+      restartSeedBtn.addEventListener("click", () => {
+        restartCurrentSeed();
+      });
+    }
     if (startScreen) {
       startScreen.addEventListener("pointerdown", () => {
         ensureAudioContext();
@@ -45970,9 +47721,33 @@
         setSfxVolumeFromPercent(menuSfxVolumeInput.value);
       });
     }
-    const commitMenuPlayerName = () => {
-      if (!menuPlayerNameInput) return;
-      const next = sanitizePlayerName(menuPlayerNameInput.value, "");
+    if (graphicsPresetInput) {
+      graphicsPresetInput.addEventListener("change", () => {
+        ensureAudioContext();
+        setGraphicsPreset(graphicsPresetInput.value);
+      });
+    }
+    if (menuGraphicsPresetInput) {
+      menuGraphicsPresetInput.addEventListener("change", () => {
+        ensureAudioContext();
+        setGraphicsPreset(menuGraphicsPresetInput.value);
+      });
+    }
+    if (renderScaleInput) {
+      renderScaleInput.addEventListener("input", () => {
+        ensureAudioContext();
+        setRenderScaleFromPercent(renderScaleInput.value);
+      });
+    }
+    if (menuRenderScaleInput) {
+      menuRenderScaleInput.addEventListener("input", () => {
+        ensureAudioContext();
+        setRenderScaleFromPercent(menuRenderScaleInput.value);
+      });
+    }
+    const commitPlayerNameFromInput = (inputEl) => {
+      if (!inputEl) return;
+      const next = sanitizePlayerName(inputEl.value, "");
       if (next) {
         setLocalPlayerName(next, { persist: false, broadcast: true });
       } else {
@@ -45980,29 +47755,33 @@
         // entering a game session.
         net.localName = "";
         state.playerName = "";
-        if (menuPlayerNameInput.value !== "") {
-          menuPlayerNameInput.value = "";
+        if (inputEl.value !== "") {
+          inputEl.value = "";
         }
+        updatePlayerNameUI();
       }
     };
 
-    if (menuPlayerNameInput) {
-      menuPlayerNameInput.addEventListener("input", () => {
+    const bindPlayerNameInput = (inputEl) => {
+      if (!inputEl) return;
+      inputEl.addEventListener("input", () => {
         // Allow full free-form editing; sanitize only on commit.
       });
-      menuPlayerNameInput.addEventListener("change", () => {
-        commitMenuPlayerName();
+      inputEl.addEventListener("change", () => {
+        commitPlayerNameFromInput(inputEl);
       });
-      menuPlayerNameInput.addEventListener("blur", () => {
-        commitMenuPlayerName();
+      inputEl.addEventListener("blur", () => {
+        commitPlayerNameFromInput(inputEl);
       });
-      menuPlayerNameInput.addEventListener("keydown", (event) => {
+      inputEl.addEventListener("keydown", (event) => {
         if (event.key === "Enter") {
           event.preventDefault();
-          menuPlayerNameInput.blur();
+          inputEl.blur();
         }
       });
-    }
+    };
+    bindPlayerNameInput(menuPlayerNameInput);
+    bindPlayerNameInput(playerNameInput);
     if (debugSpeedInput) {
       debugSpeedInput.addEventListener("input", () => {
         setDebugSpeedFromPercent(debugSpeedInput.value);
@@ -46024,6 +47803,7 @@
     if (giveBeaconBtn) giveBeaconBtn.addEventListener("click", giveDebugBeacon);
     if (giveRobotBtn) giveRobotBtn.addEventListener("click", giveDebugRobot);
     if (spawnCaveBtn) spawnCaveBtn.addEventListener("click", spawnDebugCaveAtPlayer);
+    if (spawnLinkedCaveBtn) spawnLinkedCaveBtn.addEventListener("click", spawnDebugLinkedCaveAtPlayer);
     if (spawnVillageBtn) spawnVillageBtn.addEventListener("click", spawnDebugVillageAtPlayer);
     if (forceDayBtn) forceDayBtn.addEventListener("click", forceDebugDay);
     if (forceNightBtn) forceNightBtn.addEventListener("click", forceDebugNight);

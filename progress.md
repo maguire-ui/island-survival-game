@@ -83,6 +83,8 @@ Original prompt: Fix CaveV2 so caves use Zelda-style screen-to-screen room trans
 - CaveV2 passage visual cleanup: removed the small dark ellipse marker drawn at passage centers (the “weird circle” artifact in tunnel lanes).
 - CaveV2 surface entrance tuning: reduced mine-shaft entrance render scale from `0.58` to `0.46` so cave mouths no longer appear oversized on island tiles.
 - Cache-buster bump: `/index.html` now references `styles.css?v=20260228-2` and `src/main.js?v=20260228-2` to force live clients/GitHub Pages to fetch the new build.
+- Item icon readability cleanup: removed the mini brown framed badge layer from `drawItemTexture` so inventory/hotbar icons render as glyph-only silhouettes, and removed `.slot-icon` mini panel styling (border/background/shadow) so items are not boxed-inside-boxes.
+- Cache-buster bump: `/index.html` now references `styles.css?v=20260228-3` and `src/main.js?v=20260228-3` for immediate icon/UI refresh.
 - House shape tuning follow-up: medium/large houses now use stronger render-only `wideInset` (`~22%`) so village houses keep footprint/collision but no longer appear flattened/stretched across their occupied tiles.
 - Runtime validation is still limited in this shell because `node`/`npx` are unavailable; this pass was validated through targeted code-path audit and diff inspection.
 - Cave drop visibility fix (2026-02-27): added CaveV2-only drop pickup grace (`CAVE_V2_DROP_PICKUP_GRACE = 0.45s`) so dropped items and ore drops visibly appear on cave ground before auto-pickup can occur.
@@ -117,6 +119,10 @@ Original prompt: Fix CaveV2 so caves use Zelda-style screen-to-screen room trans
 - Added isolated-bridge fallback orientation against nearby land tiles so standalone bridges still render with a sensible facing direction.
 - Cache-buster update in `/index.html`: CSS/JS versions set to `20260227-6` so bridge texture updates load immediately on refresh/deploy.
 - Validation note: runtime browser loop still blocked in this shell (`node`/`npx` missing); pass validated via targeted draw-path inspection in `drawStructure -> case "bridge"`.
+- MP autotest crafting mismatch fix (2026-02-28): fixed false `MPA-CRAFTING` failures caused by debug cheats affecting craft edge checks.
+- `startMultiplayerAutotest` now snapshots debug cheat/perf sliders (`debugInfiniteResources`, `debugInfiniteHealth`, speed/worldSpeed/FOV), forces a deterministic baseline for test run (finite resources/health + 1.0 multipliers), and restores previous values in `mpAutotestStop`.
+- While MP autotest is active, Infinite Resources/Health controls and debug speed sliders are locked (`disabled` + toggle guards) so mid-run state changes cannot invalidate invariants.
+- `mpAutotestRunCraftEdgeCheck` now hard-runs with finite resources in a guarded scope to keep Example A/B deterministic even if external state flips.
 - UI text minimization pass (2026-02-28): compressed remaining hardcoded labels/messages to shorter copy across start/settings/debug/MP room flows.
 - Start/play/options labels shortened (Solo/Host/Join, Name, Music, SFX, Reset Seed), settings labels shortened (Music/SFX/Reset), and MP autotest labels compacted (MP Test Quick/Stress, Seed/random, Replay Last, Copy Report).
 - Multiplayer room HUD copy standardized to compact format (`R:` prefix), copy/join prompts shortened (`Code copied`, `Enter code/link`, `Bad code`), and top-right copy button label kept as `Copy`.
@@ -132,3 +138,71 @@ Original prompt: Fix CaveV2 so caves use Zelda-style screen-to-screen room trans
 - Validation note: `develop-web-game` Playwright loop is still blocked in this shell (`node`/`npx` missing), so this pass was validated by targeted render-path inspection + diff review.
 - CaveV2 cross-island link frequency tuning (2026-02-28): updated `assignSurfaceCaveTunnelLinks` to target a higher pairing ratio per world (up to ~86% of caves paired, capped by cave count), reduce strict minimum link distance, and add a relaxed-distance fallback pass.
 - Link scoring now prefers nearby cross-island candidates (with deterministic jitter), which increases successful pair formation and makes connected cave exits between islands noticeably more common.
+- Start menu scale pass (2026-02-27): increased start menu card/shell/button/control sizing across main/play/options views for better desktop readability (larger panel width/height, bigger primary buttons, larger options controls) while keeping responsive mobile overrides.
+- Cache-buster bump: `/index.html` now references `styles.css?v=20260228-4` and `src/main.js?v=20260228-4` so start-menu size updates load immediately after refresh/deploy.
+- Sky/sun visual fix (2026-02-27): adjusted `drawSurfaceSkyAmbience` sun trajectory to stay in an upper sky band (`7%..42%` of screen height) instead of near the horizon, so the sun no longer appears to sit in ocean water.
+- Cache-buster update in `/index.html`: CSS/JS versions set to `20260228-5` so the sun-path fix is loaded immediately on refresh/deploy.
+- Ocean shine reduction pass (2026-02-27): toned down water gloss in `drawOceanBackdrop` and `drawOceanTileDecor` (weaker reflection gradient, fewer/fainter streak bands, reduced shimmer/caustic/foam alpha) for a less shiny surface look.
+- Cache-buster update in `/index.html`: CSS/JS versions set to `20260228-6` so the water-lighting change loads immediately.
+- Mob visual cleanup (2026-02-27): removed the global translucent outer orb/highlight overlay pass from `drawMonster` so monsters no longer render with a glass-ball shell.
+- Cache-buster update in `/index.html`: CSS/JS versions set to `20260228-7` so mob visual cleanup loads immediately.
+- Large-house texture fail-safe (2026-02-27): added `drawHouseTextureFallback` and routed structure fallback through it, so large/medium/small houses render a textured tropical house silhouette instead of a plain brown square if the primary house draw path fails.
+- This applies to village houses and player-built houses because both use the same structure render fallback path.
+- Cache-buster update in `/index.html`: CSS/JS versions set to `20260228-8`.
+- Debug UI cleanup (2026-02-27): removed standalone `Mini-Map Boat Marker` action button from the Debug panel so repairable-ship marker control is only the mini-map under-toggle row.
+- Cache-buster update in `/index.html`: CSS/JS versions set to `20260228-9`.
+- CaveV2 debug spawn repair (2026-02-27): `Spawn Cave Here` no longer calls disabled V1 `addSurfaceCave`; it now upserts CaveV2 runtime entrances directly (`upsertRuntimeCaveV2Entrance`), fixing broken debug cave spawn while V1 is off.
+- Added linked debug cave placement flow: new debug button `Spawn Linked Caves` (`#spawnLinkedCaveBtn`) runs a 2-step A→B placement. Step A stores pending link state; Step B must be placed on a different island and binds both entrances to the same `caveId` so they connect.
+- Added animated dotted placement tether: while linked placement is pending, surface render draws a moving dotted guide line from Cave A to the player (`drawPendingLinkedCavePlacementGuide`) so it’s obvious where cave B is being placed.
+- Added debug cave spawn UI/state hardening: dynamic linked-cave button label (`Spawn Linked Caves` ↔ `Place Linked Cave B`), pending-link cancel/clear path, and pending state reset on debug lock/new game/load to avoid stale placement state.
+- Cache-buster bump: `/index.html` now references `styles.css?v=20260228-11` and `src/main.js?v=20260228-11` to force clients to load this cave-spawn fix build.
+- CaveV2 navigation/mob tuning pass (2026-02-27): reduced cave mob density to rare-empty + 1..4 range (`mobMinPerRoom=1`, `mobMaxPerRoom=4`, lowered spawn chances), and bumped `CAVE_V2_MOB_POPULATE_VERSION` to `3` so existing rooms repopulate with the new limits.
+- CaveV2 obstacle readability pass: blocked tiles now render as clearly solid stone blocks (stronger fill/bevel, seam line, less shadow-like appearance) and obstacle count increased (`obstacleMinPerRoom=6`, `obstacleMaxPerRoom=10`) to make cave routes harder without breaking connectivity safeguards.
+- CaveV2 passage unblock hardening (2026-02-28): added guaranteed exit-runway helpers (`getCaveV2ExitRunwayTileBounds`, `carveCaveV2GuaranteedExitRunway`, `reserveCaveV2GuaranteedExitRunway`) and wired them into both passage repair + obstacle reservation so connected exits always keep a broad clear lane from boundary to room interior.
+- Increased reserved center-to-exit path radius during obstacle placement (`reserveCaveV2PathTiles(..., radius=2)`) to prevent near-lane pinch blocks from forming beside transition corridors.
+- Bumped `CAVE_V2_PASSAGE_REPAIR_VERSION` to `5` so existing/generated rooms are auto-recarved with the new guaranteed runways on revisit/load.
+- Validation note: runtime browser loop still blocked here (`node`/`npx` unavailable), so this pass was verified via targeted code-path inspection + diff checks.
+- Multiplayer autotest hardening pass (2026-02-28): completed descriptor runner wiring for newly added stress actions so they execute instead of being silently skipped.
+- `mpAutotestRunActionDescriptor` now applies `descriptor.hostMutations` and honors `descriptor.forceReliable` when sending payloads, improving cave/village/house/boat/bridge/chest action reliability under stress.
+- Added executable craft action support: new `mpAutotestRunCraftRecipeCycle()` and `mpAutotestPickBasicCraftRecipe()` run a real craft cycle against game inventory state (with inventory-full guard behavior), and report actionable warnings on failure.
+- Changed craft edge invariant handling from immediate hard-stop to non-terminal warning during action execution, so stress runs continue through all scenarios and produce a fuller report before final pass/fail.
+- Expanded required feature coverage list with `stations` and added per-action feature attempt tracking via `mpAutotestMarkFeatureAttemptsForActionKind`.
+- Added action-level telemetry (`mpAutotestRecordActionStat`, `mpAutotestBuildActionSummaryLines`) and included action stats in pass/fail logs and failure reports for better diagnostics.
+- Feature coverage validation now fails the final run if a required feature recorded failures (`failCount > 0`), even when the action continued, improving final report quality without early abort.
+- Validation note: runtime execution still blocked in this shell (`node`/`npm`/`npx` absent), so verification here was static code-path review + diff inspection only.
+- Prompt copy simplification pass (2026-02-28): updated `compactPromptText` in `/src/main.js` to remove icon-heavy formatting (`ⓔ`, `⚔`, arrows/bullets) and normalize interaction hints to plain labels such as `Enter house (E)`, `Sleep (E)`, `Open chest (E)`, `Attack (Space)`, and `<action> (Space)`.
+- This keeps existing gameplay prompt triggers unchanged while making interaction text less decorative and more direct for trees/grass/rocks/caves/houses/sleep interactions.
+- Save badge readability restore (2026-02-28): reverted top-right save indicator from icon-only symbols back to text labels in `/src/main.js` (`setSaveStatus`) and `/index.html` default value.
+- Save states now show: `Saving game`, `Saved game`, `Save failed` (with existing colored status dot preserved).
+- Cache-buster bump: `/index.html` now references `styles.css?v=20260228-13` and `src/main.js?v=20260228-13`.
+- Craft/station item readability pass (2026-02-28): upgraded shared recipe cost chips so station + crafting menus now show larger item icons plus item names under each icon (`createRecipeItemChip`).
+- Updated recipe chip styling in `/styles.css` for cleaner no-heavy-box look, larger visuals, and clearer quantity text (`available/required`), with responsive size tuning for smaller screens.
+- Slightly increased recipe header icon size (`.recipe-icon`) and softened its frame to align with reduced-background item style.
+- Cache-buster bump: `/index.html` now references `styles.css?v=20260228-14` and `src/main.js?v=20260228-14`.
+- Win screen seed replay option (2026-02-28): added a second post-win action button `Restart Seed` under `Start New Seed` on the end overlay.
+- Added `restartCurrentSeed()` in `/src/main.js` to start a fresh run on the exact current seed (host-only), save immediately, and broadcast snapshot if hosting multiplayer.
+- Win UI state now also disables `Restart Seed` for clients (same as `Start New Seed`).
+- Cache-buster bump: `/index.html` now references `styles.css?v=20260228-15` and `src/main.js?v=20260228-15`.
+- Multiplayer join freeze fix pass (2026-02-28): hardened client join handshake to prevent pre-ready snapshot storms and connection stalls.
+- Added join handshake state + retry/backoff/timeout fields in net runtime (`joinStartedAt`, `joinRetryTimer`, `joinAttempts`, `hostConnPendingSince`, timeout flag) and wired reset paths.
+- Client now retries host connection deterministically when join socket is absent/stale; stale pending host connection is force-closed after timeout window to avoid permanent "Connecting..." hangs.
+- Host now broadcasts high-frequency `snapshot`/`motion` packets only to registered/handshaken peers, preventing expensive snapshot apply spam on not-yet-joined clients.
+- Client snapshot handling now bootstraps safely before welcome: first pre-ready snapshot is treated as welcome fallback once (avoids endless pre-ready apply loop while still supporting older hosts).
+- Update loop now runs lightweight join-handshake mode (`net.enabled && !net.isHost && !net.ready`) to keep networking active while skipping expensive world simulation until authoritative join completes.
+- No runtime Playwright/browser validation in this shell (node/npx missing); validated by targeted multiplayer code-path audit + diff integrity review.
+- Passive animal island scaling pass (2026-02-28): added `scalePassiveAnimalCapByIslandSize(baseCap, island)` and routed `getPassiveAnimalIslandCap` through it for normal + spawn islands.
+- New behavior: tiny islands clamp to 1 (`radius <= 7.5`) or 2 (`radius <= 10.5`) passive animals; larger islands gain +1 cap at radius thresholds 16/20/24/28 (up to base+4).
+- Mushroom biome cap logic remains unchanged (`mushroomMaxPerIsland`) so mushroom-specific balance rules are preserved.
+- Validation note: `npx` remains unavailable in this shell (`NPX_MISSING`), so Playwright runtime loop could not be executed here for this pass.
+- Island shape variety pass (2026-02-28): added deterministic non-circular island profiles during world generation (`createIslandShapeProfile` + `createIslandRecord`) so islands can be round/oval/lumpy/rugged across all biomes.
+- Surface terrain generation and rebuild now use shape-aware falloff (`getIslandFalloffAtPoint`) instead of circle-only `dist/radius` checks, preserving deterministic seeds while adding footprint variety.
+- Island ownership/membership checks now use shape-aware signed distance (`getIslandSignedDistanceAtPoint`) in `getIslandForTile`, spawn-island fallback scoring, and island-index lookup helpers.
+- Island-layout shift snapshot (`islandsBefore`) now keeps shape fields so entity island-delta shifts stay aligned after debug continental shifts.
+- Validation note: runtime Playwright loop could not run in this shell because `npx` is missing.
+- Spawn island biome selection update (2026-02-28): starter island is now chosen deterministically from all biome types via `pickStarterBiome(rng)`, instead of always forcing plains. Mushroom starter is now possible but super rare (`0.35%` roll), and biome coverage logic now excludes whichever biome was chosen as starter.
+- Spawn-island guardian safety update: daytime guardian spawns (`wolf/lion/polar_bear`) are now blocked on the spawn island regardless of biome via `shouldBlockSpawnIslandDayGuardian(world, island)`, preventing daytime hostile guardian pressure on the starter island.
+- Note: runtime Playwright/browser validation remains blocked in this shell because `npx` is unavailable; pass validated through targeted code-path audit and diff checks.
+- Biome stone texture pass (2026-02-28): upgraded surface stone rendering so `rock` and `biomeStone` nodes now use biome-specific palettes/vein/speck accents (`getBiomeRockVisualStyle` + `drawBiomeRockAccents`) instead of generic white/gray look. Plains stones now blend into temperate earth tones and each biome stone reads distinct while keeping gameplay unchanged.
+- Added shared color blending helpers (`colorToRgb`, `mixColor`) used by the new stone texture pass.
+
+- Mining gate update: biome stones now require highest pickaxe tier (Diamond/apex tier 6) via `getResourceRequirement`, and pickaxe upgrade descriptions were aligned so Gold no longer claims biome stone access while Diamond explicitly includes it.
