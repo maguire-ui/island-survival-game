@@ -206,3 +206,5 @@ Original prompt: Fix CaveV2 so caves use Zelda-style screen-to-screen room trans
 - Added shared color blending helpers (`colorToRgb`, `mixColor`) used by the new stone texture pass.
 
 - Mining gate update: biome stones now require highest pickaxe tier (Diamond/apex tier 6) via `getResourceRequirement`, and pickaxe upgrade descriptions were aligned so Gold no longer claims biome stone access while Diamond explicitly includes it.
+
+- Main-menu reliability fix: extracted `bindStartMenuListeners()` and bind it at init start so Play/Options/Quit/Back/Solo/Host/Join remain wired even if later init work errors. Also guarded previously unprotected listeners (`actionBtn`, `canvas`, `destroyChestBtn`) to prevent startup aborts from missing DOM nodes.

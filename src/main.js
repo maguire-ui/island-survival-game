@@ -13044,6 +13044,71 @@
     if (startOptionsMenu) startOptionsMenu.classList.toggle("active", nextView === "options");
   }
 
+  let startMenuListenersBound = false;
+  function bindStartMenuListeners() {
+    if (startMenuListenersBound) return;
+    startMenuListenersBound = true;
+    if (startScreen) {
+      startScreen.addEventListener("pointerdown", () => {
+        ensureAudioContext();
+      });
+    }
+    if (menuPlayBtn) {
+      menuPlayBtn.addEventListener("click", () => {
+        ensureAudioContext();
+        setStartMenuView("play");
+      });
+    }
+    if (menuOptionsBtn) {
+      menuOptionsBtn.addEventListener("click", () => {
+        ensureAudioContext();
+        setStartMenuView("options");
+      });
+    }
+    if (menuQuitBtn) {
+      menuQuitBtn.addEventListener("click", () => {
+        ensureAudioContext();
+        quitFromStartMenu();
+      });
+    }
+    if (menuBackFromPlayBtn) {
+      menuBackFromPlayBtn.addEventListener("click", () => {
+        ensureAudioContext();
+        setStartMenuView("main");
+      });
+    }
+    if (menuBackFromOptionsBtn) {
+      menuBackFromOptionsBtn.addEventListener("click", () => {
+        ensureAudioContext();
+        setStartMenuView("main");
+      });
+    }
+    if (menuResetWorldBtn) {
+      menuResetWorldBtn.addEventListener("click", () => {
+        ensureAudioContext();
+        resetWorldFromSettings();
+      });
+    }
+    if (soloBtn) {
+      soloBtn.addEventListener("click", () => {
+        ensureAudioContext();
+        startSolo();
+      });
+    }
+    if (hostBtn) {
+      hostBtn.addEventListener("click", () => {
+        ensureAudioContext();
+        startHost();
+      });
+    }
+    if (joinBtn) {
+      joinBtn.addEventListener("click", () => {
+        ensureAudioContext();
+        startJoin();
+      });
+    }
+  }
+
   function quitFromStartMenu() {
     try {
       window.close();
@@ -47513,6 +47578,7 @@
     resize();
     if (startScreen) startScreen.classList.remove("hidden");
     setStartMenuView("main");
+    bindStartMenuListeners();
     setSettingsTab("settings");
     updateVolumeUI();
     updateGraphicsSettingsUI();
@@ -47559,10 +47625,12 @@
       stickInputTarget.addEventListener("pointercancel", handleStickUp);
     }
 
-    actionBtn.addEventListener("pointerdown", () => {
-      ensureAudioContext();
-      interactPressed = true;
-    });
+    if (actionBtn) {
+      actionBtn.addEventListener("pointerdown", () => {
+        ensureAudioContext();
+        interactPressed = true;
+      });
+    }
     if (attackBtn) {
       attackBtn.addEventListener("pointerdown", () => {
         ensureAudioContext();
@@ -47584,11 +47652,13 @@
       });
     }
 
-    canvas.addEventListener("pointermove", handleCanvasMove);
-    canvas.addEventListener("pointerleave", handleCanvasLeave);
-    canvas.addEventListener("pointerdown", handleCanvasDown);
-    canvas.addEventListener("pointerup", handleCanvasUp);
-    canvas.addEventListener("pointercancel", handleCanvasCancel);
+    if (canvas) {
+      canvas.addEventListener("pointermove", handleCanvasMove);
+      canvas.addEventListener("pointerleave", handleCanvasLeave);
+      canvas.addEventListener("pointerdown", handleCanvasDown);
+      canvas.addEventListener("pointerup", handleCanvasUp);
+      canvas.addEventListener("pointercancel", handleCanvasCancel);
+    }
 
     buildCategoryIcons.forEach((icon) => {
       applyItemVisual(icon, icon.dataset.icon, true);
@@ -47605,7 +47675,9 @@
     });
     setBuildCategory(buildCategory, false);
 
-    destroyChestBtn.addEventListener("click", destroyActiveChest);
+    if (destroyChestBtn) {
+      destroyChestBtn.addEventListener("click", destroyActiveChest);
+    }
     if (shipRepairBtn) {
       shipRepairBtn.addEventListener("click", () => {
         ensureAudioContext();
@@ -47629,59 +47701,6 @@
         restartCurrentSeed();
       });
     }
-    if (startScreen) {
-      startScreen.addEventListener("pointerdown", () => {
-        ensureAudioContext();
-      });
-    }
-    if (menuPlayBtn) {
-      menuPlayBtn.addEventListener("click", () => {
-        ensureAudioContext();
-        setStartMenuView("play");
-      });
-    }
-    if (menuOptionsBtn) {
-      menuOptionsBtn.addEventListener("click", () => {
-        ensureAudioContext();
-        setStartMenuView("options");
-      });
-    }
-    if (menuQuitBtn) {
-      menuQuitBtn.addEventListener("click", () => {
-        ensureAudioContext();
-        quitFromStartMenu();
-      });
-    }
-    if (menuBackFromPlayBtn) {
-      menuBackFromPlayBtn.addEventListener("click", () => {
-        ensureAudioContext();
-        setStartMenuView("main");
-      });
-    }
-    if (menuBackFromOptionsBtn) {
-      menuBackFromOptionsBtn.addEventListener("click", () => {
-        ensureAudioContext();
-        setStartMenuView("main");
-      });
-    }
-    if (menuResetWorldBtn) {
-      menuResetWorldBtn.addEventListener("click", () => {
-        ensureAudioContext();
-        resetWorldFromSettings();
-      });
-    }
-    if (soloBtn) soloBtn.addEventListener("click", () => {
-      ensureAudioContext();
-      startSolo();
-    });
-    if (hostBtn) hostBtn.addEventListener("click", () => {
-      ensureAudioContext();
-      startHost();
-    });
-    if (joinBtn) joinBtn.addEventListener("click", () => {
-      ensureAudioContext();
-      startJoin();
-    });
     if (seedDisplay) {
       seedDisplay.addEventListener("click", () => {
         ensureAudioContext();
