@@ -363,6 +363,24 @@
         if (options) options.classList.toggle("active", next === "options");
       }
 
+      function bindMenuFallbackHandlers() {
+        const byId = (id) => document.getElementById(id);
+        const safe = (el, handler) => {
+          if (!el || el.__menuBound) return;
+          el.__menuBound = true;
+          el.addEventListener("click", handler);
+        };
+        safe(byId("menuPlayBtn"), () => window.isgMenuAction("play"));
+        safe(byId("menuOptionsBtn"), () => window.isgMenuAction("options"));
+        safe(byId("menuQuitBtn"), () => window.isgMenuAction("quit"));
+        safe(byId("menuBackFromPlayBtn"), () => window.isgMenuAction("back"));
+        safe(byId("menuBackFromOptionsBtn"), () => window.isgMenuAction("back"));
+        safe(byId("menuResetWorldBtn"), () => window.isgMenuAction("resetSeed"));
+        safe(byId("soloBtn"), () => window.isgMenuAction("solo"));
+        safe(byId("hostBtn"), () => window.isgMenuAction("host"));
+        safe(byId("joinBtn"), () => window.isgMenuAction("join"));
+      }
+
       window.isgMenuAction = function isgMenuAction(action) {
         try {
           const api = window.__isgMenuApi || null;
@@ -383,9 +401,10 @@
         else if (action === "options") setMenuView("options");
         else if (action === "back") setMenuView("main");
       };
+      bindMenuFallbackHandlers();
     })();
   </script>
   <script src="https://unpkg.com/peerjs@1.5.5/dist/peerjs.min.js"></script>
-  <script src="src/main.js?v=20260228-19"></script>
+  <script src="src/main.js?v=20260228-20"></script>
 </body>
 </html>
