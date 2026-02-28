@@ -47866,5 +47866,8 @@
     gameLoop();
   }
 
+  // Bind start-menu controls before heavy init so menu remains usable even if
+  // later startup logic throws on a bad save/state edge case.
+  bindStartMenuListeners();
   init();
 })();
