@@ -9934,36 +9934,52 @@
   }
 
   function ensureAudioContext() {
-    const AudioCtor = window.AudioContext || window.webkitAudioContext;
-    if (!AudioCtor) return null;
-    if (!audio.ctx) {
-      const ctx = new AudioCtor();
-      const master = ctx.createGain();
-      master.gain.value = 0.88;
-      const limiter = ctx.createDynamicsCompressor();
-      limiter.threshold.setValueAtTime(-18, ctx.currentTime);
-      limiter.knee.setValueAtTime(18, ctx.currentTime);
-      limiter.ratio.setValueAtTime(8, ctx.currentTime);
-      limiter.attack.setValueAtTime(0.003, ctx.currentTime);
-      limiter.release.setValueAtTime(0.18, ctx.currentTime);
-      master.connect(limiter);
-      limiter.connect(ctx.destination);
-      const musicBus = ctx.createGain();
-      const sfxBus = ctx.createGain();
-      const sfxDcBlocker = ctx.createBiquadFilter();
-      sfxDcBlocker.type = "highpass";
-      sfxDcBlocker.frequency.setValueAtTime(18, ctx.currentTime);
-      sfxDcBlocker.Q.setValueAtTime(0.68, ctx.currentTime);
-      musicBus.connect(master);
-      sfxBus.connect(sfxDcBlocker);
-      sfxDcBlocker.connect(master);
-      audio.ctx = ctx;
-      audio.master = master;
-      audio.limiter = limiter;
-      audio.musicBus = musicBus;
-      audio.sfxBus = sfxBus;
-      audio.sfxDcBlocker = sfxDcBlocker;
-      audio.enabled = true;
+    try {
+      const AudioCtor = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtor) return null;
+      if (!audio.ctx) {
+        const ctx = new AudioCtor();
+        const master = ctx.createGain();
+        master.gain.value = 0.88;
+        const limiter = ctx.createDynamicsCompressor();
+        limiter.threshold.setValueAtTime(-18, ctx.currentTime);
+        limiter.knee.setValueAtTime(18, ctx.currentTime);
+        limiter.ratio.setValueAtTime(8, ctx.currentTime);
+        limiter.attack.setValueAtTime(0.003, ctx.currentTime);
+        limiter.release.setValueAtTime(0.18, ctx.currentTime);
+        master.connect(limiter);
+        limiter.connect(ctx.destination);
+        const musicBus = ctx.createGain();
+        const sfxBus = ctx.createGain();
+        const sfxDcBlocker = ctx.createBiquadFilter();
+        sfxDcBlocker.type = "highpass";
+        sfxDcBlocker.frequency.setValueAtTime(18, ctx.currentTime);
+        sfxDcBlocker.Q.setValueAtTime(0.68, ctx.currentTime);
+        musicBus.connect(master);
+        sfxBus.connect(sfxDcBlocker);
+        sfxDcBlocker.connect(master);
+        audio.ctx = ctx;
+        audio.master = master;
+        audio.limiter = limiter;
+        audio.musicBus = musicBus;
+        audio.sfxBus = sfxBus;
+        audio.sfxDcBlocker = sfxDcBlocker;
+        audio.enabled = true;
+        applyAudioLevels();
+        updateBackgroundMusicPlayback();
+        ensurePlayerHitSampleLoaded();
+        ensureGreenCowMooSampleLoaded();
+        ensureGoatBleatSampleLoaded();
+        ensureBoarGruntSampleLoaded();
+        ensureLionAggroSampleLoaded();
+        ensureWolfChaseSampleLoaded();
+        ensurePolarBearChaseSampleLoaded();
+        ensurePoisonBottleBreakSampleLoaded();
+        ensureSkeletonArrowShootSampleLoaded();
+      }
+      if (audio.ctx.state === "suspended") {
+        audio.ctx.resume().catch(() => {});
+      }
       applyAudioLevels();
       updateBackgroundMusicPlayback();
       ensurePlayerHitSampleLoaded();
@@ -9975,21 +9991,19 @@
       ensurePolarBearChaseSampleLoaded();
       ensurePoisonBottleBreakSampleLoaded();
       ensureSkeletonArrowShootSampleLoaded();
+      ensureGreenCowMooSampleLoaded();
+      ensureGoatBleatSampleLoaded();
+      ensureBoarGruntSampleLoaded();
+      ensureLionAggroSampleLoaded();
+      ensureWolfChaseSampleLoaded();
+      ensurePolarBearChaseSampleLoaded();
+      ensurePoisonBottleBreakSampleLoaded();
+      ensureSkeletonArrowShootSampleLoaded();
+      return audio.ctx;
+    } catch (err) {
+      console.warn("Audio context initialization failed; continuing without audio unlock.", err);
+      return null;
     }
-    if (audio.ctx.state === "suspended") {
-      audio.ctx.resume().catch(() => {});
-    }
-    updateBackgroundMusicPlayback();
-    ensurePlayerHitSampleLoaded();
-    ensureGreenCowMooSampleLoaded();
-    ensureGoatBleatSampleLoaded();
-    ensureBoarGruntSampleLoaded();
-    ensureLionAggroSampleLoaded();
-    ensureWolfChaseSampleLoaded();
-    ensurePolarBearChaseSampleLoaded();
-    ensurePoisonBottleBreakSampleLoaded();
-    ensureSkeletonArrowShootSampleLoaded();
-    return audio.ctx;
   }
 
   function createMusicTrackOrder() {
@@ -13106,6 +13120,47 @@
         ensureAudioContext();
         startJoin();
       });
+    }
+  }
+
+  function installStartMenuApiBridge() {
+    try {
+      window.__isgMenuApi = {
+        showMain: () => {
+          ensureAudioContext();
+          setStartMenuView("main");
+        },
+        showPlay: () => {
+          ensureAudioContext();
+          setStartMenuView("play");
+        },
+        showOptions: () => {
+          ensureAudioContext();
+          setStartMenuView("options");
+        },
+        quit: () => {
+          ensureAudioContext();
+          quitFromStartMenu();
+        },
+        solo: () => {
+          ensureAudioContext();
+          startSolo();
+        },
+        host: () => {
+          ensureAudioContext();
+          startHost();
+        },
+        join: () => {
+          ensureAudioContext();
+          startJoin();
+        },
+        resetSeed: () => {
+          ensureAudioContext();
+          resetWorldFromSettings();
+        },
+      };
+    } catch (err) {
+      console.warn("Failed to install start menu API bridge.", err);
     }
   }
 
@@ -47866,8 +47921,9 @@
     gameLoop();
   }
 
-  // Bind start-menu controls before heavy init so menu remains usable even if
-  // later startup logic throws on a bad save/state edge case.
+  // Install a global menu bridge and bind controls before heavy init so menu
+  // actions remain usable even if later startup logic throws.
+  installStartMenuApiBridge();
   bindStartMenuListeners();
   init();
 })();

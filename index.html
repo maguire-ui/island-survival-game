@@ -23,19 +23,19 @@
       <div class="start-menu-shell">
         <div id="startMainMenu" class="start-menu-view active">
           <div class="start-menu-stack">
-            <button id="menuPlayBtn" class="start-menu-btn" type="button">Play</button>
-            <button id="menuOptionsBtn" class="start-menu-btn" type="button">Options</button>
-            <button id="menuQuitBtn" class="start-menu-btn" type="button">Quit</button>
+            <button id="menuPlayBtn" class="start-menu-btn" type="button" onclick="window.isgMenuAction && window.isgMenuAction('play')">Play</button>
+            <button id="menuOptionsBtn" class="start-menu-btn" type="button" onclick="window.isgMenuAction && window.isgMenuAction('options')">Options</button>
+            <button id="menuQuitBtn" class="start-menu-btn" type="button" onclick="window.isgMenuAction && window.isgMenuAction('quit')">Quit</button>
           </div>
         </div>
         <div id="startPlayMenu" class="start-menu-view">
           <div class="start-subhead">Play</div>
           <div class="start-menu-stack">
-            <button id="soloBtn" class="start-menu-btn" type="button">Solo</button>
-            <button id="hostBtn" class="start-menu-btn" type="button">Host</button>
-            <button id="joinBtn" class="start-menu-btn" type="button">Join</button>
+            <button id="soloBtn" class="start-menu-btn" type="button" onclick="window.isgMenuAction && window.isgMenuAction('solo')">Solo</button>
+            <button id="hostBtn" class="start-menu-btn" type="button" onclick="window.isgMenuAction && window.isgMenuAction('host')">Host</button>
+            <button id="joinBtn" class="start-menu-btn" type="button" onclick="window.isgMenuAction && window.isgMenuAction('join')">Join</button>
           </div>
-          <button id="menuBackFromPlayBtn" class="start-menu-back-btn" type="button">Back</button>
+          <button id="menuBackFromPlayBtn" class="start-menu-back-btn" type="button" onclick="window.isgMenuAction && window.isgMenuAction('back')">Back</button>
         </div>
         <div id="startOptionsMenu" class="start-menu-view">
           <div class="start-subhead">Options</div>
@@ -80,8 +80,8 @@
             </label>
             <input id="menuRenderScale" class="settings-slider start-settings-slider" type="range" min="55" max="120" step="5" value="100" />
           </div>
-          <button id="menuResetWorldBtn" class="start-menu-utility-btn" type="button">Reset Seed</button>
-          <button id="menuBackFromOptionsBtn" class="start-menu-back-btn" type="button">Back</button>
+          <button id="menuResetWorldBtn" class="start-menu-utility-btn" type="button" onclick="window.isgMenuAction && window.isgMenuAction('resetSeed')">Reset Seed</button>
+          <button id="menuBackFromOptionsBtn" class="start-menu-back-btn" type="button" onclick="window.isgMenuAction && window.isgMenuAction('back')">Back</button>
         </div>
       </div>
     </div>
@@ -351,7 +351,41 @@
     </div>
   </div>
 
+  <script>
+    (function () {
+      function setMenuView(view) {
+        const next = view === "play" || view === "options" ? view : "main";
+        const main = document.getElementById("startMainMenu");
+        const play = document.getElementById("startPlayMenu");
+        const options = document.getElementById("startOptionsMenu");
+        if (main) main.classList.toggle("active", next === "main");
+        if (play) play.classList.toggle("active", next === "play");
+        if (options) options.classList.toggle("active", next === "options");
+      }
+
+      window.isgMenuAction = function isgMenuAction(action) {
+        try {
+          const api = window.__isgMenuApi || null;
+          if (api) {
+            if (action === "play" && typeof api.showPlay === "function") return api.showPlay();
+            if (action === "options" && typeof api.showOptions === "function") return api.showOptions();
+            if (action === "back" && typeof api.showMain === "function") return api.showMain();
+            if (action === "quit" && typeof api.quit === "function") return api.quit();
+            if (action === "solo" && typeof api.solo === "function") return api.solo();
+            if (action === "host" && typeof api.host === "function") return api.host();
+            if (action === "join" && typeof api.join === "function") return api.join();
+            if (action === "resetSeed" && typeof api.resetSeed === "function") return api.resetSeed();
+          }
+        } catch (err) {
+          console.warn("Menu action bridge call failed.", err);
+        }
+        if (action === "play") setMenuView("play");
+        else if (action === "options") setMenuView("options");
+        else if (action === "back") setMenuView("main");
+      };
+    })();
+  </script>
   <script src="https://unpkg.com/peerjs@1.5.5/dist/peerjs.min.js"></script>
-  <script src="src/main.js?v=20260228-17"></script>
+  <script src="src/main.js?v=20260228-19"></script>
 </body>
 </html>
