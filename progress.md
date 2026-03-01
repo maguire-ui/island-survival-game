@@ -216,3 +216,5 @@ Original prompt: Fix CaveV2 so caves use Zelda-style screen-to-screen room trans
 - Critical menu fallback fix: main-menu buttons now have direct `onclick` bridge calls (`window.isgMenuAction`) plus a global fallback script in index.html. Added `window.__isgMenuApi` bridge in main.js so Play/Options/Back/Solo/Host/Join/Reset work even if listener binding fails later. Cache-buster bumped to `main.js?v=20260228-19`.
 
 - Menu buttons hard-fix: added document-level click delegate for main menu buttons in index.html so Solo/Host/Join work even if individual listeners fail; cache-buster -> v=20260228-21.
+
+- Menu bridge externalized: added src/menu-bridge.js and moved all start-menu click handling + fallback queue there to avoid CSP inline-script blocking. index.html now loads menu-bridge before main.js and removes inline onclicks. Cache-buster -> main.js?v=20260228-24.
