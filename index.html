@@ -381,6 +381,31 @@
         safe(byId("joinBtn"), () => window.isgMenuAction("join"));
       }
 
+      function bindMenuEventDelegate() {
+        if (document.__menuDelegateBound) return;
+        document.__menuDelegateBound = true;
+        document.addEventListener("click", (event) => {
+          const btn = event.target && event.target.closest ? event.target.closest("button") : null;
+          if (!btn || !btn.id) return;
+          const map = {
+            menuPlayBtn: "play",
+            menuOptionsBtn: "options",
+            menuQuitBtn: "quit",
+            menuBackFromPlayBtn: "back",
+            menuBackFromOptionsBtn: "back",
+            menuResetWorldBtn: "resetSeed",
+            soloBtn: "solo",
+            hostBtn: "host",
+            joinBtn: "join",
+          };
+          const action = map[btn.id];
+          if (action) {
+            event.preventDefault();
+            window.isgMenuAction && window.isgMenuAction(action);
+          }
+        });
+      }
+
       window.isgMenuAction = function isgMenuAction(action) {
         try {
           const api = window.__isgMenuApi || null;
@@ -402,9 +427,10 @@
         else if (action === "back") setMenuView("main");
       };
       bindMenuFallbackHandlers();
+      bindMenuEventDelegate();
     })();
   </script>
   <script src="https://unpkg.com/peerjs@1.5.5/dist/peerjs.min.js"></script>
-  <script src="src/main.js?v=20260228-20"></script>
+  <script src="src/main.js?v=20260228-21"></script>
 </body>
 </html>
