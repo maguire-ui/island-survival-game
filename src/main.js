@@ -13159,6 +13159,13 @@
           resetWorldFromSettings();
         },
       };
+      if (window.__pendingMenuAction) {
+        const pending = window.__pendingMenuAction;
+        window.__pendingMenuAction = null;
+        if (typeof window.isgMenuAction === "function") {
+          window.isgMenuAction(pending);
+        }
+      }
     } catch (err) {
       console.warn("Failed to install start menu API bridge.", err);
     }

@@ -425,12 +425,22 @@
         if (action === "play") setMenuView("play");
         else if (action === "options") setMenuView("options");
         else if (action === "back") setMenuView("main");
+        else if (action === "solo" || action === "host" || action === "join" || action === "resetSeed") {
+          window.__pendingMenuAction = action;
+        }
       };
       bindMenuFallbackHandlers();
       bindMenuEventDelegate();
+      window.__menuBridgeTimer = window.__menuBridgeTimer || setInterval(() => {
+        if (!window.__pendingMenuAction) return;
+        if (!window.__isgMenuApi) return;
+        const action = window.__pendingMenuAction;
+        window.__pendingMenuAction = null;
+        window.isgMenuAction && window.isgMenuAction(action);
+      }, 200);
     })();
   </script>
   <script src="https://unpkg.com/peerjs@1.5.5/dist/peerjs.min.js"></script>
-  <script src="src/main.js?v=20260228-21"></script>
+  <script src="src/main.js?v=20260228-22"></script>
 </body>
 </html>
