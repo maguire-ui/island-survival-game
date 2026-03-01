@@ -6340,6 +6340,8 @@
         }
         const shouldRetryNow = !!forceRetryReason;
         if (shouldRetryNow || assertion.checks >= (assertion.maxChecks || 8)) {
+          const hpBefore = assertion.beforeHp ?? "?";
+          const dropsBefore = Number.isFinite(assertion.beforeDropCount) ? assertion.beforeDropCount : 0;
           const rejectedRetry = shouldRetryNow && forceRetryReason.startsWith("rejected:");
           if (rejectedRetry) {
             assertion.rejectionRetries = (assertion.rejectionRetries || 0) + 1;
@@ -6362,7 +6364,7 @@
               `Harvest probe inconclusive (${assertion.world}) resId=${assertion.resId}; retry ${assertion.softFailures}/${timeoutAllowances}${retried ? " (resent)" : ""}${forceRetryReason ? ` (${forceRetryReason})` : ""}${rejectedRetry ? ` rj=${assertion.rejectionRetries || 0}` : ""}`
             );
             mpAutotestLogLine(
-              `harvest probe retry ${assertion.softFailures}/${timeoutAllowances} (${assertion.world}) resId=${assertion.resId} hp=${assertion.beforeHp ?? "?"} drops=${assertion.beforeDropCount || 0}${retried ? " resent=1" : " resent=0"}${forceRetryReason ? ` reason=${forceRetryReason}` : ""}${rejectedRetry ? ` rejectRetries=${assertion.rejectionRetries || 0}` : ""}`
+              `harvest probe retry ${assertion.softFailures}/${timeoutAllowances} (${assertion.world}) resId=${assertion.resId} hp=${hpBefore} drops=${dropsBefore}${retried ? " resent=1" : " resent=0"}${forceRetryReason ? ` reason=${forceRetryReason}` : ""}${rejectedRetry ? ` rejectRetries=${assertion.rejectionRetries || 0}` : ""}`
             );
             next.push(assertion);
             continue;
@@ -6377,7 +6379,7 @@
               `Harvest assertion inconclusive (${assertion.world}) resId=${assertion.resId} (${mpAutotest.harvestAssertionInconclusiveCount}/${inconclusiveLimit})`
             );
             mpAutotestLogLine(
-              `harvest assertion inconclusive ${mpAutotest.harvestAssertionInconclusiveCount}/${inconclusiveLimit} (${assertion.world}) resId=${assertion.resId} hp=${assertion.beforeHp ?? "?"} drops=${assertion.beforeDropCount || 0}`
+              `harvest assertion inconclusive ${mpAutotest.harvestAssertionInconclusiveCount}/${inconclusiveLimit} (${assertion.world}) resId=${assertion.resId} hp=${hpBefore} drops=${dropsBefore}`
             );
             continue;
           }
@@ -6387,7 +6389,7 @@
             `Harvest assertion limit reached (${assertion.world}) resId=${assertion.resId}; downgraded to warning`
           );
           mpAutotestLogLine(
-            `harvest assertion soft-pass limit reached (${assertion.world}) resId=${assertion.resId} hp=${assertion.beforeHp ?? "?"} drops=${assertion.beforeDropCount || 0}`
+            `harvest assertion soft-pass limit reached (${assertion.world}) resId=${assertion.resId} hp=${hpBefore} drops=${dropsBefore}`
           );
           continue;
         }
@@ -9643,8 +9645,12 @@
     }
     const mode = modeId === "stress" ? MP_AUTOTEST_MODES.stress : MP_AUTOTEST_MODES.quick;
     const replayBundle = opts.replayBundle || null;
+    const requestedClientsRaw = Number.parseInt(
+      replayBundle?.clients ?? mpAutotestClientsInput?.value ?? "1",
+      10
+    );
     const requestedClients = clamp(
-      Number.parseInt(replayBundle?.clients ?? mpAutotestClientsInput?.value ?? "1", 10) || 1,
+      Number.isFinite(requestedClientsRaw) && requestedClientsRaw > 0 ? requestedClientsRaw : 1,
       1,
       3
     );
@@ -14039,31 +14045,31 @@
         attackCooldown: variant.attackCooldown,
         aggroRange: variant.aggroRange,
         rangedRange: variant.rangedRange,
-        attackTimer: Math.max(
-          0,
-          Number(monster.attackTimer ?? prev?.attackTimer) || 0
-        ),
+        attackTimer: (() => {
+          const base = Number(monster.attackTimer ?? prev?.attackTimer);
+          return Math.max(0, Number.isFinite(base) ? base : 0);
+        })(),
         hitTimer: 0,
         wanderTimer: 0,
         dayBurning: !!monster.dayBurning || burnTimer > 0,
         burnTimer,
         burnDuration,
-        poisonDuration: Math.max(
-          0,
-          Number(
+        poisonDuration: (() => {
+          const base = Number(
             monster.poisonDuration
             ?? prev?.poisonDuration
             ?? variant.poisonDuration
-          ) || 0
-        ),
-        poisonDps: Math.max(
-          0,
-          Number(
+          );
+          return Math.max(0, Number.isFinite(base) ? base : 0);
+        })(),
+        poisonDps: (() => {
+          const base = Number(
             monster.poisonDps
             ?? prev?.poisonDps
             ?? variant.poisonDps
-          ) || 0
-        ),
+          );
+          return Math.max(0, Number.isFinite(base) ? base : 0);
+        })(),
         dir: { x: 0, y: 0 },
         renderX: validPos.x,
         renderY: validPos.y,
@@ -14788,7 +14794,7 @@
           spawnedByPlayer: false,
           hostileBlocked: false,
           surfaceLinkTargetCaveId: null,
-          seedInt: world.seedInt ?? seedToInt(world.seed || "island"),
+          seedInt: world.seedInt ?? seedToInt(normalizeSeedValue(world.seed)),
           linkConfig: null,
           layers: [],
           world: null,
@@ -27681,7 +27687,7 @@
 
   function seedSurfaceVillages(world) {
     if (!world || !Array.isArray(world.islands)) return;
-    const rng = makeRng((world.seedInt ?? seedToInt(world.seed || "island")) + 170341);
+    const rng = makeRng((world.seedInt ?? seedToInt(normalizeSeedValue(world.seed))) + 170341);
     const starterVillageChance = 0.03;
     const allowRareNearCaveVillage = rng() < VILLAGE_SEEDING_CONFIG.rareNearCaveSeedChance;
     let consumedRareNearCaveVillage = false;
@@ -27873,7 +27879,7 @@
     if (!world || !Array.isArray(state.structures)) return 0;
     const centers = getVillageCenters(world, { includePlayerSpawned: false });
     if (centers.length === 0) return 0;
-    const seedBase = ((world.seedInt ?? seedToInt(world.seed || "island")) ^ 0x5b1d3a77) >>> 0;
+    const seedBase = ((world.seedInt ?? seedToInt(normalizeSeedValue(world.seed))) ^ 0x5b1d3a77) >>> 0;
     let added = 0;
 
     for (const center of centers) {
@@ -28963,7 +28969,7 @@
     world.nextAnimalId = world.nextAnimalId || 1;
     world.animalSpawnTimer = 3;
     const passiveTargets = getSurfacePassiveAnimalTargets(world);
-    const initialAnimalRng = makeRng(((world.seedInt ?? seedToInt(world.seed || normalizedSeed)) ^ 0x53a9f11d) >>> 0);
+    const initialAnimalRng = makeRng(((world.seedInt ?? seedToInt(normalizeSeedValue(world.seed ?? normalizedSeed))) ^ 0x53a9f11d) >>> 0);
     world.villagers = world.villagers || [];
     world.nextVillagerId = world.nextVillagerId || 1;
     seedSurfaceAnimals(world, passiveTargets.baselineAnimals, { rng: initialAnimalRng, minSpacingTiles: 5.6 });
@@ -29070,7 +29076,7 @@
         : sanitizeSaveForCurrentLayout(saved, targetSeed);
       const world = generateWorld(preparedSave.seed);
       const passiveTargets = getSurfacePassiveAnimalTargets(world);
-      const restoreAnimalRng = makeRng(((world.seedInt ?? seedToInt(world.seed || preparedSave.seed || targetSeed)) ^ 0x6f47b3c1) >>> 0);
+    const restoreAnimalRng = makeRng(((world.seedInt ?? seedToInt(normalizeSeedValue(world.seed ?? preparedSave.seed ?? targetSeed))) ^ 0x6f47b3c1) >>> 0);
       normalizeSurfaceResources(world);
       if (Array.isArray(preparedSave.islandLayout)) {
         applySurfaceIslandLayout(world, preparedSave.islandLayout, { shiftSession: false });
@@ -30252,7 +30258,7 @@
       }
     }
     if (caves.length < 2) return changed;
-    const seedInt = world.seedInt ?? seedToInt(world.seed || "island");
+    const seedInt = world.seedInt ?? seedToInt(normalizeSeedValue(world.seed));
     const minCrossIslandLinkDistance = Math.max(5, world.size * 0.03);
     const relaxedCrossIslandLinkDistance = Math.max(3, Math.floor(minCrossIslandLinkDistance * 0.6));
     const desiredPairCount = Math.max(
@@ -30425,7 +30431,7 @@
     const size = caveWorld.size;
     const seedInt = cave.seedInt
       ?? surfaceWorld?.seedInt
-      ?? seedToInt(surfaceWorld?.seed || "island");
+      ?? seedToInt(normalizeSeedValue(surfaceWorld?.seed));
     const oreKinds = getFallbackCaveOreKindsForLayer(layerIndex);
     const desiredCount = 3 + Math.min(normalizeCaveLayerIndex(layerIndex), 2);
     let added = 0;
@@ -30499,7 +30505,7 @@
     const surfaceLinkTargetCaveId = Number.isInteger(options?.surfaceLinkTargetCaveId)
       ? options.surfaceLinkTargetCaveId
       : null;
-    const seedInt = world.seedInt ?? seedToInt(world.seed || "island");
+    const seedInt = world.seedInt ?? seedToInt(normalizeSeedValue(world.seed));
     const usedIds = new Set(world.caves.map((entry) => entry.id));
     let id = typeof preferredId === "number" ? preferredId : 0;
     if (!Number.isFinite(id) || usedIds.has(id)) {
@@ -30567,7 +30573,7 @@
     if (!cave) return buildCaveLayerLinkConfig(0, 0);
     const fallbackSeed = cave.seedInt
       ?? surfaceWorld?.seedInt
-      ?? seedToInt(surfaceWorld?.seed || "island");
+      ?? seedToInt(normalizeSeedValue(surfaceWorld?.seed));
     const fallback = buildCaveLayerLinkConfig(fallbackSeed, cave.id);
     const raw = cave.linkConfig;
     let normalized = fallback;
@@ -30982,7 +30988,7 @@
     const seedInt = cave?.seedInt
       ?? state.surfaceWorld?.seedInt
       ?? state.world?.seedInt
-      ?? seedToInt(state.surfaceWorld?.seed || state.world?.seed || "island");
+      ?? seedToInt(normalizeSeedValue(state.surfaceWorld?.seed ?? state.world?.seed));
     const entrance = world.entrance && Number.isInteger(world.entrance.tx) && Number.isInteger(world.entrance.ty)
       ? world.entrance
       : { tx: Math.floor(size / 2), ty: Math.floor(size / 2) };
@@ -31171,7 +31177,7 @@
       if (!referenceWorld) {
         const seedInt = cave.seedInt
           ?? worldRef?.seedInt
-          ?? seedToInt(worldRef?.seed || "island");
+          ?? seedToInt(normalizeSeedValue(worldRef?.seed));
         referenceWorld = generateCaveWorld(seedInt, cave.id, {
           spawnHostiles: false,
           layerIndex: normalizedLayer,
@@ -31266,7 +31272,7 @@
     }
     const seedInt = cave.seedInt
       ?? worldRef?.seedInt
-      ?? seedToInt(worldRef?.seed || "island");
+      ?? seedToInt(normalizeSeedValue(worldRef?.seed));
     cave.seedInt = seedInt;
     const linkConfig = getNormalizedCaveLinkConfig(cave, worldRef);
     const layerWorld = generateCaveWorld(seedInt, cave.id, {
@@ -34241,7 +34247,8 @@
     const requiredQty = Math.max(1, Number.isFinite(qty) ? Math.floor(qty) : Number(qty) || 1);
     const hasAvailability = Number.isFinite(availableQty);
     const normalizedAvailable = hasAvailability ? Math.max(0, Math.floor(availableQty)) : null;
-    const itemName = ITEMS[itemId]?.name ?? String(itemId || "").replace(/_/g, " ").trim() || "Item";
+    const itemName = ITEMS[itemId]?.name
+      ?? (String(itemId ?? "").replace(/_/g, " ").trim() || "Item");
     const chip = document.createElement("span");
     chip.className = "recipe-cost-chip";
     if (met) chip.classList.add("met");
@@ -36439,8 +36446,14 @@
       dayBurning: !!options.dayBurning,
       burnTimer: Math.max(0, Number(options.burnTimer) || 0),
       burnDuration: Math.max(0, Number(options.burnDuration) || 0),
-      poisonDuration: Math.max(0, Number(options.poisonDuration ?? variant.poisonDuration) || 0),
-      poisonDps: Math.max(0, Number(options.poisonDps ?? variant.poisonDps) || 0),
+      poisonDuration: (() => {
+        const base = Number(options.poisonDuration ?? variant.poisonDuration);
+        return Math.max(0, Number.isFinite(base) ? base : 0);
+      })(),
+      poisonDps: (() => {
+        const base = Number(options.poisonDps ?? variant.poisonDps);
+        return Math.max(0, Number.isFinite(base) ? base : 0);
+      })(),
       dir: { x: 0, y: 0 },
     };
     world.monsters.push(monster);
@@ -38330,13 +38343,14 @@
   function getMonsterPoisonPayload(monster) {
     if (!monster) return null;
     const variant = getMonsterVariant(monster.type);
-    const duration = Math.max(
-      0,
-      Number(monster.poisonDuration ?? variant.poisonDuration) || 0
-    );
+    const duration = (() => {
+      const base = Number(monster.poisonDuration ?? variant.poisonDuration);
+      return Math.max(0, Number.isFinite(base) ? base : 0);
+    })();
     if (duration <= 0) return null;
+    const dpsBase = Number(monster.poisonDps ?? variant.poisonDps ?? POISON_STATUS.defaultDps);
     const dps = clamp(
-      Number(monster.poisonDps ?? variant.poisonDps ?? POISON_STATUS.defaultDps) || POISON_STATUS.defaultDps,
+      Number.isFinite(dpsBase) ? dpsBase : POISON_STATUS.defaultDps,
       POISON_STATUS.minDps,
       POISON_STATUS.maxDps
     );
