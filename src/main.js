@@ -47931,6 +47931,7 @@
   // Install a global menu bridge and bind controls before heavy init so menu
   // actions remain usable even if later startup logic throws.
   installStartMenuApiBridge();
+  window.__gameMainLoaded = true;
   bindStartMenuListeners();
   init();
 })();

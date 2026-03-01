@@ -440,7 +440,49 @@
       }, 200);
     })();
   </script>
+  <script>
+    (function () {
+      function showMenuError(message) {
+        var existing = document.getElementById("menuBootError");
+        if (existing) {
+          existing.textContent = message;
+          return;
+        }
+        var el = document.createElement("div");
+        el.id = "menuBootError";
+        el.style.position = "fixed";
+        el.style.left = "50%";
+        el.style.top = "18px";
+        el.style.transform = "translateX(-50%)";
+        el.style.zIndex = "9999";
+        el.style.padding = "10px 16px";
+        el.style.background = "rgba(20, 24, 33, 0.92)";
+        el.style.color = "#f4f4f4";
+        el.style.border = "1px solid rgba(255, 255, 255, 0.12)";
+        el.style.borderRadius = "10px";
+        el.style.font = "600 13px/1.2 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+        el.style.boxShadow = "0 8px 18px rgba(0,0,0,0.35)";
+        el.textContent = message;
+        document.body.appendChild(el);
+      }
+
+      window.addEventListener("error", function (event) {
+        var msg = event && event.message ? event.message : "Unknown error";
+        showMenuError("Game failed to start: " + msg);
+      });
+      window.addEventListener("unhandledrejection", function (event) {
+        var msg = event && event.reason ? (event.reason.message || String(event.reason)) : "Unhandled rejection";
+        showMenuError("Game failed to start: " + msg);
+      });
+
+      setTimeout(function () {
+        if (!window.__gameMainLoaded) {
+          showMenuError("Game script did not finish loading. Check for startup errors.");
+        }
+      }, 2000);
+    })();
+  </script>
   <script src="https://unpkg.com/peerjs@1.5.5/dist/peerjs.min.js"></script>
-  <script src="src/main.js?v=20260228-22"></script>
+  <script src="src/main.js?v=20260228-23"></script>
 </body>
 </html>
