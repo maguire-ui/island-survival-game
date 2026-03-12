@@ -235,3 +235,14 @@ Original prompt: Fix CaveV2 so caves use Zelda-style screen-to-screen room trans
 - Multiplayer join hydration optimization (2026-03-11 follow-up): `welcome` snapshots now include optional `surfaceStatic` payload (terrain/island static state) and clients build surface world from this payload via `buildSurfaceWorldFromStaticSnapshot` before applying dynamic snapshot state.
 - This avoids forced `generateWorld(seed)` on fresh client join when host provides static snapshot data, reducing join-time CPU spikes while keeping packet names backward-compatible (`surfaceStatic` is optional).
 - Serialization compatibility update: biome stone `resourceStates` now optionally persist `biomeId`, `originIslandId`, and `isBiomeStone`; load path consumes/backfills these fields without breaking older saves/snapshots.
+- 2026-03-11 (stability/perf/mp recovery pass): completed remaining implementation wiring for the Stability + Cave Routing + Performance + Multiplayer Recovery plan.
+- Performance/smoothness: replaced variable-dt game loop with fixed-step simulation (`1/60`) + frame interpolation (`applyFrameInterpolation`) and added `window.advanceTime(ms)` deterministic stepping hook for automation.
+- Runtime optimization profile is now active at runtime (not config-only): profile drives world step cap, max fixed steps, ambient fish spawn density/cap, ocean decor stride, network send cadences, and remote smoothing multipliers.
+- Multiplayer cadence wiring: host/client send timers now use dynamic cadence (`getNetworkCadenceConfig`) and are reset through `syncNetworkCadenceTimers({ reset: true })` across all MP start/reset paths.
+- Multiplayer join hardening: added `failJoinToMenu(code, detail)` fallback with explicit reason codes and automatic one-retry timeout flow preserved (`joinAutoReconnectsRemaining = 1` before fallback).
+- Join progress UX: `handleJoinProgress` now respects host phase metadata (`awaitHello -> hello`, welcome/snapshot/reconnect) so loading overlay stage text is more accurate.
+- Loading UX: startup/seed-reset/restart/switch tasks now present staged overlay text (`Generating` -> `Restoring` -> `Syncing` -> `Ready`).
+- CaveV2 linked routing finalization: removed implicit fallback to linked exit when no explicit exit intent exists (`resolveLinkedCaveV2ExitSurfacePos` now requires pending/explicit target), preventing global linked-exit override behavior.
+- Mini-map/debug ordering: added a third under-map toggle row for `Continental Shift` below existing mini-map toggles, including click handling and host-only availability indicator.
+- Cache-buster bump: `index.html` now references `styles.css?v=20260312-1` and `src/main.js?v=20260312-1`.
+- Validation limitation: runtime automation still blocked in this shell (`node`/`npx` unavailable), so this pass used targeted code-path audit + diff inspection only.

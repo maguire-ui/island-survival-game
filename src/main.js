@@ -39,6 +39,9 @@
   const newRunBtn = document.getElementById("newRunBtn");
   const restartSeedBtn = document.getElementById("restartSeedBtn");
   const startScreen = document.getElementById("startScreen");
+  const loadingOverlay = document.getElementById("loadingOverlay");
+  const loadingTitle = document.getElementById("loadingTitle");
+  const loadingStage = document.getElementById("loadingStage");
   const startMainMenu = document.getElementById("startMainMenu");
   const startPlayMenu = document.getElementById("startPlayMenu");
   const startOptionsMenu = document.getElementById("startOptionsMenu");
@@ -163,6 +166,52 @@
     balanced: Object.freeze({ renderScale: 0.9, effectsLevel: 1 }),
     quality: Object.freeze({ renderScale: 1, effectsLevel: 2 }),
     ultra: Object.freeze({ renderScale: 1.15, effectsLevel: 3 }),
+  });
+  const GRAPHICS_RUNTIME_PROFILE_CONFIG = Object.freeze({
+    performance: Object.freeze({
+      worldStepMax: 0.04,
+      ambientFishSpawnChance: 0.34,
+      ambientFishMaxFactor: 0.35,
+      oceanDecorStride: 2,
+      snapshotInterval: 0.36,
+      motionInterval: 0.04,
+      playerSendInterval: 0.045,
+      remoteSmoothScale: 1.34,
+      maxFixedSteps: 4,
+    }),
+    balanced: Object.freeze({
+      worldStepMax: 0.045,
+      ambientFishSpawnChance: 0.5,
+      ambientFishMaxFactor: 0.68,
+      oceanDecorStride: 1,
+      snapshotInterval: 0.3,
+      motionInterval: 0.03,
+      playerSendInterval: 0.03,
+      remoteSmoothScale: 1.18,
+      maxFixedSteps: 5,
+    }),
+    quality: Object.freeze({
+      worldStepMax: 0.05,
+      ambientFishSpawnChance: 0.62,
+      ambientFishMaxFactor: 1,
+      oceanDecorStride: 1,
+      snapshotInterval: 0.26,
+      motionInterval: 0.025,
+      playerSendInterval: 0.025,
+      remoteSmoothScale: 1,
+      maxFixedSteps: 6,
+    }),
+    ultra: Object.freeze({
+      worldStepMax: 0.05,
+      ambientFishSpawnChance: 0.66,
+      ambientFishMaxFactor: 1.1,
+      oceanDecorStride: 1,
+      snapshotInterval: 0.24,
+      motionInterval: 0.02,
+      playerSendInterval: 0.02,
+      remoteSmoothScale: 0.92,
+      maxFixedSteps: 7,
+    }),
   });
   const GRAPHICS_PRESET_IDS = Object.freeze([
     "performance",
@@ -2026,6 +2075,13 @@
   let dpr = window.devicePixelRatio || 1;
   let viewWidth = window.innerWidth;
   let viewHeight = window.innerHeight;
+  const FIXED_SIM_TIMESTEP_SECONDS = 1 / 60;
+  const FIXED_SIM_MAX_FRAME_SECONDS = 0.2;
+  const interpolationState = {
+    playerPrevX: null,
+    playerPrevY: null,
+    hasPlayerPrev: false,
+  };
 
   const keyState = new Map();
   let interactPressed = false;
@@ -2034,6 +2090,10 @@
   let buildCategory = "navigation";
   let selectedSlot = null;
   let activeSlot = 0;
+  const buildRecipeCursorByCategory = Object.create(null);
+  const stationRecipeCursorByType = Object.create(null);
+  let buildRecipeDetailsExpanded = false;
+  let stationRecipeDetailsExpanded = false;
   let storagePanelLayoutRaf = 0;
   let resizeRaf = 0;
 
@@ -2236,6 +2296,9 @@
     activeShipRepair: null,
     shipActionPending: false,
     shipControlSendTimer: 0,
+    loadingVisible: false,
+    loadingTitle: "",
+    loadingStage: "",
   };
 
   let wasNearBench = false;
@@ -2292,8 +2355,10 @@
     joinAutoReconnectsRemaining: 1,
     joinHeartbeatTimer: NET_CONFIG.joinHeartbeatInterval,
     joinFallbackSnapshotApplied: false,
+    joinStaticSnapshotRequested: false,
     joinTimeoutNotified: false,
     hostConnPendingSince: 0,
+    joinLastErrorCode: "",
   };
 
   const audio = {
@@ -2674,6 +2739,89 @@
     return GRAPHICS_PRESET_CONFIG[normalized] || null;
   }
 
+  function getRuntimeGraphicsProfileKey() {
+    const preset = normalizeGraphicsPreset(state.graphicsPreset);
+    if (preset !== "custom") return preset;
+    const fx = clampGraphicsEffectsLevel(state.graphicsEffectsLevel);
+    if (fx <= 0) return "performance";
+    if (fx === 1) return "balanced";
+    if (fx === 2) return "quality";
+    return "ultra";
+  }
+
+  function getRuntimeGraphicsProfile() {
+    const key = getRuntimeGraphicsProfileKey();
+    return GRAPHICS_RUNTIME_PROFILE_CONFIG[key] || GRAPHICS_RUNTIME_PROFILE_CONFIG.balanced;
+  }
+
+  function getRuntimeWorldStepMax() {
+    const profile = getRuntimeGraphicsProfile();
+    return clamp(Number(profile.worldStepMax) || 0.05, 0.02, 0.08);
+  }
+
+  function getRuntimeMaxFixedSteps() {
+    const profile = getRuntimeGraphicsProfile();
+    return clamp(Math.floor(Number(profile.maxFixedSteps) || 5), 2, 10);
+  }
+
+  function getRuntimeAmbientFishSpawnChance() {
+    const profile = getRuntimeGraphicsProfile();
+    return clamp(Number(profile.ambientFishSpawnChance) || 0.62, 0.08, 1);
+  }
+
+  function getRuntimeAmbientFishMaxCount() {
+    const profile = getRuntimeGraphicsProfile();
+    const factor = clamp(Number(profile.ambientFishMaxFactor) || 1, 0.2, 1.5);
+    return Math.max(2, Math.round(AMBIENT_FISH_CONFIG.maxFish * factor));
+  }
+
+  function getRuntimeOceanDecorStride() {
+    const profile = getRuntimeGraphicsProfile();
+    return clamp(Math.floor(Number(profile.oceanDecorStride) || 1), 1, 4);
+  }
+
+  function getNetworkCadenceConfig() {
+    const profile = getRuntimeGraphicsProfile();
+    return {
+      snapshotInterval: Math.max(0.08, Number(profile.snapshotInterval) || NET_CONFIG.snapshotInterval),
+      motionInterval: Math.max(0.012, Number(profile.motionInterval) || NET_CONFIG.motionInterval),
+      playerSendInterval: Math.max(0.012, Number(profile.playerSendInterval) || NET_CONFIG.playerSendInterval),
+      helloRetryInterval: NET_CONFIG.helloRetryInterval,
+      joinHeartbeatInterval: NET_CONFIG.joinHeartbeatInterval,
+      joinReconnectBase: NET_CONFIG.joinReconnectBase,
+    };
+  }
+
+  function getSmoothedNetFactor(baseFactor) {
+    const base = Math.max(0.01, Number(baseFactor) || 1);
+    const profile = getRuntimeGraphicsProfile();
+    const scale = Math.max(0.7, Number(profile.remoteSmoothScale) || 1);
+    return base * scale;
+  }
+
+  function syncNetworkCadenceTimers(options = null) {
+    const reset = !!(options && options.reset);
+    const cadence = getNetworkCadenceConfig();
+    if (reset) {
+      net.snapshotTimer = cadence.snapshotInterval;
+      net.motionTimer = cadence.motionInterval;
+      net.playerTimer = cadence.playerSendInterval;
+      return;
+    }
+    net.snapshotTimer = Math.min(
+      Math.max(0.001, Number(net.snapshotTimer) || cadence.snapshotInterval),
+      cadence.snapshotInterval
+    );
+    net.motionTimer = Math.min(
+      Math.max(0.001, Number(net.motionTimer) || cadence.motionInterval),
+      cadence.motionInterval
+    );
+    net.playerTimer = Math.min(
+      Math.max(0.001, Number(net.playerTimer) || cadence.playerSendInterval),
+      cadence.playerSendInterval
+    );
+  }
+
   function nearlyEqual(a, b, epsilon = 0.001) {
     return Math.abs((Number(a) || 0) - (Number(b) || 0)) <= epsilon;
   }
@@ -2847,6 +2995,7 @@
       syncGraphicsPresetWithCurrentValues();
     }
     updateGraphicsSettingsUI();
+    syncNetworkCadenceTimers();
     requestResize();
     if (persist) saveUserSettings();
   }
@@ -2855,6 +3004,7 @@
     state.renderScale = clampRenderScale((Number(percent) || 100) / 100);
     syncGraphicsPresetWithCurrentValues();
     updateGraphicsSettingsUI();
+    syncNetworkCadenceTimers();
     requestResize();
     if (persist) saveUserSettings();
   }
@@ -4862,10 +5012,11 @@
     if (state.activeShipRepair && state.activeChest) {
       qaPushIssue(issues, "[ui] Ship repair panel overlaps chest state");
     }
-    if (state.ambientFish?.length > AMBIENT_FISH_CONFIG.maxFish) {
+    const maxAmbientFish = getRuntimeAmbientFishMaxCount();
+    if (state.ambientFish?.length > maxAmbientFish) {
       qaPushIssue(
         issues,
-        `[ambient] Fish cap exceeded (${state.ambientFish.length} > ${AMBIENT_FISH_CONFIG.maxFish})`
+        `[ambient] Fish cap exceeded (${state.ambientFish.length} > ${maxAmbientFish})`
       );
     }
     if (state.player) {
@@ -9468,9 +9619,7 @@
     net.pendingBreaks.clear();
     net.debugBoatPlaceReceipts.clear();
     resetNetSequenceState();
-    net.snapshotTimer = NET_CONFIG.snapshotInterval;
-    net.motionTimer = NET_CONFIG.motionInterval;
-    net.playerTimer = NET_CONFIG.playerSendInterval;
+    syncNetworkCadenceTimers({ reset: true });
 
     mpAutotest.hostConnections = new Map();
     mpAutotest.clients = [];
@@ -12857,8 +13006,10 @@
     net.joinAutoReconnectsRemaining = 1;
     net.joinHeartbeatTimer = NET_CONFIG.joinHeartbeatInterval;
     net.joinFallbackSnapshotApplied = false;
+    net.joinStaticSnapshotRequested = false;
     net.joinTimeoutNotified = false;
     net.hostConnPendingSince = 0;
+    net.joinLastErrorCode = "";
   }
 
   function resetNetSequenceState() {
@@ -12949,9 +13100,7 @@
     net.pendingBreaks.clear();
     net.debugBoatPlaceReceipts.clear();
     resetNetSequenceState();
-    net.snapshotTimer = NET_CONFIG.snapshotInterval;
-    net.motionTimer = NET_CONFIG.motionInterval;
-    net.playerTimer = NET_CONFIG.playerSendInterval;
+    syncNetworkCadenceTimers({ reset: true });
     net.helloRetryTimer = NET_CONFIG.helloRetryInterval;
     resetJoinHandshakeState();
     net.roomId = roomId;
@@ -13052,9 +13201,7 @@
     net.isHost = false;
     net.ready = false;
     net.playerId = null;
-    net.snapshotTimer = NET_CONFIG.snapshotInterval;
-    net.motionTimer = NET_CONFIG.motionInterval;
-    net.playerTimer = NET_CONFIG.playerSendInterval;
+    syncNetworkCadenceTimers({ reset: true });
     net.helloRetryTimer = NET_CONFIG.helloRetryInterval;
     resetJoinHandshakeState();
     net.enabled = true;
@@ -13105,9 +13252,7 @@
     net.isHost = false;
     net.ready = false;
     net.playerId = null;
-    net.snapshotTimer = NET_CONFIG.snapshotInterval;
-    net.motionTimer = NET_CONFIG.motionInterval;
-    net.playerTimer = NET_CONFIG.playerSendInterval;
+    syncNetworkCadenceTimers({ reset: true });
     net.helloRetryTimer = NET_CONFIG.helloRetryInterval;
     resetJoinHandshakeState();
     net.enabled = true;
@@ -13265,6 +13410,7 @@
   }
 
   function startSolo() {
+    if (state.loadingVisible) hideLoadingOverlay();
     rollbackAllPendingClientRequests();
     try {
       net.peer?.destroy();
@@ -13285,22 +13431,41 @@
     net.ready = false;
     net.isHost = false;
     net.playerId = null;
-    net.snapshotTimer = NET_CONFIG.snapshotInterval;
-    net.motionTimer = NET_CONFIG.motionInterval;
-    net.playerTimer = NET_CONFIG.playerSendInterval;
+    syncNetworkCadenceTimers({ reset: true });
     net.helloRetryTimer = NET_CONFIG.helloRetryInterval;
     hideStartScreen();
     if (!state.world) {
-      loadOrCreateGame();
-      updateAllSlotUI();
+      runDeferredLoadingTask({
+        title: "Loading",
+        stage: "Generating...",
+        finalStage: "Ready",
+        task: () => {
+          setLoadingOverlayStage("Restoring...", "Loading");
+          loadOrCreateGame();
+          setLoadingOverlayStage("Syncing...", "Loading");
+          updateAllSlotUI();
+        },
+      });
     }
   }
 
   function startHost() {
+    if (state.loadingVisible) hideLoadingOverlay();
     hideStartScreen();
     if (!state.world) {
-      loadOrCreateGame();
-      updateAllSlotUI();
+      runDeferredLoadingTask({
+        title: "Loading",
+        stage: "Generating...",
+        finalStage: "Ready",
+        task: () => {
+          setLoadingOverlayStage("Restoring...", "Loading");
+          loadOrCreateGame();
+          setLoadingOverlayStage("Syncing...", "Loading");
+          updateAllSlotUI();
+          initMultiplayer();
+        },
+      });
+      return;
     }
     initMultiplayer();
   }
@@ -13313,6 +13478,7 @@
       return;
     }
     hideStartScreen();
+    showLoadingOverlay("Joining", "Connecting...");
     initMultiplayerJoin(roomId);
     setPrompt("Connecting...", 0.8);
   }
@@ -13365,6 +13531,7 @@
     peer.on("error", (err) => {
       console.warn("Peer error", err);
       if (!net.ready) {
+        net.joinLastErrorCode = "PEER_ERROR";
         net.joinPhase = "reconnect";
         net.joinRetryTimer = Math.min(
           Math.max(0.1, Number(net.joinRetryTimer) || NET_CONFIG.joinReconnectBase),
@@ -13467,6 +13634,9 @@
           net.joinStartedAt = performance.now();
           updateMpStatus("MP: Rejoining");
           setPrompt("Connection lost. Rejoining...", 1.5);
+        } else if (!wasReady && net.joinAutoReconnectsRemaining <= 0) {
+          failJoinToMenu("CONNECTION_CLOSED", "Join failed");
+          return;
         } else {
           updateMpStatus("MP: Disconnected");
         }
@@ -13476,6 +13646,7 @@
     conn.on("error", (err) => {
       console.warn("Connection error", err);
       if (!isHostSide && !net.ready) {
+        net.joinLastErrorCode = "CONNECTION_ERROR";
         if (net.hostConn === conn) {
           net.hostConn = null;
         }
@@ -13544,6 +13715,19 @@
         note: note || "Host ready. Waiting for join handshake.",
       });
     }
+  }
+
+  function requestAuthoritativeStaticSnapshot(reason = "") {
+    if (net.isHost || !net.hostConn || !net.hostConn.open) return;
+    if (net.joinStaticSnapshotRequested) return;
+    net.joinStaticSnapshotRequested = true;
+    sendToHost({
+      type: "staticSnapshotRequest",
+      reason: typeof reason === "string" ? reason : "",
+      joinPhase: net.joinPhase,
+    });
+    net.joinPhase = "snapshotReady";
+    updateMpStatus("MP: Syncing");
   }
 
   function netSend(payload) {
@@ -13671,6 +13855,9 @@
         break;
       case "joinProgress":
         if (!net.isHost) handleJoinProgress(message);
+        break;
+      case "staticSnapshotRequest":
+        if (net.isHost) handleStaticSnapshotRequest(conn, message);
         break;
       case "snapshot":
         if (!net.isHost) {
@@ -15174,6 +15361,10 @@
       wasNearBench = false;
       let world = buildSurfaceWorldFromStaticSnapshot(snapshot.seed, snapshot.surfaceStatic);
       if (!world) {
+        if (!net.isHost && !net.ready) {
+          requestAuthoritativeStaticSnapshot("missing_surface_static");
+          return;
+        }
         world = generateWorld(snapshot.seed);
       }
       state.surfaceWorld = world;
@@ -15372,11 +15563,38 @@
     if (motion) conn.send(motion);
   }
 
+  function handleStaticSnapshotRequest(conn, message) {
+    if (!net.isHost || !conn?.open) return;
+    if (!state.player || !state.surfaceWorld) {
+      loadOrCreateGame();
+    }
+    if (!state.player || !state.surfaceWorld) return;
+    ensureRemotePlayerRegistered(conn, message, {
+      sendWelcome: true,
+      broadcastJoin: true,
+    });
+    conn.send(buildSnapshot({ includeStaticWorld: true }));
+    const motion = buildMotionUpdate();
+    if (motion) conn.send(motion);
+    conn.send({
+      type: "joinProgress",
+      phase: "snapshotReady",
+      note: "Authoritative world snapshot sent.",
+    });
+  }
+
   function handleJoinProgress(message) {
     if (net.isHost) return;
     net.lastHostPacketAt = performance.now();
     if (!net.ready) {
-      net.joinPhase = "welcome";
+      const phase = typeof message?.phase === "string" ? message.phase : "welcome";
+      if (phase === "awaitHello") {
+        net.joinPhase = "hello";
+      } else if (phase === "hello" || phase === "welcome" || phase === "snapshotReady" || phase === "reconnect") {
+        net.joinPhase = phase;
+      } else {
+        net.joinPhase = "welcome";
+      }
       updateMpStatus("MP: Syncing");
       if (typeof message?.note === "string" && message.note) {
         setPrompt(message.note, 0.9);
@@ -15405,6 +15623,7 @@
     }
     if (!snapshotApplied) return;
     net.joinFallbackSnapshotApplied = true;
+    net.joinStaticSnapshotRequested = false;
     net.snapshotAppliedAt = performance.now();
     net.joinPhase = "snapshotReady";
     state.sleepSequence = null;
@@ -15414,6 +15633,7 @@
     net.joinRetryTimer = NET_CONFIG.joinReconnectBase;
     net.hostConnPendingSince = 0;
     net.joinTimeoutNotified = false;
+    net.joinLastErrorCode = "";
     state.inCave = false;
     state.activeCave = null;
     state.activeCaveLayer = 0;
@@ -15968,6 +16188,23 @@
       return;
     }
     let resource = world.resources?.[resId];
+    const alreadyBroken = !!(
+      resource
+      && (
+        resource.removed
+        || !Number.isFinite(resource.hp)
+        || Number(resource.hp) <= 0
+        || (resource.type === "tree" && isTreeRegrowthStage(resource))
+      )
+    );
+    if (alreadyBroken) {
+      recordAutotestHarvestProbe("rejected", "already-broken", {
+        resId,
+        beforeHp: Number.isFinite(resource?.hp) ? resource.hp : null,
+        beforeRemoved: !!resource?.removed,
+      });
+      return;
+    }
     if (!isResourceInteractable(resource) && autotestHarvestProbe && Array.isArray(world.resources)) {
       const sourceX = Number(message.x);
       const sourceY = Number(message.y);
@@ -17248,8 +17485,48 @@
     }
   }
 
+  function failJoinToMenu(errorCode = "JOIN_FAILED", detail = "Unable to join host.") {
+    const code = String(errorCode || "JOIN_FAILED");
+    rollbackAllPendingClientRequests();
+    try {
+      net.hostConn?.close();
+    } catch (err) {
+      // ignore close errors
+    }
+    try {
+      net.peer?.destroy();
+    } catch (err) {
+      // ignore destroy errors
+    }
+    net.enabled = false;
+    net.ready = false;
+    net.isHost = false;
+    net.hostConn = null;
+    net.peer = null;
+    net.playerId = null;
+    net.connections.clear();
+    net.players.clear();
+    net.pendingPlaces.clear();
+    net.pendingHousePlaces.clear();
+    net.pendingHouseMoves.clear();
+    net.pendingBreaks.clear();
+    net.debugBoatPlaceReceipts.clear();
+    resetNetSequenceState();
+    net.joinLastErrorCode = code;
+    if (state.loadingVisible && state.loadingTitle === "Joining") {
+      hideLoadingOverlay();
+    }
+    updateMpStatus(`MP: ${code}`);
+    if (startScreen) {
+      startScreen.classList.remove("hidden");
+      setStartMenuView("play");
+    }
+    setPrompt(`${detail} (${code})`, 2.4);
+  }
+
   function netTick(dt) {
     if (!net.enabled) return;
+    const cadence = getNetworkCadenceConfig();
     if (!netIsClientReady()) net.robotPausePingTimer = 0.2;
     if (!Number.isFinite(net.lastHostPacketAt) || net.lastHostPacketAt <= 0) {
       net.lastHostPacketAt = performance.now();
@@ -17314,8 +17591,10 @@
             setPrompt("Retrying join...", 1.3);
           } else {
             net.joinTimeoutNotified = true;
+            net.joinLastErrorCode = "JOIN_TIMEOUT";
             updateMpStatus("MP: Join timeout");
-            setPrompt("Join timed out. Check code/host.", 2.0);
+            failJoinToMenu("JOIN_TIMEOUT", "Join timed out");
+            return;
           }
         }
       }
@@ -17343,7 +17622,7 @@
     net.playerTimer -= dt;
     if (net.playerTimer <= 0) {
       sendPlayerUpdate();
-      net.playerTimer = NET_CONFIG.playerSendInterval;
+      net.playerTimer = cadence.playerSendInterval;
     }
     if (net.isHost) {
       if (net.connections.size === 0) return;
@@ -17358,12 +17637,12 @@
         if (motion) {
           broadcastNetToReadyPeers(motion);
         }
-        net.motionTimer = NET_CONFIG.motionInterval;
+        net.motionTimer = cadence.motionInterval;
       }
       net.snapshotTimer -= dt;
       if (net.snapshotTimer <= 0) {
         broadcastNetToReadyPeers(buildSnapshot());
-        net.snapshotTimer = NET_CONFIG.snapshotInterval;
+        net.snapshotTimer = cadence.snapshotInterval;
       }
     }
   }
@@ -17574,16 +17853,24 @@
   }
 
   function updateRemoteRender(dt) {
+    const playerSmooth = getSmoothedNetFactor(NET_CONFIG.renderSmooth);
+    const houseSmooth = getSmoothedNetFactor(NET_CONFIG.houseSmooth);
+    const monsterSmooth = getSmoothedNetFactor(NET_CONFIG.monsterSmooth);
+    const animalSmooth = getSmoothedNetFactor(NET_CONFIG.animalSmooth);
+    const villagerSmooth = getSmoothedNetFactor(NET_CONFIG.villagerSmooth);
+    const projectileSmooth = getSmoothedNetFactor(NET_CONFIG.projectileSmooth);
+    const poisonCloudSmooth = getSmoothedNetFactor(NET_CONFIG.poisonCloudSmooth);
+    const robotSmooth = getSmoothedNetFactor(NET_CONFIG.robotSmooth);
     for (const player of net.players.values()) {
-      smoothRemoteEntityRender(player, dt, NET_CONFIG.renderSmooth, CONFIG.tileSize * 3.2);
+      smoothRemoteEntityRender(player, dt, playerSmooth, CONFIG.tileSize * 3.2);
 
       if (player.inHut && typeof player.houseX === "number" && typeof player.houseY === "number") {
         if (player.renderHouseX == null || player.renderHouseY == null) {
           player.renderHouseX = player.houseX;
           player.renderHouseY = player.houseY;
         } else {
-          player.renderHouseX = smoothValue(player.renderHouseX, player.houseX, dt, NET_CONFIG.houseSmooth);
-          player.renderHouseY = smoothValue(player.renderHouseY, player.houseY, dt, NET_CONFIG.houseSmooth);
+          player.renderHouseX = smoothValue(player.renderHouseX, player.houseX, dt, houseSmooth);
+          player.renderHouseY = smoothValue(player.renderHouseY, player.houseY, dt, houseSmooth);
         }
       } else {
         player.renderHouseX = null;
@@ -17612,7 +17899,7 @@
               smoothRemoteEntityRender(
                 monster,
                 dt,
-                NET_CONFIG.monsterSmooth,
+                monsterSmooth,
                 CONFIG.tileSize * 2.4
               );
             } else {
@@ -17628,7 +17915,7 @@
               smoothRemoteEntityRender(
                 animal,
                 dt,
-                NET_CONFIG.animalSmooth,
+                animalSmooth,
                 CONFIG.tileSize * 2.2
               );
             } else {
@@ -17644,7 +17931,7 @@
               smoothRemoteEntityRender(
                 villager,
                 dt,
-                NET_CONFIG.villagerSmooth,
+                villagerSmooth,
                 CONFIG.tileSize * 2.1
               );
             } else {
@@ -17660,7 +17947,7 @@
               smoothRemoteEntityRender(
                 projectile,
                 dt,
-                NET_CONFIG.projectileSmooth,
+                projectileSmooth,
                 CONFIG.tileSize * 1.65
               );
             } else {
@@ -17676,7 +17963,7 @@
               smoothRemoteEntityRender(
                 cloud,
                 dt,
-                NET_CONFIG.poisonCloudSmooth,
+                poisonCloudSmooth,
                 CONFIG.tileSize * 1.2
               );
             } else {
@@ -17702,8 +17989,8 @@
             robot.renderX = robot.x;
             robot.renderY = robot.y;
           } else {
-            robot.renderX = smoothValue(robot.renderX, robot.x, dt, NET_CONFIG.robotSmooth);
-            robot.renderY = smoothValue(robot.renderY, robot.y, dt, NET_CONFIG.robotSmooth);
+            robot.renderX = smoothValue(robot.renderX, robot.x, dt, robotSmooth);
+            robot.renderY = smoothValue(robot.renderY, robot.y, dt, robotSmooth);
           }
         }
       }
@@ -17722,8 +18009,8 @@
           ship.renderX = ship.x;
           ship.renderY = ship.y;
         } else {
-          ship.renderX = smoothValue(ship.renderX, ship.x, dt, NET_CONFIG.robotSmooth);
-          ship.renderY = smoothValue(ship.renderY, ship.y, dt, NET_CONFIG.robotSmooth);
+          ship.renderX = smoothValue(ship.renderX, ship.x, dt, robotSmooth);
+          ship.renderY = smoothValue(ship.renderY, ship.y, dt, robotSmooth);
         }
         const angleDelta = normalizeAngleRadians(ship.angle - (ship.renderAngle ?? ship.angle));
         ship.renderAngle = normalizeAngleRadians((ship.renderAngle ?? ship.angle) + angleDelta * clamp(dt * 10, 0, 1));
@@ -18399,8 +18686,7 @@
       const insetTy = side === "N" ? 1 : side === "S" ? room.sizeH - 2 : edge.ty;
       if (isCaveV2FloorTile(room, insetTx, insetTy)) anchors.push({ tx: insetTx, ty: insetTy });
     }
-    if (cave && room.roomId === cave.entryRoomId && cave.entrySurfaceSide) {
-      const side = normalizeCaveV2Direction(cave.entrySurfaceSide) || "S";
+    for (const side of getCaveV2EntryRoomSurfaceExitSides(cave, room)) {
       const edge = getCaveV2ExitCenterTile(room, side);
       if (edge) {
         if (isCaveV2FloorTile(room, edge.tx, edge.ty)) anchors.push({ tx: edge.tx, ty: edge.ty });
@@ -18433,11 +18719,8 @@
     const cy = Math.floor(room.sizeH / 2);
     const half = Math.max(1, Math.floor(CAVE_V2_ROOM_CONFIG.corridorHalfWidthTiles));
     const guaranteedHalf = Math.min(half + 1, half + 2);
-    // Guarantee a forgiving central hub so obstacle generation cannot leave a
-    // pinched choke that traps the player while moving between passages.
-    carveCaveV2Rect(room, cx - 3, cy - 3, cx + 3, cy + 3);
-    for (const side of ["N", "S", "E", "W"]) {
-      if (!room.exits?.[side]) continue;
+    const carveGuaranteedSide = (side) => {
+      if (!normalizeCaveV2Direction(side)) return;
       carveCaveV2SideCorridor(room, side);
       carveCaveV2GuaranteedExitRunway(room, side, 2, 2);
       if (side === "N") carveCaveV2Rect(room, cx - guaranteedHalf, 0, cx + guaranteedHalf, cy + 1);
@@ -18445,29 +18728,23 @@
       else if (side === "W") carveCaveV2Rect(room, 0, cy - guaranteedHalf, cx + 1, cy + guaranteedHalf);
       else if (side === "E") carveCaveV2Rect(room, cx - 1, cy - guaranteedHalf, room.sizeW - 1, cy + guaranteedHalf);
       const edge = getCaveV2ExitCenterTile(room, side);
-      if (edge) {
-        // Widen the immediate doorway throat by one tile to prevent snagging on
-        // rugged wall corners near the room edge.
-        if (side === "N") carveCaveV2Rect(room, edge.laneMin - 1, 0, edge.laneMax + 1, 2);
-        else if (side === "S") carveCaveV2Rect(room, edge.laneMin - 1, room.sizeH - 3, edge.laneMax + 1, room.sizeH - 1);
-        else if (side === "W") carveCaveV2Rect(room, 0, edge.laneMin - 1, 2, edge.laneMax + 1);
-        else if (side === "E") carveCaveV2Rect(room, room.sizeW - 3, edge.laneMin - 1, room.sizeW - 1, edge.laneMax + 1);
-      }
+      if (!edge) return;
+      // Widen the immediate doorway throat by one tile to prevent snagging on
+      // rugged wall corners near the room edge.
+      if (side === "N") carveCaveV2Rect(room, edge.laneMin - 1, 0, edge.laneMax + 1, 2);
+      else if (side === "S") carveCaveV2Rect(room, edge.laneMin - 1, room.sizeH - 3, edge.laneMax + 1, room.sizeH - 1);
+      else if (side === "W") carveCaveV2Rect(room, 0, edge.laneMin - 1, 2, edge.laneMax + 1);
+      else if (side === "E") carveCaveV2Rect(room, room.sizeW - 3, edge.laneMin - 1, room.sizeW - 1, edge.laneMax + 1);
+    };
+    // Guarantee a forgiving central hub so obstacle generation cannot leave a
+    // pinched choke that traps the player while moving between passages.
+    carveCaveV2Rect(room, cx - 3, cy - 3, cx + 3, cy + 3);
+    for (const side of ["N", "S", "E", "W"]) {
+      if (!room.exits?.[side]) continue;
+      carveGuaranteedSide(side);
     }
-    if (cave && room.roomId === cave.entryRoomId && cave.entrySurfaceSide) {
-      carveCaveV2SideCorridor(room, cave.entrySurfaceSide);
-      carveCaveV2GuaranteedExitRunway(room, cave.entrySurfaceSide, 2, 2);
-      if (cave.entrySurfaceSide === "N") carveCaveV2Rect(room, cx - guaranteedHalf, 0, cx + guaranteedHalf, cy + 1);
-      else if (cave.entrySurfaceSide === "S") carveCaveV2Rect(room, cx - guaranteedHalf, cy - 1, cx + guaranteedHalf, room.sizeH - 1);
-      else if (cave.entrySurfaceSide === "W") carveCaveV2Rect(room, 0, cy - guaranteedHalf, cx + 1, cy + guaranteedHalf);
-      else if (cave.entrySurfaceSide === "E") carveCaveV2Rect(room, cx - 1, cy - guaranteedHalf, room.sizeW - 1, cy + guaranteedHalf);
-      const edge = getCaveV2ExitCenterTile(room, cave.entrySurfaceSide);
-      if (edge) {
-        if (cave.entrySurfaceSide === "N") carveCaveV2Rect(room, edge.laneMin - 1, 0, edge.laneMax + 1, 2);
-        else if (cave.entrySurfaceSide === "S") carveCaveV2Rect(room, edge.laneMin - 1, room.sizeH - 3, edge.laneMax + 1, room.sizeH - 1);
-        else if (cave.entrySurfaceSide === "W") carveCaveV2Rect(room, 0, edge.laneMin - 1, 2, edge.laneMax + 1);
-        else if (cave.entrySurfaceSide === "E") carveCaveV2Rect(room, room.sizeW - 3, edge.laneMin - 1, room.sizeW - 1, edge.laneMax + 1);
-      }
+    for (const side of getCaveV2EntryRoomSurfaceExitSides(cave, room)) {
+      carveGuaranteedSide(side);
     }
     if (!caveV2TileSetHasConnectivity(room, anchors)) {
       for (const anchor of anchors) {
@@ -18489,14 +18766,14 @@
       if (!room.exits?.[side]) continue;
       carveCaveV2GuaranteedExitRunway(room, side, 2, 2);
     }
-    if (cave && room.roomId === cave.entryRoomId && cave.entrySurfaceSide) {
-      carveCaveV2GuaranteedExitRunway(room, cave.entrySurfaceSide, 2, 2);
+    for (const side of getCaveV2EntryRoomSurfaceExitSides(cave, room)) {
+      carveCaveV2GuaranteedExitRunway(room, side, 2, 2);
     }
     room.caveV2PassageRepairVersion = CAVE_V2_PASSAGE_REPAIR_VERSION;
     return true;
   }
 
-  function addCaveV2RoomObstacles(room, rng) {
+  function addCaveV2RoomObstacles(room, rng, cave = null) {
     if (!room || !Array.isArray(room.tiles)) return;
     const anchors = getCaveV2RoomObstacleAnchors(room);
     const cx = Math.floor(room.sizeW / 2);
@@ -18504,6 +18781,20 @@
     const reserved = new Set();
     for (const side of ["N", "S", "E", "W"]) {
       if (!room.exits?.[side]) continue;
+      reserveCaveV2GuaranteedExitRunway(room, reserved, side, 2, 2, 1);
+      const laneRect = getCaveV2ExitLaneRectPx(room, side);
+      if (!laneRect) continue;
+      const minTx = clamp(Math.floor(laneRect.x / CONFIG.tileSize) - 1, 0, room.sizeW - 1);
+      const maxTx = clamp(Math.floor((laneRect.x + laneRect.w - 1) / CONFIG.tileSize) + 1, 0, room.sizeW - 1);
+      const minTy = clamp(Math.floor(laneRect.y / CONFIG.tileSize) - 1, 0, room.sizeH - 1);
+      const maxTy = clamp(Math.floor((laneRect.y + laneRect.h - 1) / CONFIG.tileSize) + 1, 0, room.sizeH - 1);
+      for (let ty = minTy; ty <= maxTy; ty += 1) {
+        for (let tx = minTx; tx <= maxTx; tx += 1) {
+          reserved.add(`${tx},${ty}`);
+        }
+      }
+    }
+    for (const side of getCaveV2EntryRoomSurfaceExitSides(cave, room)) {
       reserveCaveV2GuaranteedExitRunway(room, reserved, side, 2, 2, 1);
       const laneRect = getCaveV2ExitLaneRectPx(room, side);
       if (!laneRect) continue;
@@ -18691,7 +18982,7 @@
     }
   }
 
-  function generateCaveV2RoomTiles(room, rng) {
+  function generateCaveV2RoomTiles(room, rng, cave = null) {
     room.tiles = new Array(room.sizeW * room.sizeH).fill(0);
     const cx = Math.floor(room.sizeW / 2);
     const cy = Math.floor(room.sizeH / 2);
@@ -18707,7 +18998,7 @@
       if (!room.exits[side]) continue;
       carveCaveV2RuggedSideCorridor(room, side, rng);
     }
-    addCaveV2RoomObstacles(room, rng);
+    addCaveV2RoomObstacles(room, rng, cave);
     room.shades = new Array(room.tiles.length).fill(0);
     for (let y = 0; y < room.sizeH; y += 1) {
       for (let x = 0; x < room.sizeW; x += 1) {
@@ -18751,8 +19042,7 @@
       if (isCaveV2TileInPassageLane(room, side, tx, ty, 2)) return true;
       if (isNearPassageCenter(side, 2.35)) return true;
     }
-    if (cave && room.roomId === cave.entryRoomId && cave.entrySurfaceSide) {
-      const side = normalizeCaveV2Direction(cave.entrySurfaceSide) || "S";
+    for (const side of getCaveV2EntryRoomSurfaceExitSides(cave, room)) {
       if (isCaveV2TileInPassageLane(room, side, tx, ty, 2)) return true;
       if (isNearPassageCenter(side, 2.8)) return true;
     }
@@ -19531,6 +19821,125 @@
     return missing || "S";
   }
 
+  function chooseCaveV2LinkedExitSideForEntryRoom(room, primarySide, pairId = "", caveId = "") {
+    if (!room) return null;
+    const normalizedPrimary = normalizeCaveV2Direction(primarySide) || "S";
+    const preferred = ["N", "S", "E", "W"].filter(
+      (side) => side !== normalizedPrimary && !room.exits?.[side]
+    );
+    const fallback = ["N", "S", "E", "W"].filter((side) => side !== normalizedPrimary);
+    const pool = preferred.length > 0 ? preferred : fallback;
+    if (pool.length <= 0) return null;
+    const seed = seedToInt(`${pairId || "pair"}:${caveId || "cave"}:linked-surface-side`) >>> 0;
+    return pool[seed % pool.length] || null;
+  }
+
+  function getCaveV2EntryRoomSurfaceExitSides(cave, room = null) {
+    if (!cave) return [];
+    const targetRoomId = room?.roomId || cave.entryRoomId;
+    if (targetRoomId !== cave.entryRoomId) return [];
+    const sides = [];
+    const entrySide = normalizeCaveV2Direction(cave.entrySurfaceSide) || "S";
+    if (entrySide) sides.push(entrySide);
+    const linkedSide = normalizeCaveV2Direction(cave.linkedSurfaceSide);
+    if (linkedSide && linkedSide !== entrySide) sides.push(linkedSide);
+    return sides;
+  }
+
+  function getCaveV2SessionSurfaceExitSides(cave, active = null) {
+    if (!cave) return [];
+    const fromSession = [];
+    const activeEntry = normalizeCaveV2Direction(active?.entryExitSide);
+    const activeLinked = normalizeCaveV2Direction(active?.linkedExitSide);
+    if (activeEntry) fromSession.push(activeEntry);
+    if (activeLinked && activeLinked !== activeEntry) fromSession.push(activeLinked);
+    if (fromSession.length > 0) return fromSession;
+    return getCaveV2EntryRoomSurfaceExitSides(cave);
+  }
+
+  function getCaveV2PendingExitEntranceIdForSide(active, side) {
+    if (!active) return null;
+    const normalizedSide = normalizeCaveV2Direction(side);
+    if (!normalizedSide) return null;
+    const entrySide = normalizeCaveV2Direction(active.entryExitSide);
+    const linkedSide = normalizeCaveV2Direction(active.linkedExitSide);
+    if (normalizedSide === entrySide) {
+      return typeof active.entryEntranceId === "string" && active.entryEntranceId.length > 0
+        ? active.entryEntranceId
+        : null;
+    }
+    if (normalizedSide === linkedSide) {
+      if (typeof active.exitEntranceId === "string" && active.exitEntranceId.length > 0) {
+        return active.exitEntranceId;
+      }
+      return typeof active.entryEntranceId === "string" && active.entryEntranceId.length > 0
+        ? active.entryEntranceId
+        : null;
+    }
+    return null;
+  }
+
+  function getCaveV2SurfaceExitPromptForSide(active, side) {
+    if (!active) return "Follow the lit passage to exit";
+    const normalizedSide = normalizeCaveV2Direction(side);
+    const entrySide = normalizeCaveV2Direction(active.entryExitSide);
+    const linkedSide = normalizeCaveV2Direction(active.linkedExitSide);
+    if (normalizedSide && normalizedSide === linkedSide) {
+      return "Follow the bright passage to linked island";
+    }
+    if (normalizedSide && normalizedSide === entrySide) {
+      return "Follow the lit passage to return";
+    }
+    return "Follow the lit passage to exit";
+  }
+
+  function resolveCaveV2LinkedSurfaceExitMapping(cave, entryEntranceId, linkedEntranceId = null) {
+    const entryId = typeof entryEntranceId === "string" && entryEntranceId.length > 0
+      ? entryEntranceId
+      : null;
+    const linkedId = typeof linkedEntranceId === "string" && linkedEntranceId.length > 0
+      ? linkedEntranceId
+      : null;
+    const entrySide = normalizeCaveV2Direction(cave?.entrySurfaceSide) || "S";
+    const linkedSide = normalizeCaveV2Direction(cave?.linkedSurfaceSide);
+    const pairId = typeof cave?.linkedPairId === "string" && cave.linkedPairId.length > 0
+      ? cave.linkedPairId
+      : null;
+    const entryA = typeof cave?.linkedEntranceAId === "string" && cave.linkedEntranceAId.length > 0
+      ? cave.linkedEntranceAId
+      : null;
+    const entryB = typeof cave?.linkedEntranceBId === "string" && cave.linkedEntranceBId.length > 0
+      ? cave.linkedEntranceBId
+      : null;
+    if (!pairId || !linkedSide || !entryId || !entryA || !entryB) {
+      return {
+        entryExitSide: entrySide,
+        linkedExitSide: null,
+        linkedPortalId: null,
+      };
+    }
+    if (entryId === entryA) {
+      return {
+        entryExitSide: entrySide,
+        linkedExitSide: linkedSide,
+        linkedPortalId: pairId,
+      };
+    }
+    if (entryId === entryB) {
+      return {
+        entryExitSide: linkedSide,
+        linkedExitSide: entrySide,
+        linkedPortalId: pairId,
+      };
+    }
+    const flip = (seedToInt(`${pairId}:${entryId}`) & 1) === 1;
+    return {
+      entryExitSide: flip ? linkedSide : entrySide,
+      linkedExitSide: flip ? entrySide : linkedSide,
+      linkedPortalId: pairId,
+    };
+  }
+
   function generateCaveV2Rooms(cave) {
     const roomIds = Object.keys(cave.roomsById);
     const distance = Object.create(null);
@@ -19548,12 +19957,23 @@
       }
     }
     cave.entrySurfaceSide = chooseCaveV2SurfaceExitSideForEntryRoom(cave.roomsById[cave.entryRoomId]);
+    cave.linkedSurfaceSide = null;
+    if (cave.linkedPairId && cave.linkedEntranceAId && cave.linkedEntranceBId) {
+      cave.linkedSurfaceSide = chooseCaveV2LinkedExitSideForEntryRoom(
+        cave.roomsById[cave.entryRoomId],
+        cave.entrySurfaceSide,
+        cave.linkedPairId,
+        cave.caveId
+      );
+    }
     for (const roomId of roomIds) {
       const room = cave.roomsById[roomId];
       const rng = makeRng(seedToInt(`${cave.caveId}:${roomId}`));
-      generateCaveV2RoomTiles(room, rng);
+      generateCaveV2RoomTiles(room, rng, cave);
       if (roomId === cave.entryRoomId) {
-        carveCaveV2SideCorridor(room, cave.entrySurfaceSide);
+        for (const side of getCaveV2EntryRoomSurfaceExitSides(cave, room)) {
+          carveCaveV2SideCorridor(room, side);
+        }
       }
       ensureCaveV2RoomPassagesOpen(cave, room);
       populateCaveV2RoomEntities(cave, room, rng, distance[roomId] || 0);
@@ -19563,12 +19983,26 @@
   function createCaveV2(surfaceWorld, entrance) {
     const caveId = entrance.caveId || getCaveV2EntranceStableId(surfaceWorld, entrance.tx, entrance.ty);
     const entrySurfaceKey = entrance.key || buildCaveV2EntranceSurfaceKey(surfaceWorld, entrance.tx, entrance.ty);
+    const entryEntranceId = String(entrance.entranceId || entrySurfaceKey);
+    const linkedExitKey = typeof entrance.linkedExitKey === "string" && entrance.linkedExitKey.length > 0
+      ? String(entrance.linkedExitKey)
+      : null;
+    const linkedPairId = typeof entrance.linkedPairId === "string" && entrance.linkedPairId.length > 0
+      ? String(entrance.linkedPairId)
+      : null;
+    const linkedEntrances = linkedPairId && linkedExitKey
+      ? [entryEntranceId, linkedExitKey].sort((a, b) => a.localeCompare(b))
+      : [];
     const graph = buildCaveV2RoomGraph(`${surfaceWorld?.seed || "island"}|${entrySurfaceKey}`);
     const cave = {
       caveId,
       entrySurfaceKey,
       entrySurfaceTx: entrance.tx,
       entrySurfaceTy: entrance.ty,
+      linkedPairId,
+      linkedEntranceAId: linkedEntrances[0] || null,
+      linkedEntranceBId: linkedEntrances[1] || null,
+      linkedSurfaceSide: null,
       roomsById: graph.roomsById,
       entryRoomId: graph.entryRoomId,
       activeRoomId: graph.entryRoomId,
@@ -19686,6 +20120,10 @@
         entrySurfaceTx: Math.floor(Number(cave?.entrySurfaceTx) || 0),
         entrySurfaceTy: Math.floor(Number(cave?.entrySurfaceTy) || 0),
         entrySurfaceSide: normalizeCaveV2Direction(cave?.entrySurfaceSide) || "S",
+        linkedSurfaceSide: normalizeCaveV2Direction(cave?.linkedSurfaceSide) || null,
+        linkedPairId: typeof cave?.linkedPairId === "string" ? cave.linkedPairId : null,
+        linkedEntranceAId: typeof cave?.linkedEntranceAId === "string" ? cave.linkedEntranceAId : null,
+        linkedEntranceBId: typeof cave?.linkedEntranceBId === "string" ? cave.linkedEntranceBId : null,
         entryRoomId: String(cave?.entryRoomId || "r0_0"),
         activeRoomId: String(cave?.activeRoomId || cave?.entryRoomId || "r0_0"),
         nextDropSeq: Math.max(1, Math.floor(Number(cave?.nextDropSeq) || 1)),
@@ -19709,6 +20147,14 @@
             linkedPairId: typeof caveState.active.linkedPairId === "string" ? caveState.active.linkedPairId : null,
             entryEntranceId: typeof caveState.active.entryEntranceId === "string" ? caveState.active.entryEntranceId : null,
             exitEntranceId: typeof caveState.active.exitEntranceId === "string" ? caveState.active.exitEntranceId : null,
+            entryExitSide: normalizeCaveV2Direction(caveState.active.entryExitSide) || null,
+            linkedExitSide: normalizeCaveV2Direction(caveState.active.linkedExitSide) || null,
+            pendingExitEntranceId: typeof caveState.active.pendingExitEntranceId === "string"
+              ? caveState.active.pendingExitEntranceId
+              : null,
+            linkedPortalId: typeof caveState.active.linkedPortalId === "string"
+              ? caveState.active.linkedPortalId
+              : null,
           }
         : null,
     };
@@ -19737,7 +20183,7 @@
       decorSeed: Number(roomSave?.decorSeed) || (seedToInt(`${cave.caveId}:${roomId}:decor`) >>> 0),
     };
     const roomRng = makeRng(seedToInt(`${cave.caveId}:${roomId}`));
-    generateCaveV2RoomTiles(room, roomRng);
+    generateCaveV2RoomTiles(room, roomRng, cave);
     const oreSaves = Array.isArray(roomSave?.entities?.ores) ? roomSave.entities.ores : [];
     room.entities.ores = oreSaves.map((ore) => {
       const tx = Math.floor(Number(ore?.tx) || 0);
@@ -19856,12 +20302,19 @@
         entrySurfaceTx: Math.floor(Number(caveSave?.entrySurfaceTx) || 0),
         entrySurfaceTy: Math.floor(Number(caveSave?.entrySurfaceTy) || 0),
         entrySurfaceSide: normalizeCaveV2Direction(caveSave?.entrySurfaceSide) || "S",
+        linkedSurfaceSide: normalizeCaveV2Direction(caveSave?.linkedSurfaceSide) || null,
+        linkedPairId: typeof caveSave?.linkedPairId === "string" ? caveSave.linkedPairId : null,
+        linkedEntranceAId: typeof caveSave?.linkedEntranceAId === "string" ? caveSave.linkedEntranceAId : null,
+        linkedEntranceBId: typeof caveSave?.linkedEntranceBId === "string" ? caveSave.linkedEntranceBId : null,
         roomsById,
         entryRoomId,
         activeRoomId: roomsById[String(caveSave?.activeRoomId || entryRoomId)] ? String(caveSave.activeRoomId || entryRoomId) : entryRoomId,
         nextDropSeq: Math.max(1, Math.floor(Number(caveSave?.nextDropSeq) || 1)),
       };
-      carveCaveV2SideCorridor(roomsById[entryRoomId], cave.entrySurfaceSide);
+      const entryRoom = roomsById[entryRoomId];
+      for (const side of getCaveV2EntryRoomSurfaceExitSides(cave, entryRoom)) {
+        carveCaveV2SideCorridor(entryRoom, side);
+      }
       caveState.cavesById[caveId] = cave;
     }
     const savedActive = savedCaveV2.active && typeof savedCaveV2.active === "object" ? savedCaveV2.active : null;
@@ -19895,6 +20348,18 @@
       linkedPairId: typeof savedActive.linkedPairId === "string" ? savedActive.linkedPairId : null,
       entryEntranceId: typeof savedActive.entryEntranceId === "string" ? savedActive.entryEntranceId : null,
       exitEntranceId: typeof savedActive.exitEntranceId === "string" ? savedActive.exitEntranceId : null,
+      entryExitSide: normalizeCaveV2Direction(savedActive.entryExitSide)
+        || normalizeCaveV2Direction(cave.entrySurfaceSide)
+        || "S",
+      linkedExitSide: normalizeCaveV2Direction(savedActive.linkedExitSide)
+        || normalizeCaveV2Direction(cave.linkedSurfaceSide)
+        || null,
+      pendingExitEntranceId: typeof savedActive.pendingExitEntranceId === "string"
+        ? savedActive.pendingExitEntranceId
+        : null,
+      linkedPortalId: typeof savedActive.linkedPortalId === "string"
+        ? savedActive.linkedPortalId
+        : (typeof savedActive.linkedPairId === "string" ? savedActive.linkedPairId : null),
     };
     cave.activeRoomId = room.roomId;
     caveState.transitioning = false;
@@ -19910,6 +20375,37 @@
     const caveId = entrance.caveId || getCaveV2EntranceStableId(surfaceWorld, entrance.tx, entrance.ty);
     if (!caveState.cavesById[caveId]) {
       caveState.cavesById[caveId] = createCaveV2(surfaceWorld, { ...entrance, caveId });
+    } else if (entrance && caveState.cavesById[caveId]) {
+      const cave = caveState.cavesById[caveId];
+      const linkedPairId = typeof entrance.linkedPairId === "string" && entrance.linkedPairId.length > 0
+        ? String(entrance.linkedPairId)
+        : null;
+      const linkedExitKey = typeof entrance.linkedExitKey === "string" && entrance.linkedExitKey.length > 0
+        ? String(entrance.linkedExitKey)
+        : null;
+      const entrySurfaceKey = entrance.key || buildCaveV2EntranceSurfaceKey(surfaceWorld, entrance.tx, entrance.ty);
+      const entryEntranceId = String(entrance.entranceId || entrySurfaceKey);
+      if (linkedPairId && linkedExitKey) {
+        const pair = [entryEntranceId, linkedExitKey].sort((a, b) => a.localeCompare(b));
+        cave.linkedPairId = linkedPairId;
+        cave.linkedEntranceAId = pair[0] || cave.linkedEntranceAId || null;
+        cave.linkedEntranceBId = pair[1] || cave.linkedEntranceBId || null;
+        if (!normalizeCaveV2Direction(cave.linkedSurfaceSide)) {
+          cave.linkedSurfaceSide = chooseCaveV2LinkedExitSideForEntryRoom(
+            cave.roomsById?.[cave.entryRoomId],
+            cave.entrySurfaceSide,
+            cave.linkedPairId,
+            cave.caveId
+          );
+          const entryRoom = cave.roomsById?.[cave.entryRoomId];
+          if (entryRoom) {
+            for (const side of getCaveV2EntryRoomSurfaceExitSides(cave, entryRoom)) {
+              carveCaveV2SideCorridor(entryRoom, side);
+            }
+            ensureCaveV2RoomPassagesOpen(cave, entryRoom);
+          }
+        }
+      }
     }
     return caveState.cavesById[caveId];
   }
@@ -20234,6 +20730,11 @@
     const exitEntranceId = typeof entrance.linkedExitKey === "string" && entrance.linkedExitKey.length > 0
       ? entrance.linkedExitKey
       : null;
+    const surfaceExitMapping = resolveCaveV2LinkedSurfaceExitMapping(
+      cave,
+      entryEntranceId,
+      exitEntranceId
+    );
     cave.activeRoomId = cave.entryRoomId;
     caveState.active = {
       caveId: cave.caveId,
@@ -20247,6 +20748,10 @@
       linkedPairId,
       entryEntranceId,
       exitEntranceId,
+      entryExitSide: surfaceExitMapping.entryExitSide,
+      linkedExitSide: surfaceExitMapping.linkedExitSide,
+      pendingExitEntranceId: null,
+      linkedPortalId: surfaceExitMapping.linkedPortalId,
     };
     caveState.transitioning = false;
     caveState.transitionT = 0;
@@ -20277,19 +20782,28 @@
         linkedPairId,
         entryEntranceId,
         exitEntranceId,
+        entryExitSide: surfaceExitMapping.entryExitSide,
+        linkedExitSide: surfaceExitMapping.linkedExitSide,
+        linkedPortalId: surfaceExitMapping.linkedPortalId,
         lightingOverlay: "cavev2_room_vignette",
       });
     }
     return true;
   }
 
-  function resolveLinkedCaveV2ExitSurfacePos(active) {
+  function resolveLinkedCaveV2ExitSurfacePos(active, targetEntranceId = null) {
     if (!active || !state.surfaceWorld) return null;
-    if (typeof active.exitEntranceId !== "string" || active.exitEntranceId.length <= 0) return null;
+    const requestedId = typeof targetEntranceId === "string" && targetEntranceId.length > 0
+      ? targetEntranceId
+      : (
+        typeof active.pendingExitEntranceId === "string" && active.pendingExitEntranceId.length > 0
+          ? active.pendingExitEntranceId
+          : null
+      );
+    if (!requestedId) return null;
     const entrances = getRuntimeCaveV2Entrances(state.surfaceWorld);
     const exitEntrance = entrances.find((entry) => (
-      entry
-      && (entry.key === active.exitEntranceId || entry.entranceId === active.exitEntranceId)
+      entry && (entry.key === requestedId || entry.entranceId === requestedId)
     ));
     if (!exitEntrance) return null;
     const targetX = (exitEntrance.tx + 0.5) * CONFIG.tileSize;
@@ -20303,7 +20817,10 @@
     if (!caveState.active || !state.player) return false;
     const active = caveState.active;
     const ret = active.returnSurfacePos;
-    const linkedExit = resolveLinkedCaveV2ExitSurfacePos(active);
+    const pendingExitEntranceId = typeof active.pendingExitEntranceId === "string"
+      ? active.pendingExitEntranceId
+      : null;
+    const linkedExit = resolveLinkedCaveV2ExitSurfacePos(active, pendingExitEntranceId);
     caveState.active = null;
     caveState.transitioning = false;
     caveState.transition = null;
@@ -20324,6 +20841,7 @@
           linkedPairId: active.linkedPairId || null,
           entryEntranceId: active.entryEntranceId || null,
           exitEntranceId: active.exitEntranceId || null,
+          pendingExitEntranceId,
           x: exitPos.x,
           y: exitPos.y,
         });
@@ -20493,6 +21011,40 @@
     state.player.renderY = state.player.y;
   }
 
+  function captureInterpolationSimulationState() {
+    const player = state.player;
+    if (!player || !Number.isFinite(player.x) || !Number.isFinite(player.y)) {
+      interpolationState.hasPlayerPrev = false;
+      interpolationState.playerPrevX = null;
+      interpolationState.playerPrevY = null;
+      return;
+    }
+    interpolationState.playerPrevX = player.x;
+    interpolationState.playerPrevY = player.y;
+    interpolationState.hasPlayerPrev = true;
+  }
+
+  function applyFrameInterpolation(alpha = 1) {
+    const player = state.player;
+    if (!player || !Number.isFinite(player.x) || !Number.isFinite(player.y)) return;
+    const px = interpolationState.playerPrevX;
+    const py = interpolationState.playerPrevY;
+    if (!interpolationState.hasPlayerPrev || !Number.isFinite(px) || !Number.isFinite(py)) {
+      player.renderX = player.x;
+      player.renderY = player.y;
+      return;
+    }
+    const drift = Math.hypot(player.x - px, player.y - py);
+    if (!Number.isFinite(drift) || drift > CONFIG.tileSize * 6) {
+      player.renderX = player.x;
+      player.renderY = player.y;
+      return;
+    }
+    const blend = clamp(Number(alpha) || 0, 0, 1);
+    player.renderX = lerp(px, player.x, blend);
+    player.renderY = lerp(py, player.y, blend);
+  }
+
   function getCaveV2TransitionSpawnTarget(room, fromSide, currentPos) {
     const roomPx = getCaveV2RoomPixelSize(room);
     const inset = CAVE_V2_ROOM_CONFIG.spawnInsetTiles * CONFIG.tileSize;
@@ -20559,20 +21111,26 @@
     const room = cave?.roomsById?.[caveState.active.roomId];
     if (!room) return;
     const roomPx = getCaveV2RoomPixelSize(room);
-    const surfaceSide = cave.entrySurfaceSide || "S";
-    let nearSurfaceExit = false;
+    let nearSurfaceExit = null;
     if (room.roomId === cave.entryRoomId) {
-      const lane = isCaveV2PointInExitLane(room, surfaceSide, caveState.active.x, caveState.active.y);
       const depth = CAVE_V2_ROOM_CONFIG.boundaryTriggerDepthTiles * CONFIG.tileSize * 2;
-      if (lane) {
-        if (surfaceSide === "N") nearSurfaceExit = caveState.active.y <= depth + CONFIG.tileSize;
-        else if (surfaceSide === "S") nearSurfaceExit = caveState.active.y >= roomPx.h - (depth + CONFIG.tileSize);
-        else if (surfaceSide === "W") nearSurfaceExit = caveState.active.x <= depth + CONFIG.tileSize;
-        else if (surfaceSide === "E") nearSurfaceExit = caveState.active.x >= roomPx.w - (depth + CONFIG.tileSize);
+      const surfaceSides = getCaveV2SessionSurfaceExitSides(cave, caveState.active);
+      for (const surfaceSide of surfaceSides) {
+        const lane = isCaveV2PointInExitLane(room, surfaceSide, caveState.active.x, caveState.active.y);
+        if (!lane) continue;
+        let near = false;
+        if (surfaceSide === "N") near = caveState.active.y <= depth + CONFIG.tileSize;
+        else if (surfaceSide === "S") near = caveState.active.y >= roomPx.h - (depth + CONFIG.tileSize);
+        else if (surfaceSide === "W") near = caveState.active.x <= depth + CONFIG.tileSize;
+        else if (surfaceSide === "E") near = caveState.active.x >= roomPx.w - (depth + CONFIG.tileSize);
+        if (near) {
+          nearSurfaceExit = surfaceSide;
+          break;
+        }
       }
     }
     if (nearSurfaceExit) {
-      setPrompt("Follow the lit passage to exit");
+      setPrompt(getCaveV2SurfaceExitPromptForSide(caveState.active, nearSurfaceExit));
       return;
     }
     const targetOre = getCaveV2ActiveOre(room, caveState);
@@ -20684,29 +21242,31 @@
 
     if (!uiLock && caveState.transitionCooldown <= 0) {
       if (room.roomId === cave.entryRoomId) {
-        const surfaceSide = cave.entrySurfaceSide || "S";
-        if (
-          !isCaveV2TransitionSideLocked(caveState, room, surfaceSide)
-          && isCaveV2PointInExitLane(room, surfaceSide, caveState.active.x, caveState.active.y)
-          && isPlayerAtCaveV2Boundary(room, surfaceSide, caveState.active.x, caveState.active.y)
-        ) {
+        const surfaceSides = getCaveV2SessionSurfaceExitSides(cave, caveState.active);
+        for (const surfaceSide of surfaceSides) {
+          if (isCaveV2TransitionSideLocked(caveState, room, surfaceSide)) continue;
+          if (!isCaveV2PointInExitLane(room, surfaceSide, caveState.active.x, caveState.active.y)) continue;
+          if (!isPlayerAtCaveV2Boundary(room, surfaceSide, caveState.active.x, caveState.active.y)) continue;
           const vec = getCaveV2DirVec(surfaceSide);
           const toward = (move.x * vec.x) + (move.y * vec.y);
-          if (toward > 0.15) {
-            const exitRoomPx = getCaveV2RoomPixelSize(room);
-            const halfTile = CONFIG.tileSize * 0.5;
-            if (surfaceSide === "N") caveState.active.y = halfTile;
-            else if (surfaceSide === "S") caveState.active.y = exitRoomPx.h - halfTile;
-            else if (surfaceSide === "W") caveState.active.x = halfTile;
-            else if (surfaceSide === "E") caveState.active.x = exitRoomPx.w - halfTile;
-            syncCaveV2PlayerProxyPosition(caveState.active.x, caveState.active.y);
-            setCaveV2TransitionLock(caveState, room.roomId, surfaceSide);
-            caveState.transitionCooldown = Math.max(Number(caveState.transitionCooldown) || 0, 0.14);
-            leaveCaveV2();
-            attackPressed = false;
-            if (interactPressed) interactPressed = false;
-            return;
-          }
+          if (toward <= 0.15) continue;
+          const exitRoomPx = getCaveV2RoomPixelSize(room);
+          const halfTile = CONFIG.tileSize * 0.5;
+          if (surfaceSide === "N") caveState.active.y = halfTile;
+          else if (surfaceSide === "S") caveState.active.y = exitRoomPx.h - halfTile;
+          else if (surfaceSide === "W") caveState.active.x = halfTile;
+          else if (surfaceSide === "E") caveState.active.x = exitRoomPx.w - halfTile;
+          caveState.active.pendingExitEntranceId = getCaveV2PendingExitEntranceIdForSide(
+            caveState.active,
+            surfaceSide
+          );
+          syncCaveV2PlayerProxyPosition(caveState.active.x, caveState.active.y);
+          setCaveV2TransitionLock(caveState, room.roomId, surfaceSide);
+          caveState.transitionCooldown = Math.max(Number(caveState.transitionCooldown) || 0, 0.14);
+          leaveCaveV2();
+          attackPressed = false;
+          if (interactPressed) interactPressed = false;
+          return;
         }
       }
       for (const side of ["N", "S", "E", "W"]) {
@@ -20890,13 +21450,13 @@
       }
     }
 
-    // Darken normal inter-room passages so the true surface exit reads as the only "light" opening.
-    const surfaceExitSide = (cave && room.roomId === cave.entryRoomId)
-      ? (cave.entrySurfaceSide || "S")
-      : null;
+    // Darken normal inter-room passages so entry-room surface exits stand out clearly.
+    const surfaceExitSides = (cave && room.roomId === cave.entryRoomId)
+      ? getCaveV2EntryRoomSurfaceExitSides(cave, room)
+      : [];
     for (const side of ["N", "S", "E", "W"]) {
       if (!room.exits?.[side]) continue;
-      if (side === surfaceExitSide) continue;
+      if (surfaceExitSides.includes(side)) continue;
       const laneRect = getCaveV2ExitLaneRectPx(room, side);
       if (!laneRect) continue;
       const lx = drawX + laneRect.x;
@@ -20917,9 +21477,11 @@
 
     // Entry room daylight spill / surface-exit guidance
     if (cave && room.roomId === cave.entryRoomId) {
-      const side = cave.entrySurfaceSide || "S";
-      const laneRect = getCaveV2ExitLaneRectPx(room, side);
-      if (laneRect) {
+      const sides = getCaveV2EntryRoomSurfaceExitSides(cave, room);
+      for (const side of sides) {
+        const laneRect = getCaveV2ExitLaneRectPx(room, side);
+        if (!laneRect) continue;
+        const isLinkedSide = normalizeCaveV2Direction(side) === normalizeCaveV2Direction(cave.linkedSurfaceSide);
         const lx = drawX + laneRect.x;
         const ly = drawY + laneRect.y;
         const lw = laneRect.w;
@@ -20933,29 +21495,43 @@
           const edgeY = side === "N" ? ly : (ly + lh);
           const innerY = side === "N" ? (ly + spillDepth) : (ly + lh - spillDepth);
           const grad = ctx.createLinearGradient(0, edgeY, 0, innerY);
-          grad.addColorStop(0, "rgba(255, 225, 160, 0.22)");
-          grad.addColorStop(0.58, "rgba(255, 215, 145, 0.1)");
-          grad.addColorStop(1, "rgba(255, 205, 136, 0)");
+          if (isLinkedSide) {
+            grad.addColorStop(0, "rgba(164, 224, 255, 0.23)");
+            grad.addColorStop(0.58, "rgba(138, 206, 246, 0.12)");
+            grad.addColorStop(1, "rgba(122, 196, 238, 0)");
+          } else {
+            grad.addColorStop(0, "rgba(255, 225, 160, 0.22)");
+            grad.addColorStop(0.58, "rgba(255, 215, 145, 0.1)");
+            grad.addColorStop(1, "rgba(255, 205, 136, 0)");
+          }
           ctx.fillStyle = grad;
           ctx.fillRect(lx, Math.min(edgeY, innerY), lw, Math.abs(innerY - edgeY));
         } else {
           const edgeX = side === "W" ? lx : (lx + lw);
           const innerX = side === "W" ? (lx + spillDepth) : (lx + lw - spillDepth);
           const grad = ctx.createLinearGradient(edgeX, 0, innerX, 0);
-          grad.addColorStop(0, "rgba(255, 225, 160, 0.22)");
-          grad.addColorStop(0.58, "rgba(255, 215, 145, 0.1)");
-          grad.addColorStop(1, "rgba(255, 205, 136, 0)");
+          if (isLinkedSide) {
+            grad.addColorStop(0, "rgba(164, 224, 255, 0.23)");
+            grad.addColorStop(0.58, "rgba(138, 206, 246, 0.12)");
+            grad.addColorStop(1, "rgba(122, 196, 238, 0)");
+          } else {
+            grad.addColorStop(0, "rgba(255, 225, 160, 0.22)");
+            grad.addColorStop(0.58, "rgba(255, 215, 145, 0.1)");
+            grad.addColorStop(1, "rgba(255, 205, 136, 0)");
+          }
           ctx.fillStyle = grad;
           ctx.fillRect(Math.min(edgeX, innerX), ly, Math.abs(innerX - edgeX), lh);
         }
       }
     }
 
-    // Surface exit opening in entry room (visibly distinct from normal passages)
+    // Surface exit openings in entry room (return + linked, visually distinct).
     if (cave && room.roomId === cave.entryRoomId) {
-      const side = cave.entrySurfaceSide || "S";
-      const laneRect = getCaveV2ExitLaneRectPx(room, side);
-      if (laneRect) {
+      const sides = getCaveV2EntryRoomSurfaceExitSides(cave, room);
+      for (const side of sides) {
+        const laneRect = getCaveV2ExitLaneRectPx(room, side);
+        if (!laneRect) continue;
+        const isLinkedSide = normalizeCaveV2Direction(side) === normalizeCaveV2Direction(cave.linkedSurfaceSide);
         const lx = drawX + laneRect.x;
         const ly = drawY + laneRect.y;
         const lw = laneRect.w;
@@ -20970,18 +21546,30 @@
           const edgeY = side === "N" ? ly : (ly + lh);
           const innerY = side === "N" ? (ly + beamDepth) : (ly + lh - beamDepth);
           const beam = ctx.createLinearGradient(0, edgeY, 0, innerY);
-          beam.addColorStop(0, "rgba(255, 241, 198, 0.3)");
-          beam.addColorStop(0.5, "rgba(255, 218, 156, 0.16)");
-          beam.addColorStop(1, "rgba(255, 208, 146, 0)");
+          if (isLinkedSide) {
+            beam.addColorStop(0, "rgba(200, 242, 255, 0.34)");
+            beam.addColorStop(0.5, "rgba(164, 220, 252, 0.19)");
+            beam.addColorStop(1, "rgba(142, 210, 246, 0)");
+          } else {
+            beam.addColorStop(0, "rgba(255, 241, 198, 0.3)");
+            beam.addColorStop(0.5, "rgba(255, 218, 156, 0.16)");
+            beam.addColorStop(1, "rgba(255, 208, 146, 0)");
+          }
           ctx.fillStyle = beam;
           ctx.fillRect(lx + 1, Math.min(edgeY, innerY), Math.max(2, lw - 2), Math.abs(innerY - edgeY));
         } else {
           const edgeX = side === "W" ? lx : (lx + lw);
           const innerX = side === "W" ? (lx + beamDepth) : (lx + lw - beamDepth);
           const beam = ctx.createLinearGradient(edgeX, 0, innerX, 0);
-          beam.addColorStop(0, "rgba(255, 241, 198, 0.3)");
-          beam.addColorStop(0.5, "rgba(255, 218, 156, 0.16)");
-          beam.addColorStop(1, "rgba(255, 208, 146, 0)");
+          if (isLinkedSide) {
+            beam.addColorStop(0, "rgba(200, 242, 255, 0.34)");
+            beam.addColorStop(0.5, "rgba(164, 220, 252, 0.19)");
+            beam.addColorStop(1, "rgba(142, 210, 246, 0)");
+          } else {
+            beam.addColorStop(0, "rgba(255, 241, 198, 0.3)");
+            beam.addColorStop(0.5, "rgba(255, 218, 156, 0.16)");
+            beam.addColorStop(1, "rgba(255, 208, 146, 0)");
+          }
           ctx.fillStyle = beam;
           ctx.fillRect(Math.min(edgeX, innerX), ly + 1, Math.abs(innerX - edgeX), Math.max(2, lh - 2));
         }
@@ -25351,6 +25939,65 @@
       .trim();
     if (msg.length > 48) msg = `${msg.slice(0, 47).trimEnd()}…`;
     return msg;
+  }
+
+  function setLoadingOverlayVisible(visible, titleText = null, stageText = null) {
+    state.loadingVisible = !!visible;
+    if (typeof titleText === "string") {
+      state.loadingTitle = titleText;
+    }
+    if (typeof stageText === "string") {
+      state.loadingStage = stageText;
+    }
+    if (loadingTitle && typeof state.loadingTitle === "string" && state.loadingTitle) {
+      loadingTitle.textContent = state.loadingTitle;
+    }
+    if (loadingStage && typeof state.loadingStage === "string" && state.loadingStage) {
+      loadingStage.textContent = state.loadingStage;
+    }
+    if (loadingOverlay) {
+      loadingOverlay.classList.toggle("hidden", !state.loadingVisible);
+    }
+  }
+
+  function showLoadingOverlay(titleText = "Loading", stageText = "Preparing...") {
+    setLoadingOverlayVisible(true, titleText, stageText);
+  }
+
+  function setLoadingOverlayStage(stageText = "Preparing...", titleText = null) {
+    setLoadingOverlayVisible(true, titleText, stageText);
+  }
+
+  function hideLoadingOverlay() {
+    setLoadingOverlayVisible(false);
+  }
+
+  function runDeferredLoadingTask(options) {
+    const opts = options && typeof options === "object" ? options : Object.create(null);
+    const title = typeof opts.title === "string" && opts.title ? opts.title : "Loading";
+    const stage = typeof opts.stage === "string" && opts.stage ? opts.stage : "Preparing...";
+    const finalizeStage = typeof opts.finalStage === "string" && opts.finalStage ? opts.finalStage : "Ready";
+    const holdMs = clamp(Math.floor(Number(opts.holdMs) || 120), 0, 1200);
+    const task = typeof opts.task === "function" ? opts.task : null;
+    if (!task) return;
+    showLoadingOverlay(title, stage);
+    const run = () => {
+      window.setTimeout(() => {
+        try {
+          task();
+          setLoadingOverlayStage(finalizeStage, title);
+        } finally {
+          window.setTimeout(() => {
+            hideLoadingOverlay();
+          }, holdMs);
+        }
+      }, 0);
+    };
+    if (typeof window.requestAnimationFrame === "function") {
+      window.requestAnimationFrame(() => run());
+    } else {
+      run();
+    }
   }
 
   function setPrompt(text, duration = 0) {
@@ -32600,8 +33247,8 @@
     }
 
     if (didBreak) {
+      resource.hp = 0;
       if (resource.type === "tree") {
-        resource.hp = 0;
         resource.stage = "stump";
         resource.removed = false;
         resource.respawnTimer = RESPAWN.treeStump;
@@ -34231,6 +34878,7 @@
       }
     }
     state.activeStation = structure;
+    stationRecipeDetailsExpanded = false;
     stationMenu.classList.remove("hidden");
     renderStationMenu();
   }
@@ -34819,6 +35467,7 @@
   function setBuildCategory(categoryId, shouldRender = true) {
     const def = getBuildCategoryDefinition(categoryId);
     buildCategory = def.id;
+    buildRecipeDetailsExpanded = false;
     for (const tab of buildCategoryTabs) {
       const active = tab.dataset.category === buildCategory;
       tab.classList.toggle("active", active);
@@ -34961,86 +35610,118 @@
       buildList.appendChild(empty);
       return;
     }
-    for (const recipe of recipes) {
-      const upgradeRecipe = isUpgradeRecipe(recipe);
-      const card = document.createElement("div");
-      card.className = "recipe-card";
-      const icon = document.createElement("div");
-      icon.className = "recipe-icon";
-      applyItemVisual(icon, recipe.icon || recipe.id, true);
-      const title = document.createElement("div");
-      title.className = "recipe-title";
-      title.textContent = recipe.name;
-      const desc = document.createElement("div");
-      desc.className = "recipe-desc";
-      desc.textContent = compactUiSentence(recipe.description || "", 44);
-      const cost = document.createElement("div");
-      cost.className = "recipe-cost";
-      if (recipe.cost && isInfiniteResourcesEnabled()) {
-        const free = document.createElement("span");
-        free.className = "recipe-flow-arrow";
-        free.textContent = "∞";
-        cost.appendChild(free);
-        appendRecipeFlow(cost, {}, getRecipeOutput(recipe), state.inventory);
-      } else {
-        appendRecipeFlow(cost, recipe.cost || {}, getRecipeOutput(recipe), state.inventory);
-      }
-      const button = document.createElement("button");
-
-      let disabled = false;
-      let lockReason = "";
-      if (upgradeRecipe) {
-        const unlockKey = recipe.unlock;
-        if (unlockKey && hasPlayerUnlock(state.player, unlockKey)) {
-          button.textContent = "Owned";
-          disabled = true;
-          lockReason = "Already unlocked";
-        } else if (!hasUpgradePrereqs(state.player, recipe)) {
-          button.textContent = "Locked";
-          disabled = true;
-          const prereqLabels = (recipe.requires || [])
-            .map((key) => UPGRADE_RECIPES.find((entry) => entry.unlock === key)?.name || key)
-            .join(", ");
-          lockReason = `Need: ${compactUiSentence(prereqLabels, 28)}`;
-        } else {
-          button.textContent = "Unlock";
+    const cursorKey = String(buildCategory || "navigation");
+    const cursor = getCompactRecipeCursor(buildRecipeCursorByCategory, cursorKey, recipes.length);
+    buildRecipeCursorByCategory[cursorKey] = cursor;
+    const selectedRecipe = recipes[cursor];
+    buildList.appendChild(
+      createCompactRecipeNavigator(
+        "Recipe",
+        cursor,
+        recipes.length,
+        () => {
+          const next = (cursor - 1 + recipes.length) % recipes.length;
+          buildRecipeCursorByCategory[cursorKey] = next;
+          renderBuildMenu();
+        },
+        () => {
+          const next = (cursor + 1) % recipes.length;
+          buildRecipeCursorByCategory[cursorKey] = next;
+          renderBuildMenu();
         }
-      } else {
-        button.textContent = "Craft";
-        if (recipe.id === "medium_house" && !state.structures.some((s) => !s.removed && (s.type === "small_house" || s.type === "hut"))) {
-          disabled = true;
-          lockReason = "Need: small house";
-        }
-        if (recipe.id === "large_house" && !state.structures.some((s) => !s.removed && (s.type === "medium_house" || s.type === "large_house"))) {
-          disabled = true;
-          lockReason = "Need: medium house";
-        }
-      }
-
-      if (!disabled && recipe.cost && !hasCost(state.inventory, recipe.cost)) {
-        disabled = true;
-        lockReason = "Need mats";
-      }
-
-      button.disabled = disabled;
-      if (disabled && lockReason && button.textContent !== "Owned") {
-        button.textContent = "Locked";
-      }
-      button.addEventListener("click", () => craftRecipe(recipe));
-
-      card.appendChild(icon);
-      card.appendChild(title);
-      if (desc.textContent) card.appendChild(desc);
-      if (recipe.cost || Object.keys(getRecipeOutput(recipe)).length > 0) card.appendChild(cost);
-      if (disabled && lockReason) {
-        const lock = document.createElement("div");
-        lock.className = "recipe-lock";
-        lock.textContent = compactUiSentence(lockReason, 32);
-        card.appendChild(lock);
-      }
-      card.appendChild(button);
-      buildList.appendChild(card);
+      )
+    );
+    const recipe = selectedRecipe;
+    const upgradeRecipe = isUpgradeRecipe(recipe);
+    const card = document.createElement("div");
+    card.className = "recipe-card recipe-card-compact";
+    const icon = document.createElement("div");
+    icon.className = "recipe-icon";
+    applyItemVisual(icon, recipe.icon || recipe.id, true);
+    const title = document.createElement("div");
+    title.className = "recipe-title";
+    title.textContent = recipe.name;
+    const cost = document.createElement("div");
+    cost.className = "recipe-cost";
+    if (recipe.cost && isInfiniteResourcesEnabled()) {
+      const free = document.createElement("span");
+      free.className = "recipe-flow-arrow";
+      free.textContent = "∞";
+      cost.appendChild(free);
+      appendRecipeFlow(cost, {}, getRecipeOutput(recipe), state.inventory);
+    } else {
+      appendRecipeFlow(cost, recipe.cost || {}, getRecipeOutput(recipe), state.inventory);
     }
+    const button = document.createElement("button");
+    let disabled = false;
+    let lockReason = "";
+    if (upgradeRecipe) {
+      const unlockKey = recipe.unlock;
+      if (unlockKey && hasPlayerUnlock(state.player, unlockKey)) {
+        button.textContent = "Owned";
+        disabled = true;
+        lockReason = "Already unlocked";
+      } else if (!hasUpgradePrereqs(state.player, recipe)) {
+        button.textContent = "Locked";
+        disabled = true;
+        const prereqLabels = (recipe.requires || [])
+          .map((key) => UPGRADE_RECIPES.find((entry) => entry.unlock === key)?.name || key)
+          .join(", ");
+        lockReason = `Need: ${compactUiSentence(prereqLabels, 28)}`;
+      } else {
+        button.textContent = "Unlock";
+      }
+    } else {
+      button.textContent = "Craft";
+      if (recipe.id === "medium_house" && !state.structures.some((s) => !s.removed && (s.type === "small_house" || s.type === "hut"))) {
+        disabled = true;
+        lockReason = "Need: small house";
+      }
+      if (recipe.id === "large_house" && !state.structures.some((s) => !s.removed && (s.type === "medium_house" || s.type === "large_house"))) {
+        disabled = true;
+        lockReason = "Need: medium house";
+      }
+    }
+    if (!disabled && recipe.cost && !hasCost(state.inventory, recipe.cost)) {
+      disabled = true;
+      lockReason = "Need mats";
+    }
+    button.disabled = disabled;
+    if (disabled && lockReason && button.textContent !== "Owned") {
+      button.textContent = "Locked";
+    }
+    button.addEventListener("click", () => craftRecipe(recipe));
+
+    card.appendChild(icon);
+    card.appendChild(title);
+    if (recipe.description) {
+      const detailToggle = document.createElement("button");
+      detailToggle.type = "button";
+      detailToggle.className = "recipe-detail-toggle";
+      detailToggle.textContent = buildRecipeDetailsExpanded ? "Hide details" : "Show details";
+      detailToggle.addEventListener("click", () => {
+        buildRecipeDetailsExpanded = !buildRecipeDetailsExpanded;
+        renderBuildMenu();
+      });
+      card.appendChild(detailToggle);
+      if (buildRecipeDetailsExpanded) {
+        const desc = document.createElement("div");
+        desc.className = "recipe-desc";
+        desc.textContent = compactUiSentence(recipe.description || "", 46);
+        card.appendChild(desc);
+      }
+    }
+    if (recipe.cost || Object.keys(getRecipeOutput(recipe)).length > 0) {
+      card.appendChild(cost);
+    }
+    if (disabled && lockReason) {
+      const lock = document.createElement("div");
+      lock.className = "recipe-lock";
+      lock.textContent = compactUiSentence(lockReason, 32);
+      card.appendChild(lock);
+    }
+    card.appendChild(button);
+    buildList.appendChild(card);
   }
 
   function craftRecipe(recipe) {
@@ -35162,6 +35843,38 @@
     appendRecipeFlow(container, {}, output, inventory);
   }
 
+  function getCompactRecipeCursor(cursorMap, key, count) {
+    const total = Math.max(0, Math.floor(Number(count) || 0));
+    if (total <= 0) return 0;
+    const raw = Number(cursorMap[key]);
+    if (!Number.isFinite(raw)) return 0;
+    return clamp(Math.floor(raw), 0, total - 1);
+  }
+
+  function createCompactRecipeNavigator(label, index, count, onPrev, onNext) {
+    const nav = document.createElement("div");
+    nav.className = "recipe-single-nav";
+    const prevBtn = document.createElement("button");
+    prevBtn.className = "recipe-nav-btn";
+    prevBtn.type = "button";
+    prevBtn.textContent = "Prev";
+    prevBtn.disabled = count <= 1;
+    prevBtn.addEventListener("click", onPrev);
+    const nextBtn = document.createElement("button");
+    nextBtn.className = "recipe-nav-btn";
+    nextBtn.type = "button";
+    nextBtn.textContent = "Next";
+    nextBtn.disabled = count <= 1;
+    nextBtn.addEventListener("click", onNext);
+    const status = document.createElement("div");
+    status.className = "recipe-single-meta";
+    status.textContent = `${label} ${index + 1}/${count}`;
+    nav.appendChild(prevBtn);
+    nav.appendChild(status);
+    nav.appendChild(nextBtn);
+    return nav;
+  }
+
   function renderStationMenu() {
     if (!state.activeStation) return;
     const type = state.activeStation.type;
@@ -35172,10 +35885,30 @@
     const recipes = STATION_RECIPES[type] || [];
     stationTitle.textContent = STRUCTURE_DEFS[type]?.name ?? "Station";
     stationOptions.innerHTML = "";
-
-    for (const recipe of recipes) {
+    if (recipes.length > 0) {
+      const cursorKey = String(type || "station");
+      const cursor = getCompactRecipeCursor(stationRecipeCursorByType, cursorKey, recipes.length);
+      stationRecipeCursorByType[cursorKey] = cursor;
+      stationOptions.appendChild(
+        createCompactRecipeNavigator(
+          "Recipe",
+          cursor,
+          recipes.length,
+          () => {
+            const next = (cursor - 1 + recipes.length) % recipes.length;
+            stationRecipeCursorByType[cursorKey] = next;
+            renderStationMenu();
+          },
+          () => {
+            const next = (cursor + 1) % recipes.length;
+            stationRecipeCursorByType[cursorKey] = next;
+            renderStationMenu();
+          }
+        )
+      );
+      const recipe = recipes[cursor];
       const card = document.createElement("div");
-      card.className = "recipe-card";
+      card.className = "recipe-card recipe-card-compact";
       const icon = document.createElement("div");
       icon.className = "recipe-icon";
       const firstOutput = Object.keys(recipe.output || {})[0];
@@ -35183,12 +35916,26 @@
       const title = document.createElement("div");
       title.className = "recipe-title";
       title.textContent = recipe.name;
-      const desc = document.createElement("div");
-      desc.className = "recipe-desc";
-      desc.textContent = compactUiSentence(recipe.description || "", 40);
       card.appendChild(icon);
       card.appendChild(title);
-      if (desc.textContent) card.appendChild(desc);
+
+      if (recipe.description) {
+        const detailToggle = document.createElement("button");
+        detailToggle.type = "button";
+        detailToggle.className = "recipe-detail-toggle";
+        detailToggle.textContent = stationRecipeDetailsExpanded ? "Hide details" : "Show details";
+        detailToggle.addEventListener("click", () => {
+          stationRecipeDetailsExpanded = !stationRecipeDetailsExpanded;
+          renderStationMenu();
+        });
+        card.appendChild(detailToggle);
+        if (stationRecipeDetailsExpanded) {
+          const desc = document.createElement("div");
+          desc.className = "recipe-desc";
+          desc.textContent = compactUiSentence(recipe.description || "", 42);
+          card.appendChild(desc);
+        }
+      }
 
       if (recipe.locked) {
         const cost = document.createElement("div");
@@ -35786,13 +36533,21 @@
       // ignore delete failures
     }
     setDebugUnlocked(false);
-    startNewGame(seed);
-    saveGame();
     closeSettingsPanel();
-    setPrompt(`World reset (${seed})`, 1.4);
-    if (net.isHost && net.connections.size > 0) {
-      broadcastNet(buildSnapshot());
-    }
+    runDeferredLoadingTask({
+      title: "Loading",
+      stage: "Generating...",
+      finalStage: "Ready",
+      task: () => {
+        setLoadingOverlayStage("Syncing...", "Loading");
+        startNewGame(seed);
+        saveGame();
+        setPrompt(`World reset (${seed})`, 1.4);
+        if (net.isHost && net.connections.size > 0) {
+          broadcastNet(buildSnapshot());
+        }
+      },
+    });
   }
 
   function giveDebugBeacon() {
@@ -36277,12 +37032,21 @@
     closeStationMenu();
     closeChest();
     closeInventory();
-    loadOrCreateGame(nextSeed);
-    saveGame();
-    setPrompt(`Loaded seed: ${nextSeed}`, 1.3);
-    if (net.isHost && net.connections.size > 0) {
-      broadcastNet(buildSnapshot());
-    }
+    runDeferredLoadingTask({
+      title: "Loading",
+      stage: "Generating...",
+      finalStage: "Ready",
+      task: () => {
+        setLoadingOverlayStage("Restoring...", "Loading");
+        loadOrCreateGame(nextSeed);
+        setLoadingOverlayStage("Syncing...", "Loading");
+        saveGame();
+        setPrompt(`Loaded seed: ${nextSeed}`, 1.3);
+        if (net.isHost && net.connections.size > 0) {
+          broadcastNet(buildSnapshot());
+        }
+      },
+    });
   }
 
   function promptNewSeed() {
@@ -36310,12 +37074,20 @@
     closeStationMenu();
     closeChest();
     closeInventory();
-    startNewGame(currentSeed);
-    saveGame();
-    setPrompt(`Restarted seed: ${currentSeed}`, 1.3);
-    if (net.isHost && net.connections.size > 0) {
-      broadcastNet(buildSnapshot());
-    }
+    runDeferredLoadingTask({
+      title: "Loading",
+      stage: "Generating...",
+      finalStage: "Ready",
+      task: () => {
+        setLoadingOverlayStage("Syncing...", "Loading");
+        startNewGame(currentSeed);
+        saveGame();
+        setPrompt(`Restarted seed: ${currentSeed}`, 1.3);
+        if (net.isHost && net.connections.size > 0) {
+          broadcastNet(buildSnapshot());
+        }
+      },
+    });
   }
 
   function handleKeyDown(event) {
@@ -39893,7 +40665,8 @@
   }
 
   function spawnAmbientFishNearCamera(world) {
-    if (!world || state.ambientFish.length >= AMBIENT_FISH_CONFIG.maxFish) return;
+    const maxFish = getRuntimeAmbientFishMaxCount();
+    if (!world || state.ambientFish.length >= maxFish) return;
     const camera = getCamera();
     const cameraViewWidth = getCameraViewWidth(camera);
     const cameraViewHeight = getCameraViewHeight(camera);
@@ -39916,7 +40689,7 @@
         : 1;
       const angle = Math.random() * Math.PI * 2;
       for (let i = 0; i < schoolCount; i += 1) {
-        if (state.ambientFish.length >= AMBIENT_FISH_CONFIG.maxFish) break;
+        if (state.ambientFish.length >= maxFish) break;
         const offsetAngle = angle + ((Math.random() - 0.5) * 1.2);
         const scatter = i === 0 ? 0 : (3 + Math.random() * 10);
         const px = x + Math.cos(offsetAngle) * scatter;
@@ -39961,10 +40734,12 @@
       return;
     }
 
+    const maxFish = getRuntimeAmbientFishMaxCount();
+    const spawnChance = getRuntimeAmbientFishSpawnChance();
     state.ambientFishSpawnTimer -= dt;
     if (state.ambientFishSpawnTimer <= 0) {
       state.ambientFishSpawnTimer = getAmbientFishSpawnDelay();
-      if (Math.random() < 0.62) {
+      if (Math.random() < spawnChance) {
         spawnAmbientFishNearCamera(world);
       }
     }
@@ -40005,8 +40780,8 @@
       }
     }
 
-    if (state.ambientFish.length > AMBIENT_FISH_CONFIG.maxFish) {
-      state.ambientFish.length = AMBIENT_FISH_CONFIG.maxFish;
+    if (state.ambientFish.length > maxFish) {
+      state.ambientFish.length = maxFish;
     }
   }
 
@@ -40882,9 +41657,11 @@
     const scale = clamp(1 / fovMult, 0.34, 1);
     const cameraViewWidth = viewWidth / scale;
     const cameraViewHeight = viewHeight / scale;
+    const playerX = Number.isFinite(state.player?.renderX) ? state.player.renderX : state.player.x;
+    const playerY = Number.isFinite(state.player?.renderY) ? state.player.renderY : state.player.y;
     return {
-      x: state.player.x - cameraViewWidth / 2,
-      y: state.player.y - cameraViewHeight / 2,
+      x: playerX - cameraViewWidth / 2,
+      y: playerY - cameraViewHeight / 2,
       scale,
       viewWidth: cameraViewWidth,
       viewHeight: cameraViewHeight,
@@ -42029,7 +42806,24 @@
     return "Connecting...";
   }
 
+  function updateJoinLoadingOverlay() {
+    if (!net.enabled || net.isHost) return;
+    if (net.ready || net.joinPhase === "playable") {
+      if (state.loadingVisible && state.loadingTitle === "Joining") {
+        hideLoadingOverlay();
+      }
+      return;
+    }
+    const stage = getJoinPhasePromptText();
+    if (!state.loadingVisible || state.loadingTitle !== "Joining") {
+      showLoadingOverlay("Joining", stage);
+    } else {
+      setLoadingOverlayStage(stage, "Joining");
+    }
+  }
+
   function update(dt) {
+    updateJoinLoadingOverlay();
     if (!state.world || !state.player) {
       if (net.enabled) {
         if (!net.isHost && !net.ready) {
@@ -42092,9 +42886,10 @@
     updatePlayerCombatTimers(dt);
     maintainRobotInteractionPause(dt);
     const worldSpeed = getDebugWorldSpeedMultiplier();
+    const worldStepMax = getRuntimeWorldStepMax();
     let worldDtRemaining = Math.max(0, dt * worldSpeed);
     while (worldDtRemaining > 0.0001) {
-      const worldStep = Math.min(worldDtRemaining, 0.05);
+      const worldStep = Math.min(worldDtRemaining, worldStepMax);
       updateDayNight(worldStep);
       updateAmbientFish(worldStep);
       updateResources(worldStep);
@@ -43500,21 +44295,20 @@
     const height = getCameraViewHeight(camera);
     if (width <= 0 || height <= 0) return;
 
-    const pulse = Math.sin(nowSeconds * 0.18) * 0.5 + 0.5;
-    const skyReflection = ctx.createLinearGradient(0, 0, 0, height);
-    skyReflection.addColorStop(0, `rgba(114, 210, 244, ${0.03 + pulse * 0.012})`);
-    skyReflection.addColorStop(0.42, "rgba(78, 168, 219, 0.022)");
-    skyReflection.addColorStop(1, "rgba(14, 58, 102, 0.014)");
-    ctx.fillStyle = skyReflection;
+    const pulse = Math.sin(nowSeconds * 0.15) * 0.5 + 0.5;
+    const deepWater = ctx.createLinearGradient(0, 0, 0, height);
+    deepWater.addColorStop(0, "rgba(20, 94, 132, 0.12)");
+    deepWater.addColorStop(0.34, "rgba(14, 78, 121, 0.16)");
+    deepWater.addColorStop(1, "rgba(7, 44, 78, 0.2)");
+    ctx.fillStyle = deepWater;
     ctx.fillRect(0, 0, width, height);
 
-    const bandDensity = quality >= 3 ? 1.2 : quality >= 2 ? 1 : 0.55;
-    const currentBands = Math.max(2, Math.ceil((width / 340) * bandDensity));
+    const currentBands = Math.max(2, Math.ceil((width / 360) * (quality >= 3 ? 1.12 : quality >= 2 ? 0.92 : 0.52)));
     for (let i = 0; i < currentBands; i += 1) {
       const lane = (i + 1) / (currentBands + 1);
-      const y = height * lane + Math.sin(nowSeconds * 0.55 + i * 1.7) * 16;
-      const drift = Math.sin(nowSeconds * 0.85 + i * 1.3) * 28;
-      ctx.strokeStyle = `rgba(196, 236, 255, ${0.01 + ((i % 3) * 0.003)})`;
+      const y = height * lane + Math.sin(nowSeconds * 0.52 + i * 1.7) * 14;
+      const drift = Math.sin(nowSeconds * 0.82 + i * 1.3) * 24;
+      ctx.strokeStyle = `rgba(116, 189, 225, ${0.018 + ((i % 3) * 0.003)})`;
       ctx.lineWidth = 1;
       ctx.beginPath();
       ctx.moveTo(-40, y + drift * 0.08);
@@ -43525,14 +44319,14 @@
     if (quality >= 2) {
       const depthVignette = ctx.createRadialGradient(
         width * 0.5,
-        height * 0.35,
+        height * 0.52,
         Math.min(width, height) * 0.08,
         width * 0.5,
-        height * 0.35,
+        height * 0.52,
         Math.max(width, height) * 0.78,
       );
       depthVignette.addColorStop(0, "rgba(0, 0, 0, 0)");
-      depthVignette.addColorStop(1, "rgba(4, 14, 32, 0.08)");
+      depthVignette.addColorStop(1, `rgba(2, 14, 32, ${(0.12 + pulse * 0.04).toFixed(3)})`);
       ctx.fillStyle = depthVignette;
       ctx.fillRect(0, 0, width, height);
     }
@@ -43568,10 +44362,10 @@
     const downLand = ty < size - 1 && !!world.tiles[tileIndex(tx, ty + 1, size)];
 
     if (shimmerHit) {
-      const shimmerAlpha = 0.015 + (((baseHash >> 5) & 7) * 0.004);
+      const shimmerAlpha = 0.01 + (((baseHash >> 5) & 7) * 0.0026);
       const wave = Math.sin((nowSeconds * 2.1) + ((baseHash & 255) * 0.042));
       const len = ts * (0.22 + (((baseHash >> 9) & 7) * 0.032));
-      ctx.strokeStyle = `rgba(216, 244, 255, ${shimmerAlpha * (0.7 + 0.3 * (wave * 0.5 + 0.5))})`;
+      ctx.strokeStyle = `rgba(122, 196, 226, ${shimmerAlpha * (0.66 + 0.22 * (wave * 0.5 + 0.5))})`;
       ctx.lineWidth = 1;
       ctx.beginPath();
       ctx.moveTo(cx - len, cy + wave * 0.8);
@@ -43582,7 +44376,7 @@
     if (causticHit && nearShoreCount <= 1) {
       const phase = nowSeconds * 0.9 + ((baseHash >> 4) & 31) * 0.17;
       const skew = Math.sin(phase) * 0.9;
-      ctx.strokeStyle = "rgba(212, 247, 255, 0.022)";
+      ctx.strokeStyle = "rgba(162, 216, 238, 0.017)";
       ctx.lineWidth = 1;
       ctx.beginPath();
       ctx.moveTo(cx - ts * 0.22, cy - ts * 0.08 + skew);
@@ -43640,9 +44434,9 @@
     }
 
     if (foamHit && (leftLand || rightLand || upLand || downLand)) {
-      const foamAlpha = 0.04 + (((baseHash >> 6) & 7) * 0.006);
+      const foamAlpha = 0.052 + (((baseHash >> 6) & 7) * 0.006);
       const edgeWobble = Math.sin(nowSeconds * 1.3 + (baseHash & 15)) * 0.9;
-      ctx.fillStyle = `rgba(236, 249, 255, ${foamAlpha})`;
+      ctx.fillStyle = `rgba(228, 241, 247, ${foamAlpha})`;
       if (leftLand) ctx.fillRect(screenX, screenY + 2 + edgeWobble, 2, ts - 4);
       if (rightLand) ctx.fillRect(screenX + ts - 2, screenY + 2 - edgeWobble, 2, ts - 4);
       if (upLand) ctx.fillRect(screenX + 2 + edgeWobble, screenY, ts - 4, 2);
@@ -45280,32 +46074,12 @@
     sky.addColorStop(1, rgbColorToCss(bot, 1));
     ctx.fillStyle = sky;
     ctx.fillRect(0, 0, cameraViewWidth, cameraViewHeight);
-
-    if (cycle.sunAlpha > 0.02) {
-      const sunX = lerp(cameraViewWidth * -0.08, cameraViewWidth * 1.08, cycle.sunProgress);
-      // Keep the sun in the sky band so it never reads as "in the ocean."
-      const sunBandTop = cameraViewHeight * 0.07;
-      const sunBandBottom = cameraViewHeight * 0.42;
-      const sunY = lerp(sunBandBottom, sunBandTop, cycle.sunElevation);
-      const sunColorDay = [255, 245, 198];
-      const sunColorTwilight = [255, 166, 108];
-      const sunColor = mixRgbColor(sunColorDay, sunColorTwilight, cycle.twilightStrength * 0.92);
-      const coreRadius = lerp(14, 20, cycle.sunAlpha);
-      const glowRadius = coreRadius * (2.9 + (0.4 * Math.sin(nowSeconds * 0.6)));
-      const glow = ctx.createRadialGradient(sunX, sunY, coreRadius * 0.2, sunX, sunY, glowRadius);
-      glow.addColorStop(0, rgbColorToCss(sunColor, cycle.sunAlpha * 0.9));
-      glow.addColorStop(0.55, rgbColorToCss(sunColor, cycle.sunAlpha * 0.42));
-      glow.addColorStop(1, rgbColorToCss(sunColor, 0));
-      ctx.fillStyle = glow;
-      ctx.beginPath();
-      ctx.arc(sunX, sunY, glowRadius, 0, Math.PI * 2);
-      ctx.fill();
-
-      ctx.fillStyle = rgbColorToCss(sunColor, clamp(cycle.sunAlpha * 0.96, 0.16, 0.98));
-      ctx.beginPath();
-      ctx.arc(sunX, sunY, coreRadius, 0, Math.PI * 2);
-      ctx.fill();
-    }
+    const hazePulse = 0.5 + 0.5 * Math.sin(nowSeconds * 0.22);
+    const horizonHaze = ctx.createLinearGradient(0, cameraViewHeight * 0.42, 0, cameraViewHeight);
+    horizonHaze.addColorStop(0, "rgba(176, 214, 236, 0)");
+    horizonHaze.addColorStop(1, `rgba(176, 214, 236, ${(0.08 + (cycle.daylight * 0.06) + hazePulse * 0.015).toFixed(3)})`);
+    ctx.fillStyle = horizonHaze;
+    ctx.fillRect(0, 0, cameraViewWidth, cameraViewHeight);
   }
 
   function drawCaveDarkness(camera) {
@@ -45904,8 +46678,8 @@
       186,
       320
     );
-    const toggleRows = 2;
-    const togglesTotalHeight = (DEBUG_WILD_ROBOT_TOGGLE_HEIGHT * toggleRows) + DEBUG_WORLD_MAP_TOGGLE_GAP;
+    const toggleRows = 3;
+    const togglesTotalHeight = (DEBUG_WILD_ROBOT_TOGGLE_HEIGHT * toggleRows) + (DEBUG_WORLD_MAP_TOGGLE_GAP * (toggleRows - 1));
     const panelH = panelW + 36 + togglesTotalHeight;
     const panelX = viewWidth - panelW - 16;
     const panelY = 70;
@@ -45921,6 +46695,10 @@
     const shipToggleY = toggleY + toggleH + DEBUG_WORLD_MAP_TOGGLE_GAP;
     const shipToggleW = toggleW;
     const shipToggleH = toggleH;
+    const shiftToggleX = toggleX;
+    const shiftToggleY = shipToggleY + shipToggleH + DEBUG_WORLD_MAP_TOGGLE_GAP;
+    const shiftToggleW = toggleW;
+    const shiftToggleH = toggleH;
 
     return {
       world,
@@ -45937,10 +46715,15 @@
       toggleY,
       toggleW,
       toggleH,
+      togglesTotalHeight,
       shipToggleX,
       shipToggleY,
       shipToggleW,
       shipToggleH,
+      shiftToggleX,
+      shiftToggleY,
+      shiftToggleW,
+      shiftToggleH,
     };
   }
 
@@ -46119,10 +46902,15 @@
       toggleY,
       toggleW,
       toggleH,
+      togglesTotalHeight,
       shipToggleX,
       shipToggleY,
       shipToggleW,
       shipToggleH,
+      shiftToggleX,
+      shiftToggleY,
+      shiftToggleW,
+      shiftToggleH,
     } = layout;
     const players = getDebugSurfacePlayerMarkers();
 
@@ -46139,6 +46927,7 @@
     const hasWildRobot = !!wildRobotStructure;
     const repairableShips = getRepairableAbandonedShipStructures();
     const hasRepairableShip = repairableShips.length > 0;
+    const canUseContinentalShift = !netIsClientReady();
 
     ctx.save();
 
@@ -46362,7 +47151,7 @@
     ctx.fillStyle = "rgba(189, 216, 235, 0.88)";
     ctx.fillText(`Players: ${players.length}`, panelX + panelW - 82, panelY + 13);
     if (world.seed) {
-      const bottomTextY = panelY + panelH - ((toggleH * 2) + DEBUG_WORLD_MAP_TOGGLE_GAP) - 10;
+      const bottomTextY = panelY + panelH - togglesTotalHeight - 10;
       ctx.fillText(`Seed: ${world.seed}`, panelX + 10, bottomTextY);
     }
 
@@ -46436,6 +47225,16 @@
       hasRepairableShip,
       "Show repairable ship",
       "No repairable ship"
+    );
+    drawMiniMapToggleRow(
+      shiftToggleX,
+      shiftToggleY,
+      shiftToggleW,
+      shiftToggleH,
+      state.debugContinentalShift && canUseContinentalShift,
+      canUseContinentalShift,
+      "Continental Shift",
+      "Host only"
     );
 
     ctx.restore();
@@ -46751,6 +47550,7 @@
         }
       : null;
     const graphicsEffectsLevel = getGraphicsEffectsLevel();
+    const oceanDecorStride = getRuntimeOceanDecorStride();
     const oceanNowSeconds = performance.now() * 0.001;
     ctx.setTransform(dpr * cameraScale, 0, 0, dpr * cameraScale, 0, 0);
 
@@ -46775,7 +47575,11 @@
         const screenY = y * CONFIG.tileSize - camera.y;
         if (!state.world.tiles[idx]) {
           if (!state.inCave) {
-            drawOceanTileDecor(state.world, x, y, screenX, screenY, oceanNowSeconds, graphicsEffectsLevel);
+            const shouldDrawOceanDecor = oceanDecorStride <= 1
+              || (((x * 92837111) ^ (y * 689287499) ^ state.world.seedInt) % oceanDecorStride) === 0;
+            if (shouldDrawOceanDecor) {
+              drawOceanTileDecor(state.world, x, y, screenX, screenY, oceanNowSeconds, graphicsEffectsLevel);
+            }
           }
           continue;
         }
@@ -48012,46 +48816,89 @@
       return;
     }
     let lastTime = performance.now();
+    let accumulator = 0;
 
-    function frame(time) {
-      const dt = Math.min((time - lastTime) / 1000, 0.05);
-      lastTime = time;
-      try {
-        update(dt);
-        render();
-      } catch (err) {
-        console.error("Frame runtime error", err);
-        if (mpAutotest.active) {
-          mpAutotestAbortInternal("Frame runtime error during MP autotest", err);
-        }
-        state.respawnLock = false;
-        if (state.player && state.player.hp <= 0) {
-          if (!applyInfiniteHealthGuard()) {
-            const surface = state.surfaceWorld || state.world;
-            if (surface) {
-              removePlayerFromAllShips(getLocalShipPlayerId());
-              if (isCaveV2Active()) {
-                leaveCaveV2();
-              }
-              state.inCave = false;
-              state.activeCave = null;
-              state.activeCaveLayer = 0;
-              state.caveTransition = null;
-              state.world = surface;
-              const respawnPos = getPlayerRespawnPosition(state.player, surface);
-              state.player.x = respawnPos.x;
-              state.player.y = respawnPos.y;
-              state.player.hp = state.player.maxHp;
-              state.player.invincible = 1;
-              setPlayerCheckpoint(state.player, surface, state.player.x, state.player.y, true);
-              resetInputStateAfterRespawn();
-              updateHealthUI();
+    const handleFrameRuntimeError = (err) => {
+      console.error("Frame runtime error", err);
+      if (mpAutotest.active) {
+        mpAutotestAbortInternal("Frame runtime error during MP autotest", err);
+      }
+      state.respawnLock = false;
+      if (state.player && state.player.hp <= 0) {
+        if (!applyInfiniteHealthGuard()) {
+          const surface = state.surfaceWorld || state.world;
+          if (surface) {
+            removePlayerFromAllShips(getLocalShipPlayerId());
+            if (isCaveV2Active()) {
+              leaveCaveV2();
             }
+            state.inCave = false;
+            state.activeCave = null;
+            state.activeCaveLayer = 0;
+            state.caveTransition = null;
+            state.world = surface;
+            const respawnPos = getPlayerRespawnPosition(state.player, surface);
+            state.player.x = respawnPos.x;
+            state.player.y = respawnPos.y;
+            state.player.hp = state.player.maxHp;
+            state.player.invincible = 1;
+            setPlayerCheckpoint(state.player, surface, state.player.x, state.player.y, true);
+            resetInputStateAfterRespawn();
+            updateHealthUI();
           }
         }
       }
+    };
+
+    const stepSimulation = (frameSeconds, maxStepsHint = null) => {
+      syncNetworkCadenceTimers();
+      const maxSteps = Number.isFinite(maxStepsHint)
+        ? clamp(Math.floor(maxStepsHint), 2, 16)
+        : getRuntimeMaxFixedSteps();
+      const dt = clamp(Number(frameSeconds) || 0, 0, FIXED_SIM_MAX_FRAME_SECONDS);
+      accumulator = Math.min(accumulator + dt, FIXED_SIM_TIMESTEP_SECONDS * (maxSteps + 1));
+      let steps = 0;
+      while (accumulator >= FIXED_SIM_TIMESTEP_SECONDS && steps < maxSteps) {
+        captureInterpolationSimulationState();
+        update(FIXED_SIM_TIMESTEP_SECONDS);
+        accumulator -= FIXED_SIM_TIMESTEP_SECONDS;
+        steps += 1;
+      }
+      if (accumulator >= FIXED_SIM_TIMESTEP_SECONDS) {
+        accumulator = Math.min(accumulator, FIXED_SIM_TIMESTEP_SECONDS * 0.5);
+      }
+      const alpha = clamp(accumulator / FIXED_SIM_TIMESTEP_SECONDS, 0, 1);
+      applyFrameInterpolation(alpha);
+      render();
+    };
+
+    function frame(time) {
+      const deltaSeconds = clamp((time - lastTime) / 1000, 0, FIXED_SIM_MAX_FRAME_SECONDS);
+      lastTime = time;
+      try {
+        stepSimulation(deltaSeconds);
+      } catch (err) {
+        handleFrameRuntimeError(err);
+      }
       requestAnimationFrame(frame);
     }
+
+    window.advanceTime = (ms) => {
+      const seconds = Math.max(0, Number(ms) || 0) / 1000;
+      if (seconds <= 0) return;
+      let remaining = seconds;
+      let guard = 0;
+      try {
+        while (remaining > 0.0001 && guard < 1024) {
+          const step = Math.min(remaining, FIXED_SIM_MAX_FRAME_SECONDS);
+          stepSimulation(step, Math.max(getRuntimeMaxFixedSteps(), 10));
+          remaining -= step;
+          guard += 1;
+        }
+      } catch (err) {
+        handleFrameRuntimeError(err);
+      }
+    };
 
     requestAnimationFrame(frame);
   }
@@ -48398,6 +49245,10 @@
       shipToggleY,
       shipToggleW,
       shipToggleH,
+      shiftToggleX,
+      shiftToggleY,
+      shiftToggleW,
+      shiftToggleH,
     } = layout;
     const x = event.clientX;
     const y = event.clientY;
@@ -48410,6 +49261,10 @@
     }
     if (isPointInRect(x, y, shipToggleX, shipToggleY, shipToggleW, shipToggleH)) {
       toggleDebugRepairableShipMarker();
+      return true;
+    }
+    if (isPointInRect(x, y, shiftToggleX, shiftToggleY, shiftToggleW, shiftToggleH)) {
+      toggleContinentalShift();
       return true;
     }
     if (isPointInRect(x, y, mapX, mapY, mapW, mapH) && state.debugContinentalShift) {
@@ -48507,6 +49362,7 @@
       return;
     }
     loadUserSettings();
+    hideLoadingOverlay();
     setupSlots();
     setupMobileZoomLock();
     resize();
@@ -48797,6 +49653,7 @@
       });
     }
     updateMpAutotestControls();
+    syncNetworkCadenceTimers({ reset: true });
     gameLoop();
   }
 

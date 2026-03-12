@@ -7,7 +7,7 @@
     content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no, viewport-fit=cover"
   />
   <title>Island Survival Game</title>
-  <link rel="stylesheet" href="styles.css?v=20260228-16" />
+  <link rel="stylesheet" href="styles.css?v=20260312-1" />
 </head>
 <body>
   <canvas id="game"></canvas>
@@ -84,6 +84,13 @@
           <button id="menuBackFromOptionsBtn" class="start-menu-back-btn" type="button">Back</button>
         </div>
       </div>
+    </div>
+  </div>
+
+  <div id="loadingOverlay" class="overlay loading-overlay hidden" aria-live="polite">
+    <div class="overlay-card loading-card">
+      <div id="loadingTitle" class="overlay-title">Loading</div>
+      <div id="loadingStage" class="overlay-text">Generating world...</div>
     </div>
   </div>
 
@@ -207,7 +214,6 @@
       <button id="infiniteResourcesBtn" class="action-btn">Infinite Resources: Off</button>
       <button id="infiniteHealthBtn" class="action-btn">Infinite Health: Off</button>
       <button id="debugWorldMapBtn" class="action-btn">World Mini-Map: Off</button>
-      <button id="continentalShiftBtn" class="action-btn">Continental Shift: Off</button>
       <div class="settings-row">
         <span>Player Speed</span>
         <span id="debugSpeedValue">1.0x</span>
@@ -247,6 +253,7 @@
         step="5"
         value="100"
       />
+      <button id="continentalShiftBtn" class="action-btn">Continental Shift: Off</button>
       <div class="panel-section-title">Multiplayer Autotest</div>
       <div class="mp-autotest-controls">
         <button id="mpAutotestQuickBtn" class="action-btn" type="button">MP Test (Quick)</button>
@@ -395,6 +402,6 @@
     })();
   </script>
   <script src="https://unpkg.com/peerjs@1.5.5/dist/peerjs.min.js"></script>
-  <script src="src/main.js?v=20260228-24"></script>
+  <script src="src/main.js?v=20260312-1"></script>
 </body>
 </html>
