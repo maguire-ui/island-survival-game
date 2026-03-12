@@ -215,6 +215,7 @@
       <button id="infiniteResourcesBtn" class="action-btn">Infinite Resources: Off</button>
       <button id="infiniteHealthBtn" class="action-btn">Infinite Health: Off</button>
       <button id="debugWorldMapBtn" class="action-btn">World Mini-Map: Off</button>
+      <button id="debugFpsBtn" class="action-btn">Show FPS: Off</button>
       <div class="settings-row">
         <span>Player Speed</span>
         <span id="debugSpeedValue">1.0x</span>
@@ -328,7 +329,7 @@
           <span>Render Scale</span>
           <span id="renderScaleValue">100%</span>
         </div>
-        <input id="renderScale" class="settings-slider" type="range" min="55" max="120" step="5" value="100" />
+        <input id="renderScale" class="settings-slider" type="range" min="40" max="120" step="5" value="100" />
         <button id="resetWorldBtn" class="action-btn danger-btn">Reset</button>
         <button id="unlockDebugBtn" class="action-btn secondary-btn">Unlock Debug</button>
         <div id="debugUnlockStatus" class="panel-hint">Debug locked</div>
@@ -403,6 +404,6 @@
     })();
   </script>
   <script src="https://unpkg.com/peerjs@1.5.5/dist/peerjs.min.js"></script>
-  <script src="src/main.js?v=20260312-5"></script>
+  <script src="src/main.js?v=20260312-6"></script>
 </body>
 </html>

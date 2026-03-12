@@ -297,3 +297,24 @@ Original prompt: Fix CaveV2 so caves use Zelda-style screen-to-screen room trans
 - Verification (this pass): `node --check src/main.js` pass, `git diff --check` pass, local Playwright approved-flow smoke (`open` + `snapshot`) confirmed page boot and menu shell snapshot generation.
 - 2026-03-12 (menu reliability): set initial start-menu view immediately in `src/menu-bridge.js` from `data-view` (default `main`) and added CSS fallback selectors keyed by `#startMenuShell[data-view=...]` so exactly one menu pane remains interactable even if class toggles race during startup.
 - Cache-buster bump: `styles.css?v=20260312-5`, `src/main.js?v=20260312-5`, `src/menu-bridge.js?v=20260312-2` in `index.html`.
+- CaveV2 MP enablement pass (2026-03-12): removed the CaveV2 multiplayer entry hard-block in `enterCaveV2`, and added net sync emits on CaveV2 enter/leave so peers receive immediate authoritative cave state transitions.
+- CaveV2 host-authority hardening: host-side remote CaveV2 position ingest now clamps to room bounds and also snaps to nearest walkable floor tile if a client reports a blocked/wall position.
+- CaveV2 linked routing + minimap/debug consistency pass: updated local/remote surface marker logic to treat both legacy cave and CaveV2 as cave contexts, including return-position mapping for active CaveV2 sessions.
+- Multiplayer cave action routing pass: client attack packets now send `world: "caveV2"` + `caveV2Id/caveV2RoomId` when inside CaveV2, so host applies combat in the correct CaveV2 room world.
+- Multiplayer death-drop authority fix: `dropInventoryOnDeath` now sends `deathDrop` requests to host in client mode for CaveV2 as well (no client-local authoritative cave drops), with `caveV2Id/caveV2RoomId` metadata included.
+- Host death-drop routing update: `handleDeathDropRequest` now supports `world: "caveV2"` and routes drops into CaveV2 room drop containers via `spawnCaveV2DeathDrops`; surface/cave behavior remains unchanged.
+- Remote respawn cave cleanup: `respawnRemotePlayer` now clears CaveV2 fields and broadcasts explicit `inCaveV2: false` + null caveV2 payloads to prevent stale cave-context desync.
+- Local authoritative respawn apply: `handleRespawnMessage` now exits CaveV2 with `suppressNetUpdate` to avoid echo loops while still clearing cave session state.
+- World-context targeting fix: `getPlayersForWorld` now resolves local/remote CaveV2 player world contexts, so cave room simulation/targeting uses proper world membership.
+- Safety/AI context tweak: surface monster targeting guard now treats `inCaveV2` like cave state (`inHut` skip only for true surface participants).
+- Snapshot apply context fix: post-snapshot local world selection now considers active CaveV2 context when resolving `state.world` sync target.
+- Natural cave frequency tuning retained in this pass: generation density uses `maxCaves = floor(islandCount * 0.12)` and entrance roll `rng() <= 0.36`; linked pair target remains moderate/frequent (~56% entrances in pairs via `assignSurfaceCaveTunnelLinks`) with cross-island enforcement and at-least-one-pair fallback.
+
+Validation (2026-03-12):
+- Syntax: `node --check src/main.js` passed.
+- Browser QA (Playwright, escalated due Chromium launch permissions):
+  - Pass 1: menu flow to Play mode select captured (`output/web-game-cavev2-pass1/shot-0.png`).
+  - Pass 2: menu -> Solo -> gameplay loaded and movement/crafting HUD visible (`output/web-game-cavev2-pass2-solo/shot-0.png`).
+  - Pass 3: menu -> Host -> playable host world loaded (no stuck loading) (`output/web-game-cavev2-pass3-host/shot-0.png`).
+  - Pass 4: menu flow sanity capture for join path (`output/web-game-cavev2-pass4-join/shot-0.png`).
+- Cleanup note: transient Playwright artifacts were removed after validation (`/tmp/isg-qa-tools`, local `output/` screenshots, and `~/Library/Caches/ms-playwright`) per reversible-only cleanup policy.

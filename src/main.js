@@ -112,6 +112,7 @@
   const infiniteResourcesBtn = document.getElementById("infiniteResourcesBtn");
   let infiniteHealthBtn = document.getElementById("infiniteHealthBtn");
   const debugWorldMapBtn = document.getElementById("debugWorldMapBtn");
+  const debugFpsBtn = document.getElementById("debugFpsBtn");
   const debugRepairableShipBtn = document.getElementById("debugRepairableShipBtn");
   const continentalShiftBtn = document.getElementById("continentalShiftBtn");
   const mpAutotestQuickBtn = document.getElementById("mpAutotestQuickBtn");
@@ -170,8 +171,8 @@
   const TOUCH_STICK_MAX_DIST = 40;
   const MOBILE_RENDER_DPR_CAP = 2;
   const DESKTOP_RENDER_DPR_CAP = 2.5;
-  const MOBILE_RENDER_MAX_PIXELS = 3000000;
-  const DESKTOP_RENDER_MAX_PIXELS = 5200000;
+  const MOBILE_RENDER_MAX_PIXELS = 2200000;
+  const DESKTOP_RENDER_MAX_PIXELS = 4000000;
   const GRAPHICS_PRESET_CONFIG = Object.freeze({
     performance: Object.freeze({ renderScale: 0.55, effectsLevel: 0 }),
     balanced: Object.freeze({ renderScale: 0.9, effectsLevel: 1 }),
@@ -180,48 +181,72 @@
   });
   const GRAPHICS_RUNTIME_PROFILE_CONFIG = Object.freeze({
     performance: Object.freeze({
-      worldStepMax: 0.05,
-      ambientFishSpawnChance: 0.34,
-      ambientFishMaxFactor: 0.35,
-      oceanDecorStride: 2,
-      snapshotInterval: 0.36,
-      motionInterval: 0.04,
-      playerSendInterval: 0.045,
-      remoteSmoothScale: 1.34,
-      maxFixedSteps: 5,
+      worldStepMax: 0.06,
+      ambientFishSpawnChance: 0.18,
+      ambientFishMaxFactor: 0.18,
+      oceanDecorStride: 4,
+      snapshotInterval: 0.42,
+      motionInterval: 0.05,
+      playerSendInterval: 0.055,
+      remoteSmoothScale: 1.42,
+      maxFixedSteps: 2,
+      maxFrameDeltaSeconds: 0.075,
+      resourceTickInterval: 0.05,
+      ambientFishTickInterval: 0.11,
+      villagerTickInterval: 0.066,
+      robotTickInterval: 0.066,
+      shipTickInterval: 0.066,
     }),
     balanced: Object.freeze({
-      worldStepMax: 0.045,
-      ambientFishSpawnChance: 0.5,
-      ambientFishMaxFactor: 0.68,
-      oceanDecorStride: 1,
-      snapshotInterval: 0.3,
-      motionInterval: 0.03,
-      playerSendInterval: 0.03,
-      remoteSmoothScale: 1.18,
-      maxFixedSteps: 5,
+      worldStepMax: 0.055,
+      ambientFishSpawnChance: 0.35,
+      ambientFishMaxFactor: 0.45,
+      oceanDecorStride: 2,
+      snapshotInterval: 0.34,
+      motionInterval: 0.036,
+      playerSendInterval: 0.038,
+      remoteSmoothScale: 1.24,
+      maxFixedSteps: 3,
+      maxFrameDeltaSeconds: 0.09,
+      resourceTickInterval: 0.033,
+      ambientFishTickInterval: 0.066,
+      villagerTickInterval: 0.05,
+      robotTickInterval: 0.05,
+      shipTickInterval: 0.05,
     }),
     quality: Object.freeze({
       worldStepMax: 0.05,
-      ambientFishSpawnChance: 0.62,
-      ambientFishMaxFactor: 1,
+      ambientFishSpawnChance: 0.52,
+      ambientFishMaxFactor: 0.82,
       oceanDecorStride: 1,
-      snapshotInterval: 0.26,
-      motionInterval: 0.025,
-      playerSendInterval: 0.025,
-      remoteSmoothScale: 1,
-      maxFixedSteps: 6,
+      snapshotInterval: 0.28,
+      motionInterval: 0.028,
+      playerSendInterval: 0.028,
+      remoteSmoothScale: 1.04,
+      maxFixedSteps: 4,
+      maxFrameDeltaSeconds: 0.11,
+      resourceTickInterval: 0.025,
+      ambientFishTickInterval: 0.05,
+      villagerTickInterval: 0.033,
+      robotTickInterval: 0.033,
+      shipTickInterval: 0.033,
     }),
     ultra: Object.freeze({
       worldStepMax: 0.05,
-      ambientFishSpawnChance: 0.66,
-      ambientFishMaxFactor: 1.1,
+      ambientFishSpawnChance: 0.6,
+      ambientFishMaxFactor: 0.95,
       oceanDecorStride: 1,
-      snapshotInterval: 0.24,
-      motionInterval: 0.02,
-      playerSendInterval: 0.02,
-      remoteSmoothScale: 0.92,
-      maxFixedSteps: 7,
+      snapshotInterval: 0.26,
+      motionInterval: 0.024,
+      playerSendInterval: 0.024,
+      remoteSmoothScale: 0.96,
+      maxFixedSteps: 5,
+      maxFrameDeltaSeconds: 0.12,
+      resourceTickInterval: 0.02,
+      ambientFishTickInterval: 0.033,
+      villagerTickInterval: 0.025,
+      robotTickInterval: 0.025,
+      shipTickInterval: 0.025,
     }),
   });
   const GRAPHICS_PRESET_IDS = Object.freeze([
@@ -2092,11 +2117,30 @@
   let viewWidth = window.innerWidth;
   let viewHeight = window.innerHeight;
   const FIXED_SIM_TIMESTEP_SECONDS = 1 / 60;
-  const FIXED_SIM_MAX_FRAME_SECONDS = 0.2;
+  const FIXED_SIM_MAX_FRAME_SECONDS = 0.12;
+  const AUTO_PERF_GOVERNOR = Object.freeze({
+    lowFpsThreshold: 55,
+    lowFpsGraceSeconds: 2.2,
+    actionCooldownSeconds: 5.5,
+    minRenderScale: 0.4,
+    renderScaleStep: 0.05,
+  });
   const interpolationState = {
     playerPrevX: null,
     playerPrevY: null,
     hasPlayerPrev: false,
+  };
+  const worldSystemCadence = {
+    resources: 0,
+    ambientFish: 0,
+    villagers: 0,
+    robots: 0,
+    ships: 0,
+  };
+  const debugFpsMeter = {
+    smoothed: 60,
+    instantaneous: 60,
+    frameMs: 1000 / 60,
   };
 
   const keyState = new Map();
@@ -2296,6 +2340,7 @@
     debugInfiniteResources: SETTINGS_DEFAULTS.debugInfiniteResources,
     debugInfiniteHealth: SETTINGS_DEFAULTS.debugInfiniteHealth,
     debugWorldMapVisible: false,
+    debugShowFps: false,
     debugShowAbandonedRobot: false,
     debugShowRepairableShip: false,
     debugContinentalShift: false,
@@ -2745,7 +2790,7 @@
   function clampRenderScale(value) {
     const num = Number(value);
     if (!Number.isFinite(num)) return SETTINGS_DEFAULTS.renderScale;
-    return clamp(num, 0.55, 1.2);
+    return clamp(num, 0.4, 1.2);
   }
 
   function clampGraphicsEffectsLevel(value) {
@@ -2782,6 +2827,50 @@
   function getRuntimeMaxFixedSteps() {
     const profile = getRuntimeGraphicsProfile();
     return clamp(Math.floor(Number(profile.maxFixedSteps) || 5), 2, 10);
+  }
+
+  function getRuntimeMaxFrameDeltaSeconds() {
+    const profile = getRuntimeGraphicsProfile();
+    return clamp(
+      Number(profile.maxFrameDeltaSeconds) || FIXED_SIM_MAX_FRAME_SECONDS,
+      FIXED_SIM_TIMESTEP_SECONDS,
+      FIXED_SIM_MAX_FRAME_SECONDS
+    );
+  }
+
+  function getRuntimeSystemTickInterval(key) {
+    const profile = getRuntimeGraphicsProfile();
+    const fallback = FIXED_SIM_TIMESTEP_SECONDS;
+    let raw = fallback;
+    if (key === "resources") raw = Number(profile.resourceTickInterval);
+    else if (key === "ambientFish") raw = Number(profile.ambientFishTickInterval);
+    else if (key === "villagers") raw = Number(profile.villagerTickInterval);
+    else if (key === "robots") raw = Number(profile.robotTickInterval);
+    else if (key === "ships") raw = Number(profile.shipTickInterval);
+    if (!Number.isFinite(raw)) return fallback;
+    return clamp(raw, fallback, 0.25);
+  }
+
+  function consumeWorldSystemDt(key, dt) {
+    const step = Math.max(0, Number(dt) || 0);
+    if (step <= 0) return 0;
+    const interval = getRuntimeSystemTickInterval(key);
+    if (interval <= FIXED_SIM_TIMESTEP_SECONDS + 0.0001) return step;
+    const pending = Math.max(0, Number(worldSystemCadence[key]) || 0) + step;
+    if (pending + 0.000001 < interval) {
+      worldSystemCadence[key] = pending;
+      return 0;
+    }
+    worldSystemCadence[key] = 0;
+    return Math.min(pending, interval * 2.4);
+  }
+
+  function resetWorldSystemCadence() {
+    worldSystemCadence.resources = 0;
+    worldSystemCadence.ambientFish = 0;
+    worldSystemCadence.villagers = 0;
+    worldSystemCadence.robots = 0;
+    worldSystemCadence.ships = 0;
   }
 
   function getRuntimeAmbientFishSpawnChance() {
@@ -2931,6 +3020,7 @@
         state.debugSpeedMultiplier = clampDebugSpeedMultiplier(data.debugSpeedMultiplier);
         state.debugWorldSpeedMultiplier = clampDebugWorldSpeedMultiplier(data.debugWorldSpeedMultiplier);
         state.debugFovMultiplier = clampDebugFovMultiplier(data.debugFovMultiplier);
+        resetWorldSystemCadence();
       }
     } catch (err) {
       state.playerName = SETTINGS_DEFAULTS.playerName;
@@ -2945,6 +3035,7 @@
       state.debugSpeedMultiplier = SETTINGS_DEFAULTS.debugSpeedMultiplier;
       state.debugWorldSpeedMultiplier = SETTINGS_DEFAULTS.debugWorldSpeedMultiplier;
       state.debugFovMultiplier = SETTINGS_DEFAULTS.debugFovMultiplier;
+      resetWorldSystemCadence();
     }
     const fallbackName = generateDefaultPlayerName();
     setLocalPlayerName(fallbackName, { persist: false, broadcast: false });
@@ -3014,6 +3105,7 @@
     } else {
       syncGraphicsPresetWithCurrentValues();
     }
+    resetWorldSystemCadence();
     updateGraphicsSettingsUI();
     syncNetworkCadenceTimers();
     requestResize();
@@ -3165,6 +3257,7 @@
       state.debugInfiniteResources = false;
       state.debugInfiniteHealth = false;
       state.debugWorldMapVisible = false;
+      state.debugShowFps = false;
       state.debugShowAbandonedRobot = false;
       state.debugShowRepairableShip = false;
       state.debugContinentalShift = false;
@@ -3186,6 +3279,7 @@
     updateInfiniteResourcesButton();
     updateInfiniteHealthButton();
     updateDebugWorldMapButton();
+    updateDebugFpsButton();
     updateDebugRepairableShipButton();
     updateContinentalShiftButton();
     updateDebugPlaceBoatButton();
@@ -5053,6 +5147,8 @@
 
   function runDebugQaSelfTests(dt = 0) {
     if (!state.debugUnlocked) return;
+    const debugPanelVisible = !!debugPanel && !debugPanel.classList.contains("hidden");
+    if (!debugPanelVisible && !mpAutotest.active) return;
     qaLogFeatureInventoryOnce();
     qaLogCaveV2ChecklistOnce();
     qaLogCaveFieldClassificationOnce();
@@ -10189,6 +10285,16 @@
     debugWorldMapBtn.setAttribute("aria-pressed", enabled ? "true" : "false");
   }
 
+  function updateDebugFpsButton() {
+    if (!debugFpsBtn) return;
+    const enabled = !!state.debugShowFps && !!state.debugUnlocked;
+    debugFpsBtn.disabled = !state.debugUnlocked;
+    debugFpsBtn.textContent = enabled
+      ? "Show FPS: On"
+      : "Show FPS: Off";
+    debugFpsBtn.setAttribute("aria-pressed", enabled ? "true" : "false");
+  }
+
   function updateDebugRepairableShipButton() {
     if (!debugRepairableShipBtn) return;
     const enabled = !!state.debugUnlocked && !!state.debugShowRepairableShip;
@@ -14087,6 +14193,13 @@
       inCave: player.inCave,
       caveId: player.caveId,
       caveLayer: normalizeCaveLayerIndex(player.caveLayer ?? 0),
+      inCaveV2: !!player.inCaveV2,
+      caveV2Id: typeof player.caveV2Id === "string" ? player.caveV2Id : null,
+      caveV2RoomId: typeof player.caveV2RoomId === "string" ? player.caveV2RoomId : null,
+      caveV2X: Number.isFinite(player.caveV2X) ? player.caveV2X : null,
+      caveV2Y: Number.isFinite(player.caveV2Y) ? player.caveV2Y : null,
+      caveV2EntryEntranceId: typeof player.caveV2EntryEntranceId === "string" ? player.caveV2EntryEntranceId : null,
+      caveV2ExitEntranceId: typeof player.caveV2ExitEntranceId === "string" ? player.caveV2ExitEntranceId : null,
       inventoryFingerprint: typeof player.inventoryFingerprint === "string"
         ? player.inventoryFingerprint
         : "",
@@ -14118,6 +14231,13 @@
       inCave: false,
       caveId: null,
       caveLayer: 0,
+      inCaveV2: false,
+      caveV2Id: null,
+      caveV2RoomId: null,
+      caveV2X: null,
+      caveV2Y: null,
+      caveV2EntryEntranceId: null,
+      caveV2ExitEntranceId: null,
       inventoryFingerprint: "",
       inventoryTotals: Object.create(null),
     };
@@ -14329,17 +14449,21 @@
   function getPlayersSnapshot() {
     const players = [];
     if (state.player) {
+      const activeCaveV2 = CAVE_V2_ENABLED ? (state.caveV2?.active || null) : null;
       const localWorld = getPlayerWorldForSync(
         state.inCave,
         state.activeCave?.id ?? null,
-        state.activeCaveLayer ?? 0
+        state.activeCaveLayer ?? 0,
+        !!activeCaveV2,
+        activeCaveV2?.caveId ?? null,
+        activeCaveV2?.roomId ?? null
       );
       const localPos = clampPositionToWorldBounds(
         localWorld,
-        state.player.x,
-        state.player.y,
-        state.player.x,
-        state.player.y
+        activeCaveV2?.x ?? state.player.x,
+        activeCaveV2?.y ?? state.player.y,
+        activeCaveV2?.x ?? state.player.x,
+        activeCaveV2?.y ?? state.player.y
       );
       const localMaxHp = normalizePlayerMaxHpValue(state.player.maxHp, 100);
       players.push({
@@ -14361,19 +14485,33 @@
         inCave: state.inCave,
         caveId: state.activeCave?.id ?? null,
         caveLayer: state.inCave ? normalizeCaveLayerIndex(state.activeCaveLayer) : 0,
+        inCaveV2: !!activeCaveV2,
+        caveV2Id: activeCaveV2?.caveId ?? null,
+        caveV2RoomId: activeCaveV2?.roomId ?? null,
+        caveV2X: Number.isFinite(activeCaveV2?.x) ? localPos.x : null,
+        caveV2Y: Number.isFinite(activeCaveV2?.y) ? localPos.y : null,
+        caveV2EntryEntranceId: typeof activeCaveV2?.entryEntranceId === "string" ? activeCaveV2.entryEntranceId : null,
+        caveV2ExitEntranceId: typeof activeCaveV2?.exitEntranceId === "string" ? activeCaveV2.exitEntranceId : null,
         unlocks: normalizeUnlocks(state.player.unlocks),
         inventoryFingerprint: mpAutotestInventoryFingerprintFromSlots(state.inventory),
         inventoryTotals: getLocalInventoryTotalsPayload(),
       });
     }
     for (const [id, player] of net.players.entries()) {
-      const playerWorld = getPlayerWorldForSync(player?.inCave, player?.caveId, player?.caveLayer ?? 0);
+      const playerWorld = getPlayerWorldForSync(
+        player?.inCave,
+        player?.caveId,
+        player?.caveLayer ?? 0,
+        !!player?.inCaveV2,
+        player?.caveV2Id ?? null,
+        player?.caveV2RoomId ?? null
+      );
       const remotePos = clampPositionToWorldBounds(
         playerWorld,
-        player?.x,
-        player?.y,
-        player?.x,
-        player?.y
+        player?.inCaveV2 ? player?.caveV2X : player?.x,
+        player?.inCaveV2 ? player?.caveV2Y : player?.y,
+        player?.inCaveV2 ? player?.caveV2X : player?.x,
+        player?.inCaveV2 ? player?.caveV2Y : player?.y
       );
       const remoteMaxHp = normalizePlayerMaxHpValue(player?.maxHp, 100);
       players.push({
@@ -14395,6 +14533,13 @@
         inCave: player.inCave,
         caveId: player.caveId,
         caveLayer: normalizeCaveLayerIndex(player.caveLayer ?? 0),
+        inCaveV2: !!player.inCaveV2,
+        caveV2Id: typeof player.caveV2Id === "string" ? player.caveV2Id : null,
+        caveV2RoomId: typeof player.caveV2RoomId === "string" ? player.caveV2RoomId : null,
+        caveV2X: player.inCaveV2 ? remotePos.x : null,
+        caveV2Y: player.inCaveV2 ? remotePos.y : null,
+        caveV2EntryEntranceId: typeof player.caveV2EntryEntranceId === "string" ? player.caveV2EntryEntranceId : null,
+        caveV2ExitEntranceId: typeof player.caveV2ExitEntranceId === "string" ? player.caveV2ExitEntranceId : null,
         unlocks: normalizeUnlocks(player.unlocks),
         inventoryFingerprint: typeof player.inventoryFingerprint === "string"
           ? player.inventoryFingerprint
@@ -14963,10 +15108,14 @@
       gameWon: state.gameWon,
       surfaceStatic: includeStaticWorld ? serializeSurfaceStaticSnapshot(surface) : null,
       world: serializeWorldState(surface),
-      caves: CAVES_ENABLED ? (surface.caves?.map((cave) => {
-        const layers = serializeCaveLayers(cave);
-        const layerZeroWorld = layers.find((entry) => normalizeCaveLayerIndex(entry.layer) === 0)?.world
-          || serializeWorldState(ensureCaveLayerWorld(cave, 0, surface));
+      caves: (CAVES_ENABLED || CAVE_V2_ENABLED) ? (surface.caves?.map((cave) => {
+        const layers = CAVES_ENABLED ? serializeCaveLayers(cave) : [];
+        const layerZeroWorld = CAVES_ENABLED
+          ? (
+            layers.find((entry) => normalizeCaveLayerIndex(entry.layer) === 0)?.world
+            || serializeWorldState(ensureCaveLayerWorld(cave, 0, surface))
+          )
+          : null;
         return {
           id: cave.id,
           tx: cave.tx,
@@ -15408,6 +15557,9 @@
       const entrySeq = Number.isFinite(entry.seq)
         ? Math.max(0, Math.floor(entry.seq))
         : null;
+      const entryInCaveV2 = !!entry.inCaveV2;
+      const entryCaveV2Id = typeof entry.caveV2Id === "string" ? entry.caveV2Id : null;
+      const entryCaveV2RoomId = typeof entry.caveV2RoomId === "string" ? entry.caveV2RoomId : null;
       if (entry.id === net.playerId) {
         if (!state.player) continue;
         if (typeof entry.name === "string") {
@@ -15431,6 +15583,19 @@
         }
         const snapshotColor = normalizeHexColor(entry.color);
         if (snapshotColor) net.localColor = snapshotColor;
+        if (entryInCaveV2 && isCaveV2Active()) {
+          const active = state.caveV2?.active || null;
+          if (active && active.caveId === entryCaveV2Id && active.roomId === entryCaveV2RoomId) {
+            if (Number.isFinite(entry.caveV2X)) active.x = entry.caveV2X;
+            if (Number.isFinite(entry.caveV2Y)) active.y = entry.caveV2Y;
+            if (Number.isFinite(active.x) && Number.isFinite(active.y)) {
+              state.player.x = active.x;
+              state.player.y = active.y;
+            }
+          }
+        } else if (!entryInCaveV2 && isCaveV2Active()) {
+          leaveCaveV2({ suppressNetUpdate: true });
+        }
         updateHealthUI();
         updateToolDisplay();
         continue;
@@ -15463,6 +15628,17 @@
           inCave: CAVES_ENABLED ? !!entry.inCave : false,
           caveId: CAVES_ENABLED ? (entry.caveId ?? null) : null,
           caveLayer: CAVES_ENABLED ? normalizeCaveLayerIndex(entry.caveLayer ?? prev.caveLayer ?? 0) : 0,
+          inCaveV2: entryInCaveV2,
+          caveV2Id: entryCaveV2Id,
+          caveV2RoomId: entryCaveV2RoomId,
+          caveV2X: Number.isFinite(entry.caveV2X) ? entry.caveV2X : (prev.caveV2X ?? null),
+          caveV2Y: Number.isFinite(entry.caveV2Y) ? entry.caveV2Y : (prev.caveV2Y ?? null),
+          caveV2EntryEntranceId: typeof entry.caveV2EntryEntranceId === "string"
+            ? entry.caveV2EntryEntranceId
+            : (typeof prev.caveV2EntryEntranceId === "string" ? prev.caveV2EntryEntranceId : null),
+          caveV2ExitEntranceId: typeof entry.caveV2ExitEntranceId === "string"
+            ? entry.caveV2ExitEntranceId
+            : (typeof prev.caveV2ExitEntranceId === "string" ? prev.caveV2ExitEntranceId : null),
           unlocks: normalizeUnlocks(entry.unlocks ?? prev.unlocks),
           inventoryFingerprint: staleInventoryFingerprint,
           inventoryTotals: staleInventoryTotals,
@@ -15477,13 +15653,24 @@
       }
       const normalizedColor = normalizeHexColor(entry.color) || normalizeHexColor(prev?.color) || "#6fa8ff";
       const nextMaxHp = normalizePlayerMaxHpValue(entry.maxHp, prev?.maxHp ?? 100);
-      const remoteWorld = getPlayerWorldForSync(!!entry.inCave, entry.caveId ?? null, entry.caveLayer ?? 0);
+      const remoteWorld = getPlayerWorldForSync(
+        !!entry.inCave,
+        entry.caveId ?? null,
+        entry.caveLayer ?? 0,
+        entryInCaveV2,
+        entryCaveV2Id,
+        entryCaveV2RoomId
+      );
       const normalizedRemotePos = clampPositionToWorldBounds(
         remoteWorld,
-        Number.isFinite(entry.x) ? entry.x : prev?.x,
-        Number.isFinite(entry.y) ? entry.y : prev?.y,
-        prev?.x,
-        prev?.y
+        entryInCaveV2
+          ? (Number.isFinite(entry.caveV2X) ? entry.caveV2X : prev?.caveV2X)
+          : (Number.isFinite(entry.x) ? entry.x : prev?.x),
+        entryInCaveV2
+          ? (Number.isFinite(entry.caveV2Y) ? entry.caveV2Y : prev?.caveV2Y)
+          : (Number.isFinite(entry.y) ? entry.y : prev?.y),
+        entryInCaveV2 ? prev?.caveV2X : prev?.x,
+        entryInCaveV2 ? prev?.caveV2Y : prev?.y
       );
       const inventoryFingerprint = typeof entry.inventoryFingerprint === "string"
         ? entry.inventoryFingerprint
@@ -15510,6 +15697,13 @@
         inCave: CAVES_ENABLED ? !!entry.inCave : false,
         caveId: CAVES_ENABLED ? (entry.caveId ?? null) : null,
         caveLayer: CAVES_ENABLED ? normalizeCaveLayerIndex(entry.caveLayer ?? prev?.caveLayer ?? 0) : 0,
+        inCaveV2: entryInCaveV2,
+        caveV2Id: entryCaveV2Id,
+        caveV2RoomId: entryCaveV2RoomId,
+        caveV2X: entryInCaveV2 ? normalizedRemotePos.x : null,
+        caveV2Y: entryInCaveV2 ? normalizedRemotePos.y : null,
+        caveV2EntryEntranceId: typeof entry.caveV2EntryEntranceId === "string" ? entry.caveV2EntryEntranceId : null,
+        caveV2ExitEntranceId: typeof entry.caveV2ExitEntranceId === "string" ? entry.caveV2ExitEntranceId : null,
         unlocks: normalizeUnlocks(entry.unlocks ?? prev?.unlocks),
         inventoryFingerprint,
         inventoryTotals,
@@ -15847,7 +16041,10 @@
     const syncedWorld = getPlayerWorldForSync(
       state.inCave,
       state.activeCave?.id ?? null,
-      state.activeCaveLayer ?? 0
+      state.activeCaveLayer ?? 0,
+      isCaveV2Active(),
+      state.caveV2?.active?.caveId ?? null,
+      state.caveV2?.active?.roomId ?? null
     );
     state.world = syncedWorld || state.surfaceWorld || state.world;
     updateObjectiveUI();
@@ -15962,6 +16159,14 @@
     state.inCave = false;
     state.activeCave = null;
     state.activeCaveLayer = 0;
+    if (state.caveV2) {
+      state.caveV2.active = null;
+      state.caveV2.transitioning = false;
+      state.caveV2.transition = null;
+      state.caveV2.transitionT = 0;
+      state.caveV2.transitionCooldown = 0;
+      state.caveV2.transitionLock = null;
+    }
     state.caveTransition = null;
     state.activeHouse = null;
     state.housePlayer = null;
@@ -16005,6 +16210,85 @@
     net.joinPhase = "playable";
     updateMpStatus("MP: Connected");
     updateAllSlotUI();
+  }
+
+  function clearRemotePlayerCaveV2State(player) {
+    if (!player) return;
+    player.inCaveV2 = false;
+    player.caveV2Id = null;
+    player.caveV2RoomId = null;
+    player.caveV2X = null;
+    player.caveV2Y = null;
+    player.caveV2EntryEntranceId = null;
+    player.caveV2ExitEntranceId = null;
+  }
+
+  function applyRemotePlayerCaveV2State(player, message) {
+    if (!player) return;
+    const wantsCaveV2 = !!message?.inCaveV2;
+    if (!wantsCaveV2 || !CAVE_V2_ENABLED) {
+      clearRemotePlayerCaveV2State(player);
+      return;
+    }
+    const requestedCaveId = typeof message.caveV2Id === "string" ? message.caveV2Id : null;
+    const requestedRoomId = typeof message.caveV2RoomId === "string" ? message.caveV2RoomId : null;
+    let cave = requestedCaveId ? getCaveV2State().cavesById?.[requestedCaveId] : null;
+    let roomId = requestedRoomId;
+
+    if (!cave && state.surfaceWorld) {
+      const entryId = typeof message.caveV2EntryEntranceId === "string" ? message.caveV2EntryEntranceId : null;
+      if (entryId) {
+        const entrance = getRuntimeCaveV2Entrances(state.surfaceWorld).find((entry) => (
+          getCaveV2EntranceRuntimeId(state.surfaceWorld, entry) === entryId
+        )) || null;
+        if (entrance) {
+          cave = getOrCreateCaveV2(state.surfaceWorld, entrance);
+          if (!roomId && cave) roomId = cave.entryRoomId;
+        }
+      }
+    }
+
+    if (!cave || typeof cave.caveId !== "string" || !cave.roomsById) {
+      clearRemotePlayerCaveV2State(player);
+      return;
+    }
+    if (!roomId || !cave.roomsById[roomId]) {
+      roomId = cave.entryRoomId;
+    }
+    const room = cave.roomsById?.[roomId] || null;
+    if (!room) {
+      clearRemotePlayerCaveV2State(player);
+      return;
+    }
+
+    const syncWorld = getCaveV2SyncWorld(cave.caveId, room.roomId);
+    const rawX = Number.isFinite(message.caveV2X) ? message.caveV2X : (Number.isFinite(message.x) ? message.x : player.x);
+    const rawY = Number.isFinite(message.caveV2Y) ? message.caveV2Y : (Number.isFinite(message.y) ? message.y : player.y);
+    const normalized = clampPositionToWorldBounds(syncWorld, rawX, rawY, rawX, rawY);
+    let cavePos = { x: normalized.x, y: normalized.y };
+    if (!isCaveV2PositionClear(room, cavePos.x, cavePos.y)) {
+      const fallback = findNearestCaveV2FloorSpawnPosition(room, cavePos.x, cavePos.y, null);
+      if (fallback && Number.isFinite(fallback.x) && Number.isFinite(fallback.y)) {
+        cavePos = { x: fallback.x, y: fallback.y };
+      }
+    }
+    player.inCaveV2 = true;
+    player.caveV2Id = cave.caveId;
+    player.caveV2RoomId = room.roomId;
+    player.caveV2X = cavePos.x;
+    player.caveV2Y = cavePos.y;
+    player.caveV2EntryEntranceId = typeof message.caveV2EntryEntranceId === "string"
+      ? message.caveV2EntryEntranceId
+      : null;
+    player.caveV2ExitEntranceId = typeof message.caveV2ExitEntranceId === "string"
+      ? message.caveV2ExitEntranceId
+      : null;
+    player.x = cavePos.x;
+    player.y = cavePos.y;
+    player.inCave = false;
+    player.caveId = null;
+    player.caveLayer = 0;
+    player.inHut = false;
   }
 
   function handlePlayerUpdate(conn, message) {
@@ -16077,11 +16361,29 @@
     player.caveLayer = (CAVES_ENABLED && player.inCave)
       ? normalizeCaveLayerIndex(message.caveLayer ?? player.caveLayer ?? 0)
       : 0;
-    const playerWorld = getPlayerWorldForSync(player.inCave, player.caveId, player.caveLayer ?? 0);
-    const normalizedPos = clampPositionToWorldBounds(playerWorld, player.x, player.y, player.x, player.y);
+    applyRemotePlayerCaveV2State(player, message);
+    const playerWorld = getPlayerWorldForSync(
+      player.inCave,
+      player.caveId,
+      player.caveLayer ?? 0,
+      !!player.inCaveV2,
+      player.caveV2Id ?? null,
+      player.caveV2RoomId ?? null
+    );
+    const normalizedPos = clampPositionToWorldBounds(
+      playerWorld,
+      player.inCaveV2 ? player.caveV2X : player.x,
+      player.inCaveV2 ? player.caveV2Y : player.y,
+      player.inCaveV2 ? player.caveV2X : player.x,
+      player.inCaveV2 ? player.caveV2Y : player.y
+    );
     player.x = normalizedPos.x;
     player.y = normalizedPos.y;
-    if (!player.inCave && !player.inHut && state.surfaceWorld && !normalizeCheckpoint(player.checkpoint)) {
+    if (player.inCaveV2) {
+      player.caveV2X = normalizedPos.x;
+      player.caveV2Y = normalizedPos.y;
+    }
+    if (!player.inCave && !player.inCaveV2 && !player.inHut && state.surfaceWorld && !normalizeCheckpoint(player.checkpoint)) {
       setPlayerCheckpoint(player, state.surfaceWorld, player.x, player.y, true);
     }
     if (player.renderX == null) player.renderX = player.x;
@@ -16107,6 +16409,13 @@
       inCave: player.inCave,
       caveId: player.caveId,
       caveLayer: normalizeCaveLayerIndex(player.caveLayer ?? 0),
+      inCaveV2: !!player.inCaveV2,
+      caveV2Id: typeof player.caveV2Id === "string" ? player.caveV2Id : null,
+      caveV2RoomId: typeof player.caveV2RoomId === "string" ? player.caveV2RoomId : null,
+      caveV2X: player.inCaveV2 && Number.isFinite(player.caveV2X) ? player.caveV2X : null,
+      caveV2Y: player.inCaveV2 && Number.isFinite(player.caveV2Y) ? player.caveV2Y : null,
+      caveV2EntryEntranceId: typeof player.caveV2EntryEntranceId === "string" ? player.caveV2EntryEntranceId : null,
+      caveV2ExitEntranceId: typeof player.caveV2ExitEntranceId === "string" ? player.caveV2ExitEntranceId : null,
       inventoryFingerprint: typeof player.inventoryFingerprint === "string"
         ? player.inventoryFingerprint
         : "",
@@ -16137,7 +16446,13 @@
       }
       const syncedColor = normalizeHexColor(message?.color);
       if (syncedColor) net.localColor = syncedColor;
-      reconcileLocalPlayerPositionFromAuthority(message.x, message.y, { force: false });
+      const localAuthX = (message.inCaveV2 && Number.isFinite(message.caveV2X))
+        ? message.caveV2X
+        : message.x;
+      const localAuthY = (message.inCaveV2 && Number.isFinite(message.caveV2Y))
+        ? message.caveV2Y
+        : message.y;
+      reconcileLocalPlayerPositionFromAuthority(localAuthX, localAuthY, { force: false });
       if (message.facing) {
         state.player.facing = normalizePlayerFacingValue(message.facing, state.player.facing);
       }
@@ -16157,6 +16472,21 @@
       if (message.checkpoint) {
         state.player.checkpoint = normalizeCheckpoint(message.checkpoint) ?? state.player.checkpoint;
       }
+      if (!!message.inCaveV2 && isCaveV2Active()) {
+        const active = state.caveV2?.active || null;
+        const msgCaveId = typeof message.caveV2Id === "string" ? message.caveV2Id : null;
+        const msgRoomId = typeof message.caveV2RoomId === "string" ? message.caveV2RoomId : null;
+        if (active && active.caveId === msgCaveId && active.roomId === msgRoomId) {
+          if (Number.isFinite(message.caveV2X)) active.x = message.caveV2X;
+          if (Number.isFinite(message.caveV2Y)) active.y = message.caveV2Y;
+          if (Number.isFinite(active.x) && Number.isFinite(active.y)) {
+            state.player.x = active.x;
+            state.player.y = active.y;
+          }
+        }
+      } else if (!message.inCaveV2 && isCaveV2Active()) {
+        leaveCaveV2({ suppressNetUpdate: true });
+      }
       return;
     }
     const current = net.players.get(message.id) || {};
@@ -16172,13 +16502,27 @@
     }
     const syncedColor = normalizeHexColor(message.color) || normalizeHexColor(current.color) || "#6fa8ff";
     const nextMaxHp = normalizePlayerMaxHpValue(message.maxHp, current.maxHp ?? 100);
-    const remoteWorld = getPlayerWorldForSync(!!message.inCave, message.caveId ?? null, message.caveLayer ?? 0);
+    const msgInCaveV2 = !!message.inCaveV2;
+    const msgCaveV2Id = typeof message.caveV2Id === "string" ? message.caveV2Id : null;
+    const msgCaveV2RoomId = typeof message.caveV2RoomId === "string" ? message.caveV2RoomId : null;
+    const remoteWorld = getPlayerWorldForSync(
+      !!message.inCave,
+      message.caveId ?? null,
+      message.caveLayer ?? 0,
+      msgInCaveV2,
+      msgCaveV2Id,
+      msgCaveV2RoomId
+    );
     const normalizedPos = clampPositionToWorldBounds(
       remoteWorld,
-      Number.isFinite(message.x) ? message.x : current.x,
-      Number.isFinite(message.y) ? message.y : current.y,
-      current.x,
-      current.y
+      msgInCaveV2
+        ? (Number.isFinite(message.caveV2X) ? message.caveV2X : current.caveV2X)
+        : (Number.isFinite(message.x) ? message.x : current.x),
+      msgInCaveV2
+        ? (Number.isFinite(message.caveV2Y) ? message.caveV2Y : current.caveV2Y)
+        : (Number.isFinite(message.y) ? message.y : current.y),
+      msgInCaveV2 ? current.caveV2X : current.x,
+      msgInCaveV2 ? current.caveV2Y : current.y
     );
     const inventoryFingerprint = typeof message.inventoryFingerprint === "string"
       ? message.inventoryFingerprint
@@ -16206,6 +16550,13 @@
       inCave: !!message.inCave,
       caveId: message.caveId ?? null,
       caveLayer: normalizeCaveLayerIndex(message.caveLayer ?? current.caveLayer ?? 0),
+      inCaveV2: msgInCaveV2,
+      caveV2Id: msgCaveV2Id,
+      caveV2RoomId: msgCaveV2RoomId,
+      caveV2X: msgInCaveV2 ? normalizedPos.x : null,
+      caveV2Y: msgInCaveV2 ? normalizedPos.y : null,
+      caveV2EntryEntranceId: typeof message.caveV2EntryEntranceId === "string" ? message.caveV2EntryEntranceId : null,
+      caveV2ExitEntranceId: typeof message.caveV2ExitEntranceId === "string" ? message.caveV2ExitEntranceId : null,
       inventoryFingerprint,
       inventoryTotals,
       renderX: current.renderX ?? (Number.isFinite(message.x) ? message.x : (current.x ?? 0)),
@@ -16228,7 +16579,7 @@
       return;
     }
     const player = net.players.get(conn.peer);
-    if (!player || player.inCave || player.inHut) {
+    if (!player || isRemotePlayerInAnyCave(player) || player.inHut) {
       sendFailure();
       return;
     }
@@ -16429,9 +16780,21 @@
     net.pendingHouseMoves.delete(message.requestId);
   }
 
+  function isRemotePlayerInAnyCave(player) {
+    return !!(player && (player.inCave || player.inCaveV2));
+  }
+
   function getRemoteActionWorldForPlayer(player, message) {
     if (!player || !state.surfaceWorld) return null;
     if (player.inHut) return null;
+    const wantsCaveV2 = message?.world === "caveV2";
+    if (wantsCaveV2) {
+      if (!player.inCaveV2) return null;
+      const caveId = typeof message?.caveV2Id === "string" ? message.caveV2Id : null;
+      const roomId = typeof message?.caveV2RoomId === "string" ? message.caveV2RoomId : null;
+      if ((caveId && caveId !== player.caveV2Id) || (roomId && roomId !== player.caveV2RoomId)) return null;
+      return getCaveV2SyncWorld(player.caveV2Id, player.caveV2RoomId);
+    }
     const wantsCave = message?.world === "cave";
     if (wantsCave) {
       if (!player.inCave) return null;
@@ -16441,7 +16804,7 @@
       if (caveLayer !== normalizeCaveLayerIndex(player.caveLayer ?? 0)) return null;
       return getCaveWorld(caveId, caveLayer);
     }
-    if (player.inCave) return null;
+    if (player.inCave || player.inCaveV2) return null;
     return state.surfaceWorld;
   }
 
@@ -16453,7 +16816,7 @@
 
   function canRemotePlayerAccessSurfaceStructure(player, structure, rangeMultiplier = 1.9) {
     if (!player || !structure) return false;
-    if (player.inCave || player.inHut) return false;
+    if (isRemotePlayerInAnyCave(player) || player.inHut) return false;
     const center = getStructureCenterWorld(structure);
     return canRemotePlayerReachPoint(player, center.x, center.y, rangeMultiplier);
   }
@@ -16498,10 +16861,68 @@
         world = state.surfaceWorld || state.world || null;
       } else if (requestedWorld === "cave" && Number.isInteger(Number(message.caveId))) {
         world = getCaveWorld(Number(message.caveId), normalizeCaveLayerIndex(message.caveLayer ?? 0));
+      } else if (requestedWorld === "caveV2") {
+        world = getCaveV2SyncWorld(
+          typeof message.caveV2Id === "string" ? message.caveV2Id : player.caveV2Id,
+          typeof message.caveV2RoomId === "string" ? message.caveV2RoomId : player.caveV2RoomId
+        );
       }
     }
     if (!world) {
       recordAutotestHarvestProbe("rejected", "world-unavailable");
+      return;
+    }
+    if (world.__caveV2RoomProxy) {
+      const cave = world.caveV2Cave;
+      const room = world.caveV2Room;
+      let resId = Number(message.resId);
+      if (!Number.isInteger(resId)) {
+        recordAutotestHarvestProbe("rejected", "invalid-resId");
+        return;
+      }
+      const ore = world.resources?.[resId];
+      if (!ore || ore.removed || ore.destroyed) {
+        recordAutotestHarvestProbe("rejected", "already-broken", { resId });
+        return;
+      }
+      const sourcePlayer = {
+        ...player,
+        unlocks: normalizeUnlocks(message.unlocks ?? player.unlocks),
+      };
+      const gate = canHarvestResource(ore, sourcePlayer);
+      if (!gate.ok) {
+        recordAutotestHarvestProbe("rejected", "gate", { resId, gateReason: gate.reason || "" });
+        return;
+      }
+      if (!canRemotePlayerReachPoint(player, ore.x, ore.y, 1.35)) {
+        recordAutotestHarvestProbe("rejected", "out-of-range", { resId });
+        return;
+      }
+      stabilizeCaveV2Ore(ore);
+      const damage = clamp(getAppliedHarvestDamage(sourcePlayer, ore), 1, 4);
+      let applied = Math.max(1, Math.floor(Number(damage) || 1));
+      if (ore.hp === ore.maxHp && ore.maxHp > 1) {
+        applied = Math.min(applied, Math.max(1, ore.maxHp - 1));
+      }
+      ore.hp = Math.max(0, Number(ore.hp) - applied);
+      ore.hitTimer = 0.18;
+      if (ore.hp <= 0) {
+        ore.hp = 0;
+        ore.removed = true;
+        ore.destroyed = true;
+        const dropId = getResourceDropId(ore);
+        const dropQty = getResourceDropQty(ore);
+        if (dropId && dropQty > 0 && cave && room) {
+          createCaveV2OreDrops(cave, room, ore, dropId, dropQty);
+        }
+      }
+      markDirty();
+      markSyncLedgerEvent("harvest");
+      recordAutotestHarvestProbe("accepted", "ok", {
+        resId,
+        afterHp: Number.isFinite(ore.hp) ? ore.hp : null,
+        afterRemoved: !!ore.removed,
+      });
       return;
     }
     let resId = Number(message.resId);
@@ -16789,7 +17210,7 @@
 
   function canRemotePlayerControlRobot(player, structure) {
     if (!player || !structure || structure.type !== "robot") return false;
-    if (player.inCave || player.inHut) return false;
+    if (isRemotePlayerInAnyCave(player) || player.inHut) return false;
     const robotPos = getStructureCenterWorld(structure);
     const dist = Math.hypot((player.x ?? 0) - robotPos.x, (player.y ?? 0) - robotPos.y);
     return dist <= CONFIG.interactRange * 1.9;
@@ -16797,7 +17218,7 @@
 
   function canRemotePlayerUseBench(player, structure) {
     if (!player || !structure || structure.type !== "bench") return false;
-    if (player.inCave || player.inHut) return false;
+    if (isRemotePlayerInAnyCave(player) || player.inHut) return false;
     const center = getStructureCenterWorld(structure);
     const dist = Math.hypot((player.x ?? 0) - center.x, (player.y ?? 0) - center.y);
     return dist <= CONFIG.interactRange * 1.9;
@@ -16942,7 +17363,7 @@
       respond(false, "Player unavailable");
       return;
     }
-    if (player.inCave || player.inHut) {
+    if (isRemotePlayerInAnyCave(player) || player.inHut) {
       respond(false, "Cannot place here");
       return;
     }
@@ -16979,7 +17400,7 @@
   function handleShipAction(conn, message) {
     if (!conn || !message) return;
     const player = net.players.get(conn.peer);
-    if (!player || player.inCave || player.inHut) return;
+    if (!player || isRemotePlayerInAnyCave(player) || player.inHut) return;
     if (!Number.isInteger(message.tx) || !Number.isInteger(message.ty)) return;
     const structure = getStructureAt(message.tx, message.ty);
     if (!structure || structure.type !== "abandoned_ship") return;
@@ -17224,7 +17645,7 @@
     if (conn) {
       const player = net.players.get(conn.peer);
       if (!player) return;
-      if (player.inCave) return;
+      if (isRemotePlayerInAnyCave(player)) return;
       if (!player.inHut) {
         const nearBed = state.structures.some((structure) => {
           if (structure.removed || structure.type !== "bed") return false;
@@ -17313,7 +17734,7 @@
     if (!player) return;
     let world = getRemoteActionWorldForPlayer(player, message);
     let houseDropCenter = null;
-    if (!world && player.inHut && !player.inCave && message.allowHouseDrop) {
+    if (!world && player.inHut && !isRemotePlayerInAnyCave(player) && message.allowHouseDrop) {
       const houseCoords = parseHouseKey(player.houseKey);
       if (houseCoords) {
         const house = getStructureAt(houseCoords.tx, houseCoords.ty);
@@ -17337,15 +17758,28 @@
       const distFromPlayer = Math.hypot(x - (player.x ?? 0), y - (player.y ?? 0));
       if (distFromPlayer > CONFIG.tileSize * 6) return;
     }
-    spawnDrop(itemId, qty, x, y, world);
+    if (world.__caveV2RoomProxy) {
+      const cave = world.caveV2Cave || null;
+      const room = world.caveV2Room || null;
+      if (!cave || !room) return;
+      const drop = spawnCaveV2RoomDrop(cave, room, itemId, qty, x, y, "remote-drop");
+      if (!drop) return;
+    } else {
+      spawnDrop(itemId, qty, x, y, world);
+    }
     markSyncLedgerEvent("dropSpawn");
   }
 
   function shouldPlayWorldSfx(world, x, y, radius = CONFIG.tileSize * 15) {
     if (!state.player || !world) return false;
+    const localCaveV2 = CAVE_V2_ENABLED ? (state.caveV2?.active || null) : null;
     const localWorld = state.inCave
       ? getPlayerWorldForSync(true, state.activeCave?.id ?? null, state.activeCaveLayer ?? 0)
-      : (state.surfaceWorld || state.world);
+      : (
+        localCaveV2
+          ? getPlayerWorldForSync(false, null, 0, true, localCaveV2.caveId, localCaveV2.roomId)
+          : (state.surfaceWorld || state.world)
+      );
     const resolvedLocalWorld = localWorld || state.world;
     if (resolvedLocalWorld !== world) return false;
     if (!Number.isFinite(x) || !Number.isFinite(y)) return true;
@@ -17393,6 +17827,9 @@
   function handleRespawnMessage(message) {
     if (!state.player) return;
     removePlayerFromAllShips(getLocalShipPlayerId());
+    if (isCaveV2Active()) {
+      leaveCaveV2({ suppressNetUpdate: true });
+    }
     state.player.maxHp = normalizePlayerMaxHpValue(message.maxHp, state.player.maxHp);
     state.player.hp = normalizePlayerHpValue(message.hp, state.player.maxHp, state.player.hp);
     const respawnWorld = state.surfaceWorld || state.world;
@@ -17522,6 +17959,13 @@
       payload.inCave ? 1 : 0,
       Number.isInteger(payload.caveId) ? payload.caveId : "",
       payload.inCave ? normalizeCaveLayerIndex(payload.caveLayer ?? 0) : "",
+      payload.inCaveV2 ? 1 : 0,
+      payload.inCaveV2 ? (payload.caveV2Id || "") : "",
+      payload.inCaveV2 ? (payload.caveV2RoomId || "") : "",
+      payload.inCaveV2 && Number.isFinite(payload.caveV2X) ? Number(payload.caveV2X).toFixed(2) : "",
+      payload.inCaveV2 && Number.isFinite(payload.caveV2Y) ? Number(payload.caveV2Y).toFixed(2) : "",
+      payload.inCaveV2 ? (payload.caveV2EntryEntranceId || "") : "",
+      payload.inCaveV2 ? (payload.caveV2ExitEntranceId || "") : "",
       unlocks,
       payload.inventoryFingerprint || "",
       getInventoryTotalsFingerprint(payload.inventoryTotals),
@@ -17531,17 +17975,21 @@
   function sendPlayerUpdate() {
     if (!net.enabled || !state.player) return;
     if (!net.isHost && !netIsClientReady()) return;
+    const caveV2Active = CAVE_V2_ENABLED ? (state.caveV2?.active || null) : null;
     const playerWorld = getPlayerWorldForSync(
       state.inCave,
       state.activeCave?.id ?? null,
-      state.activeCaveLayer ?? 0
+      state.activeCaveLayer ?? 0,
+      !!caveV2Active,
+      caveV2Active?.caveId ?? null,
+      caveV2Active?.roomId ?? null
     );
     const clampedPos = clampPositionToWorldBounds(
       playerWorld,
-      state.player.x,
-      state.player.y,
-      state.player.x,
-      state.player.y
+      caveV2Active?.x ?? state.player.x,
+      caveV2Active?.y ?? state.player.y,
+      caveV2Active?.x ?? state.player.x,
+      caveV2Active?.y ?? state.player.y
     );
     const maxHp = normalizePlayerMaxHpValue(state.player.maxHp, 100);
     const payloadBase = {
@@ -17562,6 +18010,13 @@
       inCave: state.inCave,
       caveId: state.activeCave?.id ?? null,
       caveLayer: state.inCave ? normalizeCaveLayerIndex(state.activeCaveLayer) : 0,
+      inCaveV2: !!caveV2Active,
+      caveV2Id: caveV2Active?.caveId ?? null,
+      caveV2RoomId: caveV2Active?.roomId ?? null,
+      caveV2X: caveV2Active ? clampedPos.x : null,
+      caveV2Y: caveV2Active ? clampedPos.y : null,
+      caveV2EntryEntranceId: typeof caveV2Active?.entryEntranceId === "string" ? caveV2Active.entryEntranceId : null,
+      caveV2ExitEntranceId: typeof caveV2Active?.exitEntranceId === "string" ? caveV2Active.exitEntranceId : null,
       inventoryFingerprint: mpAutotestInventoryFingerprintFromSlots(state.inventory),
       inventoryTotals: getLocalInventoryTotalsPayload(),
     };
@@ -18494,7 +18949,45 @@
     return { x: normalized.x, y: normalized.y };
   }
 
-  function getPlayerWorldForSync(inCave, caveId, caveLayer = 0) {
+  function getCaveV2SyncWorld(caveId, roomId) {
+    if (!CAVE_V2_ENABLED) return null;
+    const caveKey = typeof caveId === "string" && caveId.length > 0 ? caveId : null;
+    const roomKey = typeof roomId === "string" && roomId.length > 0 ? roomId : null;
+    if (!caveKey || !roomKey) return null;
+    const caveState = getCaveV2State();
+    const cave = caveState?.cavesById?.[caveKey] || null;
+    const room = cave?.roomsById?.[roomKey] || null;
+    if (!cave || !room) return null;
+    return {
+      __caveV2RoomProxy: true,
+      caveV2Cave: cave,
+      caveV2Room: room,
+      sizeW: Math.max(1, Math.floor(Number(room.sizeW) || 1)),
+      sizeH: Math.max(1, Math.floor(Number(room.sizeH) || 1)),
+      size: Math.max(
+        Math.max(1, Math.floor(Number(room.sizeW) || 1)),
+        Math.max(1, Math.floor(Number(room.sizeH) || 1))
+      ),
+      resources: Array.isArray(room.entities?.ores) ? room.entities.ores : [],
+      drops: Array.isArray(room.entities?.drops) ? room.entities.drops : [],
+      monsters: Array.isArray(room.entities?.mobs) ? room.entities.mobs : [],
+      animals: [],
+      villagers: [],
+    };
+  }
+
+  function getPlayerWorldForSync(
+    inCave,
+    caveId,
+    caveLayer = 0,
+    inCaveV2 = false,
+    caveV2Id = null,
+    caveV2RoomId = null
+  ) {
+    if (inCaveV2) {
+      const caveV2World = getCaveV2SyncWorld(caveV2Id, caveV2RoomId);
+      if (caveV2World) return caveV2World;
+    }
     if (CAVES_ENABLED && inCave) {
       const caveWorld = getCaveWorld(caveId, caveLayer);
       if (caveWorld) return caveWorld;
@@ -18581,9 +19074,67 @@
     return `cv2-${(seedToInt(key) >>> 0).toString(16)}`;
   }
 
+  function buildCaveV2LinkedPairIdFromSurfaceCaveIds(world, caveAId, caveBId) {
+    if (!Number.isInteger(caveAId) || !Number.isInteger(caveBId) || caveAId === caveBId) return null;
+    const minId = Math.min(caveAId, caveBId);
+    const maxId = Math.max(caveAId, caveBId);
+    const seed = normalizeSeedValue(world?.seed || "island-1");
+    return `cv2-link-${(seedToInt(`${seed}:cv2:${minId}:${maxId}`) >>> 0).toString(16)}`;
+  }
+
+  function applyCaveV2RuntimeEntranceLinksFromSurfaceCaves(world, entrances) {
+    if (!world || !Array.isArray(entrances) || entrances.length <= 0) return false;
+    const caves = Array.isArray(world.caves) ? world.caves : [];
+    if (caves.length <= 1) return false;
+    const byTile = new Map();
+    for (const entrance of entrances) {
+      if (!entrance || !Number.isInteger(entrance.tx) || !Number.isInteger(entrance.ty)) continue;
+      if (typeof entrance.entranceId !== "string" || !entrance.entranceId) {
+        entrance.entranceId = buildCaveV2EntranceSurfaceKey(world, entrance.tx, entrance.ty);
+      }
+      byTile.set(`${entrance.tx},${entrance.ty}`, entrance);
+    }
+    let changed = false;
+    for (const cave of caves) {
+      if (!cave || !Number.isInteger(cave.id)) continue;
+      const targetId = Number.isInteger(cave.surfaceLinkTargetCaveId) ? cave.surfaceLinkTargetCaveId : null;
+      if (targetId == null || targetId === cave.id) continue;
+      const target = caves.find((entry) => entry && entry.id === targetId) || null;
+      if (!target) continue;
+      const entryA = byTile.get(`${Math.floor(Number(cave.tx) || 0)},${Math.floor(Number(cave.ty) || 0)}`) || null;
+      const entryB = byTile.get(`${Math.floor(Number(target.tx) || 0)},${Math.floor(Number(target.ty) || 0)}`) || null;
+      if (!entryA || !entryB) continue;
+      const idA = getCaveV2EntranceRuntimeId(world, entryA);
+      const idB = getCaveV2EntranceRuntimeId(world, entryB);
+      if (!idA || !idB || idA === idB) continue;
+      const pairId = buildCaveV2LinkedPairIdFromSurfaceCaveIds(world, cave.id, target.id);
+      if (!pairId) continue;
+      if (entryA.linkedPairId !== pairId) {
+        entryA.linkedPairId = pairId;
+        changed = true;
+      }
+      if (entryB.linkedPairId !== pairId) {
+        entryB.linkedPairId = pairId;
+        changed = true;
+      }
+      if (entryA.linkedExitKey !== idB) {
+        entryA.linkedExitKey = idB;
+        changed = true;
+      }
+      if (entryB.linkedExitKey !== idA) {
+        entryB.linkedExitKey = idA;
+        changed = true;
+      }
+    }
+    return changed;
+  }
+
   function ensureCaveV2RuntimeEntrances(world) {
     if (!world || typeof world !== "object") return [];
-    if (Array.isArray(world.runtimeCaveV2Entrances)) return world.runtimeCaveV2Entrances;
+    if (Array.isArray(world.runtimeCaveV2Entrances)) {
+      applyCaveV2RuntimeEntranceLinksFromSurfaceCaves(world, world.runtimeCaveV2Entrances);
+      return world.runtimeCaveV2Entrances;
+    }
     const entrances = [];
     const sourceCaves = Array.isArray(world.caves) ? world.caves : [];
     for (const cave of sourceCaves) {
@@ -18630,12 +19181,15 @@
         }
       }
     }
+    applyCaveV2RuntimeEntranceLinksFromSurfaceCaves(world, entrances);
     world.runtimeCaveV2Entrances = entrances;
     return world.runtimeCaveV2Entrances;
   }
 
   function getRuntimeCaveV2Entrances(world) {
-    return ensureCaveV2RuntimeEntrances(world);
+    const entrances = ensureCaveV2RuntimeEntrances(world);
+    applyCaveV2RuntimeEntranceLinksFromSurfaceCaves(world, entrances);
+    return entrances;
   }
 
   function getCaveV2EntranceRuntimeId(world, entrance) {
@@ -19856,6 +20410,19 @@
 
   function attemptHarvestCaveV2Ore(cave, room, ore) {
     if (!cave || !room || !ore || ore.removed || ore.destroyed) return false;
+    if (netIsClientReady()) {
+      sendToHost({
+        type: "harvest",
+        world: "caveV2",
+        caveV2Id: cave.caveId,
+        caveV2RoomId: room.roomId,
+        resId: ore.id,
+        x: Number.isFinite(state.player?.x) ? state.player.x : null,
+        y: Number.isFinite(state.player?.y) ? state.player.y : null,
+        unlocks: normalizeUnlocks(state.player?.unlocks),
+      });
+      return true;
+    }
     stabilizeCaveV2Ore(ore);
     const gate = canHarvestResource(ore);
     if (!gate.ok) {
@@ -19911,6 +20478,19 @@
       if (added <= 0) continue;
       pickedAny = true;
       inventoryChanged = true;
+      if (netIsClientReady()) {
+        sendToHost({
+          type: "dropPickup",
+          world: "caveV2",
+          caveV2Id: cave.caveId,
+          caveV2RoomId: room.roomId,
+          dropId: drop.id,
+          qty: added,
+          itemId: drop.itemId,
+          x: drop.x,
+          y: drop.y,
+        });
+      }
       if (remaining > 0) {
         drop.qty = remaining;
       } else {
@@ -21320,10 +21900,6 @@
 
   function enterCaveV2(entrance) {
     if (!CAVE_V2_ENABLED || !state.surfaceWorld || !state.player || !entrance) return false;
-    if (net.enabled) {
-      setPrompt("CaveV2 multiplayer sync arrives in Step 2", 1.4);
-      return false;
-    }
     const caveState = getCaveV2State();
     const cave = getOrCreateCaveV2(state.surfaceWorld, entrance);
     const entryRoom = cave.roomsById[cave.entryRoomId];
@@ -21474,6 +22050,7 @@
         lightingOverlay: "cavev2_room_vignette",
       });
     }
+    if (net.enabled) sendPlayerUpdate();
     return true;
   }
 
@@ -21498,7 +22075,7 @@
     return clamped || { x: targetX, y: targetY };
   }
 
-  function leaveCaveV2() {
+  function leaveCaveV2(options = null) {
     const caveState = getCaveV2State();
     if (!caveState.active || !state.player) return false;
     const active = caveState.active;
@@ -21536,6 +22113,7 @@
     }
     state.promptText = "";
     state.promptTimer = 0;
+    if (net.enabled && !options?.suppressNetUpdate) sendPlayerUpdate();
     return true;
   }
 
@@ -22488,6 +23066,7 @@
       ctx.textAlign = "left";
       ctx.fillText(caveStateText, 24, 105);
     }
+    drawDebugFpsOverlay();
   }
 
   function hasStaleDisabledCaveState() {
@@ -22596,21 +23175,23 @@
   }
 
   function clampPositionToWorldBounds(world, x, y, fallbackX = null, fallbackY = null) {
-    const worldSize = Number(world?.size);
+    const worldWidth = Number.isFinite(Number(world?.sizeW)) ? Number(world.sizeW) : Number(world?.size);
+    const worldHeight = Number.isFinite(Number(world?.sizeH)) ? Number(world.sizeH) : Number(world?.size);
     const halfTile = CONFIG.tileSize * 0.5;
-    if (!Number.isFinite(worldSize) || worldSize <= 0) {
+    if (!Number.isFinite(worldWidth) || worldWidth <= 0 || !Number.isFinite(worldHeight) || worldHeight <= 0) {
       return {
         x: Number.isFinite(x) ? x : (Number.isFinite(fallbackX) ? fallbackX : 0),
         y: Number.isFinite(y) ? y : (Number.isFinite(fallbackY) ? fallbackY : 0),
       };
     }
     const minPos = halfTile;
-    const maxPos = Math.max(minPos, worldSize * CONFIG.tileSize - halfTile);
+    const maxX = Math.max(minPos, worldWidth * CONFIG.tileSize - halfTile);
+    const maxY = Math.max(minPos, worldHeight * CONFIG.tileSize - halfTile);
     const rawX = Number.isFinite(x) ? x : (Number.isFinite(fallbackX) ? fallbackX : minPos);
     const rawY = Number.isFinite(y) ? y : (Number.isFinite(fallbackY) ? fallbackY : minPos);
     return {
-      x: clamp(rawX, minPos, maxPos),
-      y: clamp(rawY, minPos, maxPos),
+      x: clamp(rawX, minPos, maxX),
+      y: clamp(rawY, minPos, maxY),
     };
   }
 
@@ -26054,7 +26635,7 @@
     }
 
     const caves = [];
-    const maxCaves = Math.max(1, Math.floor(islandCount * 0.08));
+    const maxCaves = Math.max(1, Math.floor(islandCount * 0.12));
     const starterCaveChance = 0.03;
     const caveCandidateIslands = islands
       .filter((island) => {
@@ -26172,7 +26753,7 @@
 
     for (const island of caveCandidateIslands) {
       if (caves.length >= maxCaves) break;
-      if (rng() > 0.2) continue;
+      if (rng() > 0.36) continue;
       const spot = findCaveSpotOnIsland(island, false) || findCaveSpotOnIsland(island, true);
       if (!spot) continue;
       addCaveAt(spot.tx, spot.ty, true);
@@ -32308,7 +32889,7 @@
       1,
       Math.min(
         Math.floor(caves.length / 2),
-        Math.floor((caves.length * 0.86) / 2)
+        Math.floor((caves.length * 0.56) / 2)
       )
     );
     const caveMeta = caves.map((cave) => ({
@@ -33601,6 +34182,14 @@
 
   function getLocalSurfaceMapPosition() {
     if (!state.player) return null;
+    const activeCaveV2 = CAVE_V2_ENABLED ? (state.caveV2?.active || null) : null;
+    const caveV2ReturnPos = activeCaveV2?.returnSurfacePos;
+    if (activeCaveV2 && Number.isFinite(caveV2ReturnPos?.x) && Number.isFinite(caveV2ReturnPos?.y)) {
+      return {
+        x: caveV2ReturnPos.x,
+        y: caveV2ReturnPos.y,
+      };
+    }
     if (state.inCave && state.returnPosition) {
       return {
         x: state.returnPosition.x,
@@ -33616,6 +34205,7 @@
   function getDebugSurfacePlayerMarkers() {
     const markers = [];
     const local = getLocalSurfaceMapPosition();
+    const localInAnyCave = !!state.inCave || isCaveV2Active();
     if (local) {
       markers.push({
         id: net.playerId || "local",
@@ -33623,17 +34213,18 @@
         color: net.localColor || COLORS.player,
         x: local.x,
         y: local.y,
-        inCave: !!state.inCave,
+        inCave: localInAnyCave,
       });
     }
 
     for (const player of net.players.values()) {
       if (!player) continue;
       const checkpoint = normalizeCheckpoint(player.checkpoint);
-      const worldX = player.inCave
+      const inAnyCave = !!(player.inCave || player.inCaveV2);
+      const worldX = inAnyCave
         ? (checkpoint?.x ?? (Number.isFinite(player.x) ? player.x : null))
         : (Number.isFinite(player.renderX) ? player.renderX : player.x);
-      const worldY = player.inCave
+      const worldY = inAnyCave
         ? (checkpoint?.y ?? (Number.isFinite(player.y) ? player.y : null))
         : (Number.isFinite(player.renderY) ? player.renderY : player.y);
       if (!Number.isFinite(worldX) || !Number.isFinite(worldY)) continue;
@@ -33643,7 +34234,7 @@
         color: player.color || "#6fa8ff",
         x: worldX,
         y: worldY,
-        inCave: !!player.inCave,
+        inCave: inAnyCave,
       });
     }
 
@@ -33900,11 +34491,14 @@
     playSfx("ui");
 
     if (netIsClientReady()) {
+      const inCaveV2 = !!(caveV2Context?.cave && caveV2Room && caveV2Active);
       sendToHost({
         type: "dropItem",
-        world: state.inCave ? "cave" : "surface",
+        world: inCaveV2 ? "caveV2" : (state.inCave ? "cave" : "surface"),
         caveId: state.activeCave?.id ?? null,
         caveLayer: state.inCave ? normalizeCaveLayerIndex(state.activeCaveLayer) : 0,
+        caveV2Id: inCaveV2 ? caveV2Context.cave.caveId : null,
+        caveV2RoomId: inCaveV2 ? caveV2Room.roomId : null,
         itemId: dropItemId,
         qty: dropQty,
         x: dropPos.x,
@@ -37758,6 +38352,21 @@
     }
   }
 
+  function toggleDebugFps() {
+    if (!state.debugUnlocked) {
+      setPrompt("Debug is locked. Open Settings to unlock.", 1.2);
+      return;
+    }
+    state.debugShowFps = !state.debugShowFps;
+    updateDebugFpsButton();
+    setPrompt(
+      state.debugShowFps
+        ? "FPS monitor enabled"
+        : "FPS monitor disabled",
+      1.2
+    );
+  }
+
   function toggleContinentalShift() {
     if (!state.debugUnlocked) {
       setPrompt("Debug is locked. Open Settings to unlock.", 1.2);
@@ -38496,6 +39105,7 @@
     if (!state.inventory) return { dropped: false, cleared: false, count: 0 };
     const filled = state.inventory.filter((slot) => slot.id && slot.qty > 0);
     if (filled.length === 0) return { dropped: true, cleared: false, count: 0 };
+    const serializedItems = filled.map((slot) => ({ id: slot.id, qty: slot.qty }));
     const caveV2State = CAVE_V2_ENABLED ? getCaveV2State() : null;
     const caveV2Active = !!(CAVE_V2_ENABLED && caveV2State?.active);
     const activeCave = caveV2Active
@@ -38503,13 +39113,26 @@
       : null;
     const activeRoom = activeCave?.roomsById?.[caveV2State.active.roomId] || null;
     let created = 0;
-    if (caveV2Active && activeCave && activeRoom) {
+    if (netIsClientReady()) {
+      sendToHost({
+        type: "deathDrop",
+        world: caveV2Active ? "caveV2" : (state.inCave ? "cave" : "surface"),
+        caveId: state.activeCave?.id ?? null,
+        caveLayer: state.inCave ? normalizeCaveLayerIndex(state.activeCaveLayer) : 0,
+        caveV2Id: caveV2Active ? caveV2State.active?.caveId ?? null : null,
+        caveV2RoomId: caveV2Active ? caveV2State.active?.roomId ?? null : null,
+        x,
+        y,
+        items: serializedItems,
+      });
+      created = serializedItems.length;
+    } else if (caveV2Active && activeCave && activeRoom) {
       created = spawnCaveV2DeathDrops(
         activeCave,
         activeRoom,
         Number.isFinite(x) ? x : caveV2State.active.x,
         Number.isFinite(y) ? y : caveV2State.active.y,
-        filled.map((slot) => ({ id: slot.id, qty: slot.qty })),
+        serializedItems,
       );
       // Last-resort safety: never lose inventory if cave drop creation unexpectedly fails.
       if (created <= 0) {
@@ -38519,17 +39142,6 @@
         const fy = Number.isFinite(fallbackPos?.y) ? fallbackPos.y : (Number.isFinite(y) ? y : 0);
         created = spawnSurfaceDeathDrops(fallbackSurface, fx, fy, filled);
       }
-    } else if (netIsClientReady()) {
-      sendToHost({
-        type: "deathDrop",
-        world: state.inCave ? "cave" : "surface",
-        caveId: state.activeCave?.id ?? null,
-        caveLayer: state.inCave ? normalizeCaveLayerIndex(state.activeCaveLayer) : 0,
-        x,
-        y,
-        items: filled.map((slot) => ({ id: slot.id, qty: slot.qty })),
-      });
-      created = filled.length;
     } else {
       created = spawnSurfaceDeathDrops(world, x, y, filled);
     }
@@ -38633,16 +39245,31 @@
     if (!player) return;
     const items = Array.isArray(message?.items) ? message.items : [];
     if (items.length === 0) return;
+    const wantsCaveV2 = message.world === "caveV2";
     const wantsCave = message.world === "cave";
-    const world = wantsCave
+    const world = wantsCaveV2
       ? (
-        player.inCave
-          && Number.isInteger(player.caveId)
-          && Number(message.caveId) === player.caveId
-          ? getCaveWorld(player.caveId, player.caveLayer ?? 0)
+        player.inCaveV2
+          && (
+            typeof message.caveV2Id !== "string"
+            || message.caveV2Id === player.caveV2Id
+          )
+          && (
+            typeof message.caveV2RoomId !== "string"
+            || message.caveV2RoomId === player.caveV2RoomId
+          )
+          ? getCaveV2SyncWorld(player.caveV2Id, player.caveV2RoomId)
           : null
       )
-      : (player.inCave ? null : state.surfaceWorld);
+      : wantsCave
+        ? (
+          player.inCave
+            && Number.isInteger(player.caveId)
+            && Number(message.caveId) === player.caveId
+            ? getCaveWorld(player.caveId, player.caveLayer ?? 0)
+            : null
+        )
+        : (isRemotePlayerInAnyCave(player) ? null : state.surfaceWorld);
     if (!world) return;
     const x = Number.isFinite(message.x) ? message.x : (player.x ?? 0);
     const y = Number.isFinite(message.y) ? message.y : (player.y ?? 0);
@@ -38655,6 +39282,16 @@
       }))
       .filter((entry) => entry.id && entry.qty > 0);
     if (normalized.length === 0) return;
+    if (world.__caveV2RoomProxy) {
+      const cave = world.caveV2Cave || null;
+      const room = world.caveV2Room || null;
+      if (!cave || !room) return;
+      const created = spawnCaveV2DeathDrops(cave, room, x, y, normalized);
+      if (created > 0) {
+        markSyncLedgerEvent("dropSpawn");
+      }
+      return;
+    }
     const cols = Math.ceil(Math.sqrt(normalized.length));
     const spacing = 14;
     for (let i = 0; i < normalized.length; i += 1) {
@@ -38665,6 +39302,7 @@
       const oy = gy * spacing - spacing;
       spawnDrop(item.id, item.qty, x + ox, y + oy, world);
     }
+    markSyncLedgerEvent("dropSpawn");
     markDirty();
   }
 
@@ -40188,6 +40826,8 @@
       if (targetMonster || targetAnimal) {
         playSfx("hit");
       }
+      const caveV2Context = isCaveV2Active() ? getActiveCaveV2Context() : null;
+      const inCaveV2 = !!(caveV2Context?.cave && caveV2Context?.room && caveV2Context?.active);
       const selectedTarget = targetMonster || targetAnimal;
       const selectedTargetPos = selectedTarget
         ? getEntityWorldPosition(selectedTarget, false)
@@ -40200,9 +40840,11 @@
         : (selectedTargetPos?.y ?? state.player.y);
       const message = {
         type: "attack",
-        world: state.inCave ? "cave" : "surface",
+        world: inCaveV2 ? "caveV2" : (state.inCave ? "cave" : "surface"),
         caveId: state.activeCave?.id ?? null,
         caveLayer: state.inCave ? normalizeCaveLayerIndex(state.activeCaveLayer) : 0,
+        caveV2Id: inCaveV2 ? caveV2Context.cave.caveId : null,
+        caveV2RoomId: inCaveV2 ? caveV2Context.room.roomId : null,
         damage: getAttackDamage(state.player),
         unlocks: normalizeUnlocks(state.player.unlocks),
         x: state.player.x,
@@ -40255,10 +40897,14 @@
   function getPlayersForWorld(world) {
     const players = [];
     if (state.player) {
+      const localCaveV2 = CAVE_V2_ENABLED ? (state.caveV2?.active || null) : null;
       const hostWorld = getPlayerWorldForSync(
         state.inCave,
         state.activeCave?.id ?? null,
-        state.activeCaveLayer ?? 0
+        state.activeCaveLayer ?? 0,
+        !!localCaveV2,
+        localCaveV2?.caveId ?? null,
+        localCaveV2?.roomId ?? null
       );
       const hostInWorld = hostWorld === world;
       if (hostInWorld && Number.isFinite(state.player.x) && Number.isFinite(state.player.y)) {
@@ -40270,15 +40916,22 @@
           inCave: state.inCave,
           caveId: state.activeCave?.id ?? null,
           caveLayer: state.inCave ? normalizeCaveLayerIndex(state.activeCaveLayer) : 0,
+          inCaveV2: !!localCaveV2,
+          caveV2Id: localCaveV2?.caveId ?? null,
+          caveV2RoomId: localCaveV2?.roomId ?? null,
         });
       }
     }
     if (net.isHost) {
       for (const player of net.players.values()) {
         if (!Number.isFinite(player?.x) || !Number.isFinite(player?.y)) continue;
-        const playerWorld = player.inCave
-          ? getCaveWorld(player.caveId, player.caveLayer ?? 0)
-          : state.surfaceWorld;
+        const playerWorld = player.inCaveV2
+          ? getCaveV2SyncWorld(player.caveV2Id, player.caveV2RoomId)
+          : (
+            player.inCave
+              ? getCaveWorld(player.caveId, player.caveLayer ?? 0)
+              : state.surfaceWorld
+          );
         if (playerWorld === world) {
           players.push(player);
         }
@@ -40303,6 +40956,7 @@
     player.inCave = false;
     player.caveId = null;
     player.caveLayer = 0;
+    clearRemotePlayerCaveV2State(player);
     const nextSeq = Number.isFinite(player.netSeq)
       ? Math.max(0, Math.floor(player.netSeq)) + 1
       : 1;
@@ -40330,6 +40984,14 @@
       houseY: null,
       inCave: false,
       caveId: null,
+      caveLayer: 0,
+      inCaveV2: false,
+      caveV2Id: null,
+      caveV2RoomId: null,
+      caveV2X: null,
+      caveV2Y: null,
+      caveV2EntryEntranceId: null,
+      caveV2ExitEntranceId: null,
     }, player.id);
     const conn = net.connections.get(player.id);
     if (conn?.open) {
@@ -40577,7 +41239,7 @@
     for (const player of players) {
       if (!player) continue;
       if (!Number.isFinite(player.x) || !Number.isFinite(player.y)) continue;
-      if (isSurface && player.inHut && !player.inCave) continue;
+      if (isSurface && player.inHut && !player.inCave && !player.inCaveV2) continue;
       const dx = player.x - monster.x;
       const dy = player.y - monster.y;
       const dist = Math.hypot(dx, dy);
@@ -43727,13 +44389,28 @@
     while (worldDtRemaining > 0.0001) {
       const worldStep = Math.min(worldDtRemaining, worldStepMax);
       updateDayNight(worldStep);
-      updateAmbientFish(worldStep);
-      updateResources(worldStep);
+      const resourceDt = consumeWorldSystemDt("resources", worldStep);
+      if (resourceDt > 0) {
+        updateResources(resourceDt);
+      }
+      const ambientFishDt = consumeWorldSystemDt("ambientFish", worldStep);
+      if (ambientFishDt > 0) {
+        updateAmbientFish(ambientFishDt);
+      }
       updateMonsters(worldStep);
       updateAnimals(worldStep);
-      updateVillagers(worldStep);
-      updateRobots(worldStep);
-      updateAbandonedShips(worldStep);
+      const villagerDt = consumeWorldSystemDt("villagers", worldStep);
+      if (villagerDt > 0) {
+        updateVillagers(villagerDt);
+      }
+      const robotDt = consumeWorldSystemDt("robots", worldStep);
+      if (robotDt > 0) {
+        updateRobots(robotDt);
+      }
+      const shipDt = consumeWorldSystemDt("ships", worldStep);
+      if (shipDt > 0) {
+        updateAbandonedShips(shipDt);
+      }
       updateAllMonsterBurnEffects(worldStep);
       worldDtRemaining -= worldStep;
     }
@@ -44328,6 +45005,14 @@
       if (!state.activeHouse) return false;
       return !!player.inHut && player.houseKey === getHouseKey(state.activeHouse);
     }
+    const localCaveV2 = CAVE_V2_ENABLED ? (state.caveV2?.active || null) : null;
+    if (localCaveV2) {
+      return !!player.inCaveV2
+        && typeof player.caveV2Id === "string"
+        && typeof player.caveV2RoomId === "string"
+        && player.caveV2Id === localCaveV2.caveId
+        && player.caveV2RoomId === localCaveV2.roomId;
+    }
     if (state.inCave) {
       const activeCaveId = state.activeCave?.id;
       const activeLayer = normalizeCaveLayerIndex(state.activeCaveLayer ?? 0);
@@ -44337,7 +45022,7 @@
         && player.caveId === activeCaveId
         && normalizeCaveLayerIndex(player.caveLayer ?? 0) === activeLayer;
     }
-    return !player.inCave && !player.inHut;
+    return !player.inCave && !player.inCaveV2 && !player.inHut;
   }
 
   function drawCrawlingPlayerAvatar(screenX, screenY, bodyColor, direction, name = null) {
@@ -47343,6 +48028,7 @@
     drawPlayerNameLabel(net.localName, playerPx, playerPy + 2, 16);
     drawGuidanceMapOverlay();
     drawDebugWorldMiniMapOverlay();
+    drawDebugFpsOverlay();
     drawSleepTransitionOverlay();
     drawCaveLayerTransitionOverlay();
   }
@@ -48145,6 +48831,35 @@
       ? "rgba(243, 221, 166, 0.95)"
       : "rgba(178, 207, 228, 0.9)";
     ctx.fillText(countsText, panelX + 10, panelY + 51);
+    ctx.restore();
+  }
+
+  function drawDebugFpsOverlay() {
+    if (!state.debugUnlocked || !state.debugShowFps) return;
+    const fps = Math.max(0, Number(debugFpsMeter.smoothed) || 0);
+    const ms = Math.max(0, Number(debugFpsMeter.frameMs) || 0);
+    const panelW = 110;
+    const panelH = 44;
+    const panelX = viewWidth - panelW - 14;
+    const panelY = 10;
+    ctx.save();
+    drawRoundedRect(ctx, panelX, panelY, panelW, panelH, 10);
+    const panelGradient = ctx.createLinearGradient(panelX, panelY, panelX, panelY + panelH);
+    panelGradient.addColorStop(0, "rgba(8, 18, 28, 0.9)");
+    panelGradient.addColorStop(1, "rgba(5, 12, 20, 0.94)");
+    ctx.fillStyle = panelGradient;
+    ctx.fill();
+    ctx.strokeStyle = "rgba(166, 210, 245, 0.52)";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.textAlign = "right";
+    ctx.textBaseline = "middle";
+    ctx.font = "bold 13px Trebuchet MS";
+    ctx.fillStyle = "rgba(230, 245, 255, 0.96)";
+    ctx.fillText(`${fps.toFixed(1)} FPS`, panelX + panelW - 10, panelY + 17);
+    ctx.font = "10px Trebuchet MS";
+    ctx.fillStyle = "rgba(185, 214, 236, 0.92)";
+    ctx.fillText(`${ms.toFixed(1)} ms`, panelX + panelW - 10, panelY + 33);
     ctx.restore();
   }
 
@@ -49641,6 +50356,7 @@
     drawGuidanceMapOverlay();
     drawDebugWorldMiniMapOverlay();
     drawDebugCaveRoomOverlay();
+    drawDebugFpsOverlay();
     drawSleepTransitionOverlay();
     drawCaveLayerTransitionOverlay();
   }
@@ -49653,6 +50369,12 @@
     }
     let lastTime = performance.now();
     let accumulator = 0;
+    resetWorldSystemCadence();
+    const autoPerf = {
+      smoothedFrameMs: FIXED_SIM_TIMESTEP_SECONDS * 1000,
+      lowFpsTimer: 0,
+      cooldownTimer: 0,
+    };
 
     const handleFrameRuntimeError = (err) => {
       console.error("Frame runtime error", err);
@@ -49686,12 +50408,50 @@
       }
     };
 
+    const maybeApplyAutoPerformanceGuard = (rawDeltaSeconds) => {
+      if (document.hidden) return;
+      if (!state.world || !state.player) return;
+      if (mpAutotest.active) return;
+      const rawMs = Math.max(0, Number(rawDeltaSeconds) || 0) * 1000;
+      if (rawMs <= 0) return;
+      autoPerf.smoothedFrameMs = lerp(
+        autoPerf.smoothedFrameMs,
+        rawMs,
+        clamp(rawDeltaSeconds * 4, 0.04, 0.3)
+      );
+      const fps = 1000 / Math.max(1, autoPerf.smoothedFrameMs);
+      autoPerf.cooldownTimer = Math.max(0, autoPerf.cooldownTimer - rawDeltaSeconds);
+      if (fps >= AUTO_PERF_GOVERNOR.lowFpsThreshold) {
+        autoPerf.lowFpsTimer = 0;
+        return;
+      }
+      autoPerf.lowFpsTimer += rawDeltaSeconds;
+      if (autoPerf.lowFpsTimer < AUTO_PERF_GOVERNOR.lowFpsGraceSeconds) return;
+      if (autoPerf.cooldownTimer > 0) return;
+      autoPerf.lowFpsTimer = 0;
+      autoPerf.cooldownTimer = AUTO_PERF_GOVERNOR.actionCooldownSeconds;
+      if (state.renderScale > AUTO_PERF_GOVERNOR.minRenderScale + 0.001) {
+        const nextScale = Math.max(
+          AUTO_PERF_GOVERNOR.minRenderScale,
+          state.renderScale - AUTO_PERF_GOVERNOR.renderScaleStep
+        );
+        setRenderScaleFromPercent(Math.round(nextScale * 100), false);
+        setPrompt("Auto-optimization: lowered render scale", 1.4);
+        return;
+      }
+      if (normalizeGraphicsPreset(state.graphicsPreset) !== "performance") {
+        setGraphicsPreset("performance", false);
+        setPrompt("Auto-optimization: switched to Performance preset", 1.5);
+      }
+    };
+
     const stepSimulation = (frameSeconds, maxStepsHint = null) => {
       syncNetworkCadenceTimers();
       const maxSteps = Number.isFinite(maxStepsHint)
         ? clamp(Math.floor(maxStepsHint), 2, 16)
         : getRuntimeMaxFixedSteps();
-      const dt = clamp(Number(frameSeconds) || 0, 0, FIXED_SIM_MAX_FRAME_SECONDS);
+      const maxFrameStep = getRuntimeMaxFrameDeltaSeconds();
+      const dt = clamp(Number(frameSeconds) || 0, 0, maxFrameStep);
       accumulator = Math.min(accumulator + dt, FIXED_SIM_TIMESTEP_SECONDS * (maxSteps + 1));
       let steps = 0;
       while (accumulator >= FIXED_SIM_TIMESTEP_SECONDS && steps < maxSteps) {
@@ -49709,10 +50469,21 @@
     };
 
     function frame(time) {
-      const deltaSeconds = clamp((time - lastTime) / 1000, 0, FIXED_SIM_MAX_FRAME_SECONDS);
+      const rawDeltaSeconds = Math.max(0, (time - lastTime) / 1000);
+      const deltaSeconds = clamp(rawDeltaSeconds, 0, getRuntimeMaxFrameDeltaSeconds());
+      const rawFrameMs = Math.max(0.01, (Number(time) || 0) - (Number(lastTime) || 0));
+      const instantFps = 1000 / rawFrameMs;
+      debugFpsMeter.frameMs = rawFrameMs;
+      debugFpsMeter.instantaneous = instantFps;
+      debugFpsMeter.smoothed = lerp(
+        debugFpsMeter.smoothed,
+        instantFps,
+        clamp(rawDeltaSeconds * 7.5, 0.08, 0.35)
+      );
       lastTime = time;
       try {
         stepSimulation(deltaSeconds);
+        maybeApplyAutoPerformanceGuard(rawDeltaSeconds);
       } catch (err) {
         handleFrameRuntimeError(err);
       }
@@ -49726,7 +50497,7 @@
       let guard = 0;
       try {
         while (remaining > 0.0001 && guard < 1024) {
-          const step = Math.min(remaining, FIXED_SIM_MAX_FRAME_SECONDS);
+          const step = Math.min(remaining, getRuntimeMaxFrameDeltaSeconds());
           stepSimulation(step, Math.max(getRuntimeMaxFixedSteps(), 10));
           remaining -= step;
           guard += 1;
@@ -50221,6 +50992,7 @@
     updateInfiniteResourcesButton();
     updateInfiniteHealthButton();
     updateDebugWorldMapButton();
+    updateDebugFpsButton();
     updateDebugRepairableShipButton();
     updateContinentalShiftButton();
     updateDebugPlaceBoatButton();
@@ -50459,6 +51231,7 @@
     if (infiniteResourcesBtn) infiniteResourcesBtn.addEventListener("click", toggleInfiniteResources);
     if (infiniteHealthBtn) infiniteHealthBtn.addEventListener("click", toggleInfiniteHealth);
     if (debugWorldMapBtn) debugWorldMapBtn.addEventListener("click", toggleDebugWorldMap);
+    if (debugFpsBtn) debugFpsBtn.addEventListener("click", toggleDebugFps);
     if (debugRepairableShipBtn) debugRepairableShipBtn.addEventListener("click", toggleDebugRepairableShipMarker);
     if (continentalShiftBtn) continentalShiftBtn.addEventListener("click", toggleContinentalShift);
     if (debugPlaceBoatBtn) debugPlaceBoatBtn.addEventListener("click", toggleDebugPlaceRepairedBoat);
