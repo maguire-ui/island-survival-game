@@ -379,6 +379,7 @@ html, body {
   right: 20px;
   bottom: 90px;
   width: 280px;
+  max-height: min(72vh, calc(var(--app-vh) - 120px));
   background: linear-gradient(164deg, var(--ui-panel-top), var(--ui-panel-bottom));
   border: 1px solid var(--ui-panel-border);
   border-radius: var(--ui-radius-panel);
@@ -388,7 +389,10 @@ html, body {
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
   z-index: 5;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-gutter: stable;
   overscroll-behavior: contain;
   animation: panelEnter 0.18s ease-out;
 }
@@ -1427,7 +1431,10 @@ button:focus-visible {
 .start-screen {
   background: #0c1f33;
   z-index: 20;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: contain;
   isolation: isolate;
   display: grid;
   place-items: center;
@@ -1693,6 +1700,10 @@ button:focus-visible {
     opacity 0.28s ease;
   will-change: transform, opacity;
   z-index: 1;
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
 }
 
 .start-menu-view.view-left {
@@ -1898,7 +1909,7 @@ button:focus-visible {
 
   .start-menu-shell {
     width: min(390px, 100%);
-    min-height: 372px;
+    min-height: min(372px, calc(var(--app-vh) - 120px));
   }
 
   .start-menu-stack {
@@ -1932,6 +1943,21 @@ button:focus-visible {
   .start-name-input {
     min-height: 40px;
     font-size: 15px;
+  }
+}
+
+@media (max-height: 820px) {
+  .start-screen {
+    place-items: start center;
+  }
+
+  .start-screen .start-card {
+    margin-top: max(10px, calc(env(safe-area-inset-top) + 8px));
+    margin-bottom: max(10px, calc(env(safe-area-inset-bottom) + 8px));
+  }
+
+  .start-menu-shell {
+    min-height: min(470px, calc(var(--app-vh) - 120px));
   }
 }
 
