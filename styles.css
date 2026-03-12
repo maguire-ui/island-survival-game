@@ -1948,12 +1948,15 @@ button:focus-visible {
 
 @media (max-height: 820px) {
   .start-screen {
-    place-items: start center;
+    place-items: center;
+    box-sizing: border-box;
+    padding-top: max(10px, calc(env(safe-area-inset-top) + 8px));
+    padding-bottom: max(10px, calc(env(safe-area-inset-bottom) + 8px));
   }
 
   .start-screen .start-card {
-    margin-top: max(10px, calc(env(safe-area-inset-top) + 8px));
-    margin-bottom: max(10px, calc(env(safe-area-inset-bottom) + 8px));
+    margin-top: 0;
+    margin-bottom: 0;
   }
 
   .start-menu-shell {

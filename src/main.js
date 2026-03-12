@@ -169,15 +169,15 @@
   const PLAYER_MOVE_SPEED_MULT = 1.12;
 
   const TOUCH_STICK_MAX_DIST = 40;
-  const MOBILE_RENDER_DPR_CAP = 2;
-  const DESKTOP_RENDER_DPR_CAP = 2.5;
-  const MOBILE_RENDER_MAX_PIXELS = 2200000;
-  const DESKTOP_RENDER_MAX_PIXELS = 4000000;
+  const MOBILE_RENDER_DPR_CAP = 1.35;
+  const DESKTOP_RENDER_DPR_CAP = 1.55;
+  const MOBILE_RENDER_MAX_PIXELS = 1200000;
+  const DESKTOP_RENDER_MAX_PIXELS = 2100000;
   const GRAPHICS_PRESET_CONFIG = Object.freeze({
-    performance: Object.freeze({ renderScale: 0.55, effectsLevel: 0 }),
-    balanced: Object.freeze({ renderScale: 0.9, effectsLevel: 1 }),
-    quality: Object.freeze({ renderScale: 1, effectsLevel: 2 }),
-    ultra: Object.freeze({ renderScale: 1.15, effectsLevel: 3 }),
+    performance: Object.freeze({ renderScale: 0.46, effectsLevel: 0 }),
+    balanced: Object.freeze({ renderScale: 0.62, effectsLevel: 0 }),
+    quality: Object.freeze({ renderScale: 0.78, effectsLevel: 1 }),
+    ultra: Object.freeze({ renderScale: 0.9, effectsLevel: 2 }),
   });
   const GRAPHICS_RUNTIME_PROFILE_CONFIG = Object.freeze({
     performance: Object.freeze({
@@ -215,38 +215,38 @@
       shipTickInterval: 0.05,
     }),
     quality: Object.freeze({
-      worldStepMax: 0.05,
-      ambientFishSpawnChance: 0.52,
-      ambientFishMaxFactor: 0.82,
-      oceanDecorStride: 1,
-      snapshotInterval: 0.28,
-      motionInterval: 0.028,
-      playerSendInterval: 0.028,
-      remoteSmoothScale: 1.04,
-      maxFixedSteps: 4,
-      maxFrameDeltaSeconds: 0.11,
-      resourceTickInterval: 0.025,
-      ambientFishTickInterval: 0.05,
-      villagerTickInterval: 0.033,
-      robotTickInterval: 0.033,
-      shipTickInterval: 0.033,
+      worldStepMax: 0.055,
+      ambientFishSpawnChance: 0.24,
+      ambientFishMaxFactor: 0.24,
+      oceanDecorStride: 4,
+      snapshotInterval: 0.34,
+      motionInterval: 0.036,
+      playerSendInterval: 0.038,
+      remoteSmoothScale: 1.18,
+      maxFixedSteps: 3,
+      maxFrameDeltaSeconds: 0.09,
+      resourceTickInterval: 0.033,
+      ambientFishTickInterval: 0.09,
+      villagerTickInterval: 0.05,
+      robotTickInterval: 0.05,
+      shipTickInterval: 0.05,
     }),
     ultra: Object.freeze({
-      worldStepMax: 0.05,
-      ambientFishSpawnChance: 0.6,
-      ambientFishMaxFactor: 0.95,
-      oceanDecorStride: 1,
-      snapshotInterval: 0.26,
-      motionInterval: 0.024,
-      playerSendInterval: 0.024,
-      remoteSmoothScale: 0.96,
-      maxFixedSteps: 5,
-      maxFrameDeltaSeconds: 0.12,
-      resourceTickInterval: 0.02,
-      ambientFishTickInterval: 0.033,
-      villagerTickInterval: 0.025,
-      robotTickInterval: 0.025,
-      shipTickInterval: 0.025,
+      worldStepMax: 0.055,
+      ambientFishSpawnChance: 0.34,
+      ambientFishMaxFactor: 0.34,
+      oceanDecorStride: 3,
+      snapshotInterval: 0.32,
+      motionInterval: 0.034,
+      playerSendInterval: 0.036,
+      remoteSmoothScale: 1.12,
+      maxFixedSteps: 3,
+      maxFrameDeltaSeconds: 0.09,
+      resourceTickInterval: 0.033,
+      ambientFishTickInterval: 0.075,
+      villagerTickInterval: 0.05,
+      robotTickInterval: 0.05,
+      shipTickInterval: 0.05,
     }),
   });
   const GRAPHICS_PRESET_IDS = Object.freeze([
@@ -2120,10 +2120,10 @@
   const FIXED_SIM_MAX_FRAME_SECONDS = 0.12;
   const AUTO_PERF_GOVERNOR = Object.freeze({
     lowFpsThreshold: 55,
-    lowFpsGraceSeconds: 2.2,
-    actionCooldownSeconds: 5.5,
-    minRenderScale: 0.4,
-    renderScaleStep: 0.05,
+    lowFpsGraceSeconds: 0.9,
+    actionCooldownSeconds: 2.6,
+    minRenderScale: 0.35,
+    renderScaleStep: 0.08,
   });
   const interpolationState = {
     playerPrevX: null,
@@ -45815,6 +45815,20 @@
     const width = getCameraViewWidth(camera);
     const height = getCameraViewHeight(camera);
     if (width <= 0 || height <= 0) return;
+    if (quality === 1) {
+      const lightWater = ctx.createLinearGradient(0, 0, 0, height);
+      lightWater.addColorStop(0, "rgba(17, 86, 126, 0.1)");
+      lightWater.addColorStop(1, "rgba(7, 49, 84, 0.16)");
+      ctx.fillStyle = lightWater;
+      ctx.fillRect(0, 0, width, height);
+      ctx.strokeStyle = "rgba(132, 198, 229, 0.03)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(-20, height * 0.46);
+      ctx.lineTo(width + 20, height * 0.46);
+      ctx.stroke();
+      return;
+    }
 
     const pulse = Math.sin(nowSeconds * 0.15) * 0.5 + 0.5;
     const deepWater = ctx.createLinearGradient(0, 0, 0, height);
@@ -45855,7 +45869,7 @@
 
   function drawOceanTileDecor(world, tx, ty, screenX, screenY, nowSeconds = 0, effectsLevel = 1) {
     const quality = clampGraphicsEffectsLevel(effectsLevel);
-    if (quality <= 0) return;
+    if (quality < 2) return;
     if (!world || !Array.isArray(world.tiles)) return;
     const seedInt = Number.isFinite(world.seedInt) ? world.seedInt : seedToInt(String(world.seed || "island-1"));
     const baseHash = ((tx * 92837111) ^ (ty * 689287499) ^ (seedInt * 283923481)) >>> 0;
