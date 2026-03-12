@@ -48840,11 +48840,8 @@
     const ms = Math.max(0, Number(debugFpsMeter.frameMs) || 0);
     const panelW = 110;
     const panelH = 44;
-    const panelX = viewWidth - panelW - 14;
-    // Read the live HUD height so the FPS panel clears wrapped/mobile top bars too.
-    const topbarBottom = topbar ? Math.max(0, topbar.getBoundingClientRect().bottom) : 0;
-    const safeTop = Math.max(10, Math.round(topbarBottom + 10));
-    const panelY = clamp(safeTop, 10, Math.max(10, viewHeight - panelH - 10));
+    const panelX = Math.round((viewWidth - panelW) * 0.5);
+    const panelY = Math.round((viewHeight - panelH) * 0.5);
     ctx.save();
     drawRoundedRect(ctx, panelX, panelY, panelW, panelH, 10);
     const panelGradient = ctx.createLinearGradient(panelX, panelY, panelX, panelY + panelH);
