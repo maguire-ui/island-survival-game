@@ -1630,7 +1630,6 @@ button:focus-visible {
 
 .start-screen .overlay-card {
   box-sizing: border-box;
-  width: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1686,6 +1685,7 @@ button:focus-visible {
   gap: 18px;
   text-align: center;
   opacity: 0;
+  visibility: hidden;
   pointer-events: none;
   transform: translateX(106%) scale(0.985);
   transition:
@@ -1705,9 +1705,34 @@ button:focus-visible {
 
 .start-menu-view.active {
   opacity: 1;
+  visibility: visible;
   pointer-events: auto;
   transform: translateX(0) scale(1);
   z-index: 2;
+}
+
+.start-menu-shell[data-view="main"] #startMainMenu,
+.start-menu-shell[data-view="play"] #startPlayMenu,
+.start-menu-shell[data-view="options"] #startOptionsMenu,
+.start-menu-shell:not([data-view]) #startMainMenu {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: translateX(0) scale(1);
+  z-index: 2;
+}
+
+.start-menu-shell[data-view="main"] #startPlayMenu,
+.start-menu-shell[data-view="main"] #startOptionsMenu,
+.start-menu-shell[data-view="play"] #startMainMenu,
+.start-menu-shell[data-view="play"] #startOptionsMenu,
+.start-menu-shell[data-view="options"] #startMainMenu,
+.start-menu-shell[data-view="options"] #startPlayMenu {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateX(106%) scale(0.985);
+  z-index: 1;
 }
 
 .start-menu-shell.menu-swoosh-forward .start-menu-view.active,

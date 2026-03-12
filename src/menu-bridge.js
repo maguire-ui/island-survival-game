@@ -1,4 +1,6 @@
 (() => {
+  const PENDING_ACTION_POLL_MS = 220;
+
   function setMenuView(view) {
     const next = view === "play" || view === "options" ? view : "main";
     const order = { main: 0, play: 1, options: 2 };
@@ -49,7 +51,23 @@
     else if (action === "back") setMenuView("main");
     else if (action === "solo" || action === "host" || action === "join" || action === "resetSeed") {
       window.__pendingMenuAction = action;
+      schedulePendingMenuBridgeFlush();
     }
+  }
+
+  function schedulePendingMenuBridgeFlush() {
+    if (window.__menuBridgeTimer) return;
+    window.__menuBridgeTimer = window.setTimeout(() => {
+      window.__menuBridgeTimer = 0;
+      if (!window.__pendingMenuAction) return;
+      if (!window.__isgMenuApi) {
+        schedulePendingMenuBridgeFlush();
+        return;
+      }
+      const action = window.__pendingMenuAction;
+      window.__pendingMenuAction = null;
+      isgMenuAction(action);
+    }, PENDING_ACTION_POLL_MS);
   }
 
   function bindMenuEventDelegate() {
@@ -79,11 +97,14 @@
 
   window.isgMenuAction = isgMenuAction;
   bindMenuEventDelegate();
-  window.__menuBridgeTimer = window.__menuBridgeTimer || setInterval(() => {
-    if (!window.__pendingMenuAction) return;
-    if (!window.__isgMenuApi) return;
-    const action = window.__pendingMenuAction;
-    window.__pendingMenuAction = null;
-    isgMenuAction(action);
-  }, 200);
+  try {
+    const initialShell = document.getElementById("startMenuShell") || document.querySelector(".start-menu-shell");
+    const initialView = initialShell?.dataset?.view || "main";
+    setMenuView(initialView);
+  } catch (err) {
+    // no-op: menu fallback still works via delegated actions
+  }
+  if (window.__pendingMenuAction) {
+    schedulePendingMenuBridgeFlush();
+  }
 })();

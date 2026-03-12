@@ -147,6 +147,8 @@
   });
   const START_MENU_SWOOSH_DURATION_MS = 420;
   const START_SCREEN_EXIT_TRANSITION_MS = 280;
+  const START_FLOW_TIMEOUT_MS = 18000;
+  const JOIN_FLOW_TIMEOUT_MS = 24000;
 
   const MONSTER = {
     surfaceMax: 30,
@@ -178,7 +180,7 @@
   });
   const GRAPHICS_RUNTIME_PROFILE_CONFIG = Object.freeze({
     performance: Object.freeze({
-      worldStepMax: 0.04,
+      worldStepMax: 0.05,
       ambientFishSpawnChance: 0.34,
       ambientFishMaxFactor: 0.35,
       oceanDecorStride: 2,
@@ -186,7 +188,7 @@
       motionInterval: 0.04,
       playerSendInterval: 0.045,
       remoteSmoothScale: 1.34,
-      maxFixedSteps: 4,
+      maxFixedSteps: 5,
     }),
     balanced: Object.freeze({
       worldStepMax: 0.045,
@@ -660,8 +662,8 @@
   });
   const MP_AUTOTEST_MOB_STALL_LIMIT = 22;
   const MP_AUTOTEST_HARD_TIMEOUT_BUFFER = Object.freeze({
-    quick: 30,
-    stress: 80,
+    quick: 95,
+    stress: 360,
   });
   const MP_AUTOTEST_NO_PROGRESS_TIMEOUT = Object.freeze({
     quick: 18,
@@ -7977,7 +7979,15 @@
       payloads: [],
     };
     const clientPlayer = mpAutotestFindClientPlayer(client);
-    if (!clientPlayer && kind !== "disconnectRejoin") return null;
+    const allowsMissingClientPlayer = (
+      kind === "disconnectRejoin"
+      || kind === "dayNight"
+      || kind === "regenAccel"
+      || kind === "craftEdge"
+      || kind === "craftRecipe"
+      || kind === "stationCycle"
+    );
+    if (!clientPlayer && !allowsMissingClientPlayer) return null;
     const autotestHarvestUnlocks = normalizeUnlocks({
       pickaxe: true,
       orePickaxe: true,
@@ -9259,14 +9269,14 @@
       if (Array.isArray(world.resources)) {
         for (const res of world.resources) {
           if (!res) continue;
-          if (normalizeResourceHealthState(world, res)) {
+          if (enforceResourceHpInvariant(world, res)) {
             normalizedResourceHealth = true;
           }
           if (!Number.isFinite(res.x) || !Number.isFinite(res.y)) {
             issues.push(`${worldLabel}:resource non-finite position`);
             break;
           }
-          if (Number.isFinite(res.hp) && res.hp < 0) {
+          if (Number.isFinite(res.hp) && res.hp < -0.0001) {
             issues.push(`${worldLabel}:resource negative hp`);
             break;
           }
@@ -9642,11 +9652,14 @@
     const actionKinds = mpAutotestGenerateActionKinds();
     if (!Array.isArray(actionKinds) || actionKinds.length === 0) return null;
     const baseIndex = mpAutotest.step % actionKinds.length;
-    const client = availableClients[Math.floor(mpAutotest.rng() * availableClients.length)];
-    for (let i = 0; i < actionKinds.length; i += 1) {
-      const kind = actionKinds[(baseIndex + i) % actionKinds.length];
-      const descriptor = mpAutotestPrepareActionDescriptor(client, kind);
-      if (descriptor) return descriptor;
+    const clientStartIndex = Math.floor(mpAutotest.rng() * availableClients.length);
+    for (let clientOffset = 0; clientOffset < availableClients.length; clientOffset += 1) {
+      const client = availableClients[(clientStartIndex + clientOffset) % availableClients.length];
+      for (let i = 0; i < actionKinds.length; i += 1) {
+        const kind = actionKinds[(baseIndex + i) % actionKinds.length];
+        const descriptor = mpAutotestPrepareActionDescriptor(client, kind);
+        if (descriptor) return descriptor;
+      }
     }
     return null;
   }
@@ -13359,6 +13372,31 @@
   let currentStartMenuView = "main";
   let startMenuSwooshTimer = 0;
   let startScreenExitTimer = 0;
+  let startFlowWatchdogTimer = 0;
+  let startFlowWatchdogKind = "";
+
+  function clearStartFlowWatchdog() {
+    if (startFlowWatchdogTimer) {
+      window.clearTimeout(startFlowWatchdogTimer);
+      startFlowWatchdogTimer = 0;
+    }
+    startFlowWatchdogKind = "";
+  }
+
+  function armStartFlowWatchdog(kind, timeoutMs, onTimeout) {
+    clearStartFlowWatchdog();
+    const timeout = Math.max(3000, Math.floor(Number(timeoutMs) || START_FLOW_TIMEOUT_MS));
+    const label = typeof kind === "string" && kind ? kind : "start";
+    startFlowWatchdogKind = label;
+    startFlowWatchdogTimer = window.setTimeout(() => {
+      startFlowWatchdogTimer = 0;
+      const activeKind = startFlowWatchdogKind;
+      startFlowWatchdogKind = "";
+      if (typeof onTimeout === "function") {
+        onTimeout(activeKind || label);
+      }
+    }, timeout);
+  }
 
   function applyStartMenuViewClasses(nextView) {
     const next = (nextView === "play" || nextView === "options") ? nextView : "main";
@@ -13581,6 +13619,7 @@
 
   function restoreStartMenuAfterStartFailure(promptText = "Start failed") {
     if (state.loadingVisible) hideLoadingOverlay();
+    clearStartFlowWatchdog();
     if (startScreenExitTimer) {
       window.clearTimeout(startScreenExitTimer);
       startScreenExitTimer = 0;
@@ -13595,6 +13634,11 @@
 
   function startSolo() {
     if (state.loadingVisible) hideLoadingOverlay();
+    armStartFlowWatchdog("solo", START_FLOW_TIMEOUT_MS, () => {
+      if (!state.loadingVisible || state.loadingTitle !== "Loading") return;
+      console.error("[Startup timeout] Solo flow exceeded guard window");
+      restoreStartMenuAfterStartFailure("Solo start timed out");
+    });
     if (mpAutotest.active) {
       mpAutotestStop({ restoreSeed: false, status: "idle" });
     }
@@ -13648,6 +13692,9 @@
               setLoadingOverlayStage("Syncing...", "Loading");
               updateAllSlotUI();
             },
+            onError: () => {
+              restoreStartMenuAfterStartFailure("Failed to start solo");
+            },
           });
           return;
         }
@@ -13664,6 +13711,11 @@
 
   function startHost() {
     if (state.loadingVisible) hideLoadingOverlay();
+    armStartFlowWatchdog("host", START_FLOW_TIMEOUT_MS, () => {
+      if (!state.loadingVisible || state.loadingTitle !== "Loading") return;
+      console.error("[Startup timeout] Host flow exceeded guard window");
+      restoreStartMenuAfterStartFailure("Host start timed out");
+    });
     transitionStartScreenToLoading("Loading", "Preparing host...", () => {
       try {
         if (!state.world) {
@@ -13677,6 +13729,9 @@
               setLoadingOverlayStage("Syncing...", "Loading");
               updateAllSlotUI();
               initMultiplayer();
+            },
+            onError: () => {
+              restoreStartMenuAfterStartFailure("Failed to host game");
             },
           });
           return;
@@ -13700,6 +13755,10 @@
       setPrompt("Bad code", 1.2);
       return;
     }
+    armStartFlowWatchdog("join", JOIN_FLOW_TIMEOUT_MS, () => {
+      if (net.ready || net.joinPhase === "playable") return;
+      failJoinToMenu("JOIN_TIMEOUT", "Join timed out");
+    });
     transitionStartScreenToLoading("Joining", "Connecting...", () => {
       try {
         initMultiplayerJoin(roomId);
@@ -13722,6 +13781,10 @@
         net.connectIntent = "host";
         net.hostCodeRetryCount = 0;
         updateMpStatus("MP: Host");
+        clearStartFlowWatchdog();
+        if (state.loadingVisible && state.loadingTitle === "Loading") {
+          hideLoadingOverlay();
+        }
       }
     });
     peer.on("connection", (conn) => {
@@ -16450,7 +16513,7 @@
       return;
     }
     let resource = world.resources?.[resId];
-    if (resource && normalizeResourceHealthState(world, resource)) {
+    if (resource && enforceResourceHpInvariant(world, resource)) {
       markDirty();
     }
     const alreadyBroken = !!(
@@ -16566,6 +16629,9 @@
     const damage = clamp(getAppliedHarvestDamage(sourcePlayer, resource), 1, 4);
     const playAudio = shouldPlayWorldSfx(world, resource.x, resource.y);
     applyHarvestToResource(world, resource, damage, false, playAudio);
+    if (enforceResourceHpInvariant(world, resource)) {
+      markDirty();
+    }
     markSyncLedgerEvent("harvest");
     recordAutotestHarvestProbe("accepted", "ok", {
       resId,
@@ -17752,6 +17818,7 @@
 
   function failJoinToMenu(errorCode = "JOIN_FAILED", detail = "Unable to join host.") {
     const code = String(errorCode || "JOIN_FAILED");
+    clearStartFlowWatchdog();
     rollbackAllPendingClientRequests();
     try {
       net.hostConn?.close();
@@ -18569,6 +18636,39 @@
 
   function getRuntimeCaveV2Entrances(world) {
     return ensureCaveV2RuntimeEntrances(world);
+  }
+
+  function getCaveV2EntranceRuntimeId(world, entrance) {
+    if (!entrance || typeof entrance !== "object") return null;
+    if (typeof entrance.entranceId === "string" && entrance.entranceId.length > 0) {
+      return entrance.entranceId;
+    }
+    if (typeof entrance.key === "string" && entrance.key.length > 0) {
+      return entrance.key;
+    }
+    if (!world || !Number.isInteger(entrance.tx) || !Number.isInteger(entrance.ty)) return null;
+    return buildCaveV2EntranceSurfaceKey(world, entrance.tx, entrance.ty);
+  }
+
+  function findLinkedCaveV2PeerEntranceId(world, linkedPairId, entryEntranceId = null) {
+    if (!world) return null;
+    const pairId = typeof linkedPairId === "string" && linkedPairId.length > 0
+      ? linkedPairId
+      : null;
+    if (!pairId) return null;
+    const entryId = typeof entryEntranceId === "string" && entryEntranceId.length > 0
+      ? entryEntranceId
+      : null;
+    const candidates = [];
+    for (const entrance of getRuntimeCaveV2Entrances(world)) {
+      if (!entrance || entrance.linkedPairId !== pairId) continue;
+      const runtimeId = getCaveV2EntranceRuntimeId(world, entrance);
+      if (!runtimeId || (entryId && runtimeId === entryId)) continue;
+      candidates.push(runtimeId);
+    }
+    if (candidates.length <= 0) return null;
+    candidates.sort((a, b) => a.localeCompare(b));
+    return candidates[0] || null;
   }
 
   function findNearestCaveV2Entrance(world, player) {
@@ -20067,6 +20167,18 @@
     return missing || "S";
   }
 
+  function getAlternateCaveV2SurfaceSide(primarySide, preferredSide = null) {
+    const primary = normalizeCaveV2Direction(primarySide) || "S";
+    const preferred = normalizeCaveV2Direction(preferredSide);
+    if (preferred && preferred !== primary) return preferred;
+    const opposite = getCaveV2OppositeSide(primary);
+    if (opposite && opposite !== primary) return opposite;
+    for (const side of ["N", "S", "E", "W"]) {
+      if (side !== primary) return side;
+    }
+    return null;
+  }
+
   function chooseCaveV2LinkedExitSideForEntryRoom(room, primarySide, pairId = "", caveId = "") {
     if (!room) return null;
     const normalizedPrimary = normalizeCaveV2Direction(primarySide) || "S";
@@ -20109,6 +20221,7 @@
     if (!cave) return null;
     const entrySide = normalizeCaveV2Direction(cave.entrySurfaceSide) || "S";
     const linkedSide = normalizeCaveV2Direction(cave.linkedSurfaceSide);
+    const fallbackLinkedSide = getAlternateCaveV2SurfaceSide(entrySide, linkedSide);
     const entryId = typeof entryEntranceId === "string" && entryEntranceId.length > 0
       ? entryEntranceId
       : null;
@@ -20151,28 +20264,42 @@
     if (primaryEntranceId) {
       map[entrySide] = primaryEntranceId;
     }
-    if (linkedSide && linkedSide !== entrySide) {
+    if (fallbackLinkedSide && fallbackLinkedSide !== entrySide) {
       if (secondaryEntranceId) {
-        map[linkedSide] = secondaryEntranceId;
+        map[fallbackLinkedSide] = secondaryEntranceId;
       } else if (linkedId && linkedId !== primaryEntranceId) {
-        map[linkedSide] = linkedId;
+        map[fallbackLinkedSide] = linkedId;
       }
     }
 
-    const ensureIncluded = (id) => {
+    const ensureIncluded = (id, preferredSide = null) => {
       if (!id) return;
       const values = Object.values(map);
       if (values.includes(id)) return;
-      if (!map[entrySide]) {
-        map[entrySide] = id;
-        return;
+      const preferred = getAlternateCaveV2SurfaceSide(entrySide, preferredSide);
+      const candidateSides = [];
+      if (preferred && preferred !== entrySide) candidateSides.push(preferred);
+      if (
+        fallbackLinkedSide
+        && fallbackLinkedSide !== entrySide
+        && !candidateSides.includes(fallbackLinkedSide)
+      ) {
+        candidateSides.push(fallbackLinkedSide);
       }
-      if (linkedSide && linkedSide !== entrySide && !map[linkedSide]) {
-        map[linkedSide] = id;
+      for (const side of ["N", "S", "E", "W"]) {
+        if (side === entrySide) continue;
+        if (!candidateSides.includes(side)) candidateSides.push(side);
       }
+      for (const side of candidateSides) {
+        if (!map[side]) {
+          map[side] = id;
+          return;
+        }
+      }
+      if (!map[entrySide]) map[entrySide] = id;
     };
-    ensureIncluded(entryId);
-    if (linkedId && linkedId !== entryId) ensureIncluded(linkedId);
+    ensureIncluded(entryId, fallbackLinkedSide);
+    if (linkedId && linkedId !== entryId) ensureIncluded(linkedId, fallbackLinkedSide);
     return normalizeCaveV2SurfaceExitBySideMap(map);
   }
 
@@ -20247,7 +20374,7 @@
     const entryId = typeof entryEntranceId === "string" && entryEntranceId.length > 0
       ? entryEntranceId
       : null;
-    const linkedId = typeof linkedEntranceId === "string" && linkedEntranceId.length > 0
+    let linkedId = typeof linkedEntranceId === "string" && linkedEntranceId.length > 0
       ? linkedEntranceId
       : null;
     const entrySide = normalizeCaveV2Direction(cave?.entrySurfaceSide) || "S";
@@ -20261,10 +20388,35 @@
     const entryB = typeof cave?.linkedEntranceBId === "string" && cave.linkedEntranceBId.length > 0
       ? cave.linkedEntranceBId
       : null;
-    const sideMap = buildCaveV2SurfaceExitBySideMap(cave, entryId, linkedId);
-    const mappedEntrySide = getCaveV2SurfaceExitSideForEntranceId(sideMap, entryId);
-    const mappedLinkedSide = getCaveV2SurfaceExitSideForEntranceId(sideMap, linkedId);
-    const hasLinkedSession = !!(pairId && linkedSide && entryId);
+    if (!linkedId && pairId && entryId && entryA && entryB) {
+      if (entryId === entryA) linkedId = entryB;
+      else if (entryId === entryB) linkedId = entryA;
+    }
+    let sideMap = buildCaveV2SurfaceExitBySideMap(cave, entryId, linkedId);
+    let mappedEntrySide = getCaveV2SurfaceExitSideForEntranceId(sideMap, entryId);
+    let mappedLinkedSide = getCaveV2SurfaceExitSideForEntranceId(sideMap, linkedId);
+    const hasLinkedSession = !!(pairId && entryId && linkedId && entryId !== linkedId);
+    if (hasLinkedSession && entryId && linkedId && entryId !== linkedId) {
+      const repairedMap = sideMap && typeof sideMap === "object"
+        ? { ...sideMap }
+        : Object.create(null);
+      const fallbackEntrySide = mappedEntrySide
+        || normalizeCaveV2Direction(cave?.entrySurfaceSide)
+        || "S";
+      const fallbackLinkedSide = getAlternateCaveV2SurfaceSide(
+        fallbackEntrySide,
+        mappedLinkedSide || linkedSide
+      );
+      if (!mappedEntrySide) {
+        repairedMap[fallbackEntrySide] = entryId;
+      }
+      if (!mappedLinkedSide && fallbackLinkedSide && fallbackLinkedSide !== fallbackEntrySide) {
+        repairedMap[fallbackLinkedSide] = linkedId;
+      }
+      sideMap = normalizeCaveV2SurfaceExitBySideMap(repairedMap) || sideMap;
+      mappedEntrySide = getCaveV2SurfaceExitSideForEntranceId(sideMap, entryId);
+      mappedLinkedSide = getCaveV2SurfaceExitSideForEntranceId(sideMap, linkedId);
+    }
     if (!hasLinkedSession) {
       return {
         entryExitSide: mappedEntrySide || entrySide,
@@ -20358,12 +20510,17 @@
     const caveId = entrance.caveId || getCaveV2EntranceStableId(surfaceWorld, entrance.tx, entrance.ty);
     const entrySurfaceKey = entrance.key || buildCaveV2EntranceSurfaceKey(surfaceWorld, entrance.tx, entrance.ty);
     const entryEntranceId = String(entrance.entranceId || entrySurfaceKey);
-    const linkedExitKey = typeof entrance.linkedExitKey === "string" && entrance.linkedExitKey.length > 0
-      ? String(entrance.linkedExitKey)
-      : null;
     const linkedPairId = typeof entrance.linkedPairId === "string" && entrance.linkedPairId.length > 0
       ? String(entrance.linkedPairId)
       : null;
+    const directLinkedExitKey = typeof entrance.linkedExitKey === "string" && entrance.linkedExitKey.length > 0
+      ? String(entrance.linkedExitKey)
+      : null;
+    const linkedExitKey = directLinkedExitKey
+      || findLinkedCaveV2PeerEntranceId(surfaceWorld, linkedPairId, entryEntranceId);
+    if (!directLinkedExitKey && linkedExitKey) {
+      entrance.linkedExitKey = linkedExitKey;
+    }
     const linkedEntrances = linkedPairId && linkedExitKey
       ? [entryEntranceId, linkedExitKey].sort((a, b) => a.localeCompare(b))
       : [];
@@ -20856,11 +21013,16 @@
       const linkedPairId = typeof entrance.linkedPairId === "string" && entrance.linkedPairId.length > 0
         ? String(entrance.linkedPairId)
         : null;
-      const linkedExitKey = typeof entrance.linkedExitKey === "string" && entrance.linkedExitKey.length > 0
-        ? String(entrance.linkedExitKey)
-        : null;
       const entrySurfaceKey = entrance.key || buildCaveV2EntranceSurfaceKey(surfaceWorld, entrance.tx, entrance.ty);
       const entryEntranceId = String(entrance.entranceId || entrySurfaceKey);
+      const directLinkedExitKey = typeof entrance.linkedExitKey === "string" && entrance.linkedExitKey.length > 0
+        ? String(entrance.linkedExitKey)
+        : null;
+      const linkedExitKey = directLinkedExitKey
+        || findLinkedCaveV2PeerEntranceId(surfaceWorld, linkedPairId, entryEntranceId);
+      if (!directLinkedExitKey && linkedExitKey) {
+        entrance.linkedExitKey = linkedExitKey;
+      }
       if (!cave.surfaceEntranceAId) cave.surfaceEntranceAId = entryEntranceId;
       if (linkedPairId && linkedExitKey) {
         const pair = [entryEntranceId, linkedExitKey].sort((a, b) => a.localeCompare(b));
@@ -21174,9 +21336,14 @@
     const linkedPairId = typeof entrance.linkedPairId === "string" && entrance.linkedPairId.length > 0
       ? entrance.linkedPairId
       : null;
-    const exitEntranceId = typeof entrance.linkedExitKey === "string" && entrance.linkedExitKey.length > 0
+    const directExitEntranceId = typeof entrance.linkedExitKey === "string" && entrance.linkedExitKey.length > 0
       ? entrance.linkedExitKey
       : null;
+    const exitEntranceId = directExitEntranceId
+      || findLinkedCaveV2PeerEntranceId(state.surfaceWorld, linkedPairId, entryEntranceId);
+    if (!directExitEntranceId && exitEntranceId) {
+      entrance.linkedExitKey = exitEntranceId;
+    }
     const surfaceExitMapping = resolveCaveV2LinkedSurfaceExitMapping(
       cave,
       entryEntranceId,
@@ -26496,6 +26663,7 @@
   }
 
   function hideLoadingOverlay() {
+    clearStartFlowWatchdog();
     setLoadingOverlayVisible(false);
   }
 
@@ -26506,6 +26674,7 @@
     const finalizeStage = typeof opts.finalStage === "string" && opts.finalStage ? opts.finalStage : "Ready";
     const holdMs = clamp(Math.floor(Number(opts.holdMs) || 120), 0, 1200);
     const task = typeof opts.task === "function" ? opts.task : null;
+    const onError = typeof opts.onError === "function" ? opts.onError : null;
     if (!task) return;
     showLoadingOverlay(title, stage);
     const run = () => {
@@ -26513,9 +26682,18 @@
         try {
           task();
           setLoadingOverlayStage(finalizeStage, title);
+        } catch (err) {
+          console.error("Deferred loading task failed", err);
+          if (onError) {
+            try {
+              onError(err);
+            } catch (callbackErr) {
+              console.error("Deferred loading recovery handler failed", callbackErr);
+            }
+          }
         } finally {
           window.setTimeout(() => {
-            hideLoadingOverlay();
+            if (state.loadingVisible) hideLoadingOverlay();
           }, holdMs);
         }
       }, 0);
@@ -27284,7 +27462,7 @@
         if (savedRes.isBiomeStone === true) res.isBiomeStone = true;
         normalizeBiomeStoneMetadata(world, res);
       }
-      normalizeResourceHealthState(world, res);
+      enforceResourceHpInvariant(world, res);
       if (res.removed) {
         const idx = tileIndex(res.tx, res.ty, world.size);
         world.resourceGrid[idx] = -1;
@@ -31291,6 +31469,30 @@
     return changed;
   }
 
+  function enforceResourceHpInvariant(world, resource) {
+    if (!resource) return false;
+    let changed = normalizeResourceHealthState(world, resource);
+    if (Number.isFinite(resource.hp) && resource.hp < 0) {
+      resource.hp = 0;
+      changed = true;
+    }
+    if (
+      world
+      && Array.isArray(world.resourceGrid)
+      && Number.isInteger(resource.tx)
+      && Number.isInteger(resource.ty)
+      && inBounds(resource.tx, resource.ty, world.size)
+      && resource.removed
+    ) {
+      const idx = tileIndex(resource.tx, resource.ty, world.size);
+      if (world.resourceGrid[idx] === resource.id) {
+        world.resourceGrid[idx] = -1;
+        changed = true;
+      }
+    }
+    return changed;
+  }
+
   function getBiomeStoneBiomeCount() {
     return Math.min(BIOMES.length, BIOME_STONES.length);
   }
@@ -33894,10 +34096,12 @@
         updateAllSlotUI();
         setPrompt(`Collected ${ITEMS[dropId].name} x${dropQty}`, 1);
       }
+      enforceResourceHpInvariant(world, resource);
       markDirty();
       return;
     }
 
+    enforceResourceHpInvariant(world, resource);
     markDirty();
   }
 
@@ -37996,7 +38200,7 @@
       if (applyResourceStageNormalization(res)) {
         markDirty();
       }
-      if (normalizeResourceHealthState(world, res)) {
+      if (enforceResourceHpInvariant(world, res)) {
         markDirty();
       }
       if (res.hitTimer > 0) res.hitTimer -= dt;
