@@ -1,12 +1,31 @@
 (() => {
   function setMenuView(view) {
     const next = view === "play" || view === "options" ? view : "main";
+    const order = { main: 0, play: 1, options: 2 };
+    const nextOrder = order[next] ?? 0;
+    const shell = document.getElementById("startMenuShell") || document.querySelector(".start-menu-shell");
     const main = document.getElementById("startMainMenu");
     const play = document.getElementById("startPlayMenu");
     const options = document.getElementById("startOptionsMenu");
-    if (main) main.classList.toggle("active", next === "main");
-    if (play) play.classList.toggle("active", next === "play");
-    if (options) options.classList.toggle("active", next === "options");
+    const views = [
+      { id: "main", el: main },
+      { id: "play", el: play },
+      { id: "options", el: options },
+    ];
+    for (const entry of views) {
+      if (!entry.el) continue;
+      const isActive = entry.id === next;
+      const viewOrder = order[entry.id] ?? 0;
+      entry.el.classList.remove("active", "view-left", "view-right");
+      if (!isActive) {
+        entry.el.classList.add(viewOrder < nextOrder ? "view-left" : "view-right");
+      }
+      entry.el.classList.toggle("active", isActive);
+      entry.el.setAttribute("aria-hidden", isActive ? "false" : "true");
+    }
+    if (shell) {
+      shell.dataset.view = next;
+    }
   }
 
   function isgMenuAction(action) {

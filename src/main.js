@@ -42,6 +42,7 @@
   const loadingOverlay = document.getElementById("loadingOverlay");
   const loadingTitle = document.getElementById("loadingTitle");
   const loadingStage = document.getElementById("loadingStage");
+  const startMenuShell = document.getElementById("startMenuShell");
   const startMainMenu = document.getElementById("startMainMenu");
   const startPlayMenu = document.getElementById("startPlayMenu");
   const startOptionsMenu = document.getElementById("startOptionsMenu");
@@ -138,6 +139,14 @@
     dayLength: 180,
     nightLength: 120,
   };
+
+  const START_MENU_VIEW_ORDER = Object.freeze({
+    main: 0,
+    play: 1,
+    options: 2,
+  });
+  const START_MENU_SWOOSH_DURATION_MS = 420;
+  const START_SCREEN_EXIT_TRANSITION_MS = 280;
 
   const MONSTER = {
     surfaceMax: 30,
@@ -560,23 +569,28 @@
   });
 
   const QA_FEATURE_INVENTORY = Object.freeze([
-    "World generation + seed determinism + per-seed persistence",
-    "Island layout + biome assignment + cave generation/entry/exit",
-    "Resource harvesting (trees, rocks, ore, grass) + tool-gated damage",
-    "Inventory/hotbar/backpack stacks + pickup/drop + death drop scatter",
-    "Crafting bench recipes + cost validation + output grant flow",
-    "Build placement rules + bridges/docks + house upgrades",
-    "Station crafting flows (sawmill, smelter, kiln, robot commands)",
-    "Storage systems (surface chests, house chests, shipwreck chests, robot cargo)",
-    "Chest transfer + destroy-chest behavior + inventory panel stacking",
-    "Day/night cycle + world lighting + night/day spawn transitions",
-    "Surface hostiles + cave hostiles + biome guardians + poison systems",
-    "Passive animals + mushroom green cows + villagers + ambient fish",
-    "Player combat/damage/poison/death/respawn/checkpoint rules",
-    "Win condition (beacon + rescue sequence + end flow)",
-    "Multiplayer host/join + snapshots + motion sync + late join",
-    "Save/load integrity for world, structures, entities, inventory, progression",
-    "Debug systems (world map, continental shift, repaired boat placement, speed/FOV)",
+    "Core loop: fixed-step timing + interpolation + update/render order + menu/start scene transitions",
+    "World generation: seeded deterministic islands, shorelines, biome assignment, and surface cave entrance registry",
+    "Spawn safety: player spawn selection on valid land tiles with fallback normalization",
+    "Caves: CaveV2 room graph generation, room transitions, linked surface exits, and cave state recovery",
+    "Resources: tree/rock/grass/ore/biome-stone spawn, HP normalization, harvesting, drops, respawn tasks",
+    "Player movement: keyboard/mobile movement, collisions, camera follow, cave/hut movement contexts",
+    "Player health: damage, poison, death handling, respawn/checkpoint restore, death-drop pipeline",
+    "Combat: sword/tool damage gates, target acquisition, hit detection, and attack cooldown handling",
+    "Inventory: hotbar/backpack slots, stack limits, transfer rules, drop item flow, inventory-full craft replacement rule",
+    "Crafting: bench recipes, upgrade prerequisites, station recipes, output grants, and UI lock reasoning",
+    "Stations: sawmill/smelter/kiln/robot station behavior, processing, and station UI interactions",
+    "Buildings: placeable validation, bridge/dock placement, overlap/collision checks, break/pickup behavior",
+    "Storage: surface chests, house chests, shipwreck chests, robot cargo, revisioned MP sync paths",
+    "Time systems: day/night progression, lighting overlays, and day/night spawn/despawn effects",
+    "Mobs/animals: spawn rules, AI movement, targeting, drops, despawn, and render/hitbox sync smoothing",
+    "Win flow: rescue beacon craft/place, rescue sequence timing, and end-screen controls",
+    "Multiplayer: host/join handshake phases, snapshot/motion replication, late join hydration, reconnect handling",
+    "Multiplayer authority map: host-authoritative resources/builds/storage/stations/mobs/drops/win state",
+    "Save/load: world + player + structures + caves + CaveV2 payload roundtrip integrity checks",
+    "Debug tools: locked access flow, debug toggles, cave spawn tools, MP autotest harness, world mini-map controls",
+    "Runtime guardrails: NaN/Infinity checks, unique IDs, entity list integrity, pending net request lifetime checks",
+    "Schema guardrails: snapshot payload validation + save/load compatibility migration checks",
   ]);
 
   const QA_VERIFICATION_PASSES = Object.freeze([
@@ -2139,6 +2153,8 @@
       recent: [],
     },
     caveV2LastRoomSummary: "",
+    startMenuBindAttemptCount: 0,
+    menuApiBridgeInstallCount: 0,
   };
 
   const mpAutotest = {
@@ -2359,6 +2375,8 @@
     joinTimeoutNotified: false,
     hostConnPendingSince: 0,
     joinLastErrorCode: "",
+    connectIntent: "idle",
+    hostCodeRetryCount: 0,
   };
 
   const audio = {
@@ -3862,6 +3880,27 @@
           qaPushIssue(issues, `[caveV2:${caveId}] Entry spawn cannot resolve to floor`);
         }
       }
+      if (cave.linkedPairId) {
+        const linkedSurfaceSide = normalizeCaveV2Direction(cave.linkedSurfaceSide);
+        if (!linkedSurfaceSide || linkedSurfaceSide === entrySurfaceSide) {
+          qaPushIssue(issues, `[caveV2:${caveId}] Linked surface side is missing/invalid`);
+        } else {
+          const sideMap = buildCaveV2SurfaceExitBySideMap(cave);
+          const entryEntranceId = sideMap?.[entrySurfaceSide] || null;
+          const linkedEntranceId = sideMap?.[linkedSurfaceSide] || null;
+          if (!entryEntranceId || !linkedEntranceId) {
+            qaPushIssue(issues, `[caveV2:${caveId}] Linked side mapping missing entry/linked entrance ids`);
+          } else if (entryEntranceId === linkedEntranceId) {
+            qaPushIssue(issues, `[caveV2:${caveId}] Linked cave maps both exits to same entrance`);
+          }
+          if (entryRoom) {
+            const linkedDoor = getCaveV2ExitCenterTile(entryRoom, linkedSurfaceSide);
+            if (!linkedDoor || !isCaveV2FloorTile(entryRoom, linkedDoor.tx, linkedDoor.ty)) {
+              qaPushIssue(issues, `[caveV2:${caveId}] Linked surface doorway ${linkedSurfaceSide} is blocked`);
+            }
+          }
+        }
+      }
 
       let edgeCount = 0;
       const visited = new Set();
@@ -4588,6 +4627,33 @@
     }
   }
 
+  function qaCheckUiBindingIntegrity(issues) {
+    if (!startMenuListenersBound) {
+      qaPushIssue(issues, "[ui] Start menu listeners are not bound");
+    }
+    if (qaRuntime.startMenuBindAttemptCount > 6) {
+      qaPushIssue(issues, `[ui] Start menu bind attempted too many times (${qaRuntime.startMenuBindAttemptCount})`);
+    }
+    if (qaRuntime.menuApiBridgeInstallCount > 4) {
+      qaPushIssue(issues, `[ui] Menu API bridge installed too many times (${qaRuntime.menuApiBridgeInstallCount})`);
+    }
+    if (typeof window.__isgMenuApi !== "object" || !window.__isgMenuApi) {
+      qaPushIssue(issues, "[ui] Menu API bridge is missing");
+    }
+    if (document.__menuDelegateBound !== true) {
+      qaPushIssue(issues, "[ui] Menu delegate bridge is not active");
+    }
+    if (
+      window.__menuBridgeTimer != null
+      && (!Number.isFinite(Number(window.__menuBridgeTimer)) || Number(window.__menuBridgeTimer) <= 0)
+    ) {
+      qaPushIssue(issues, "[ui] Menu bridge timer handle is invalid");
+    }
+    if (startScreenExitTimer && startScreen?.classList.contains("hidden")) {
+      qaPushIssue(issues, "[ui] Start screen exit timer running while menu is hidden");
+    }
+  }
+
   function qaBuildInventoryTotals(inventory) {
     const totals = Object.create(null);
     for (const slot of inventory || []) {
@@ -5107,6 +5173,7 @@
     qaCheckFiniteTimer(net.playerTimer, "net.playerTimer", issues, -0.5, 300);
     qaCheckFiniteTimer(net.helloRetryTimer, "net.helloRetryTimer", issues, -0.5, 300);
     qaCheckFiniteTimer(net.resyncTimer, "net.resyncTimer", issues, -0.5, 300);
+    qaCheckUiBindingIntegrity(issues);
     qaCheckPendingRequestLifetimes(issues);
     qaValidateCraftInventoryFullRule(issues);
     qaCheckCaveV2State(issues);
@@ -9155,6 +9222,7 @@
     checkSlots(state.inventory, "inventory");
     const checkWorld = (world, worldLabel) => {
       if (!world) return;
+      let normalizedResourceHealth = false;
       const idGroups = [
         { name: "drops", list: world.drops },
         { name: "monsters", list: world.monsters },
@@ -9191,6 +9259,9 @@
       if (Array.isArray(world.resources)) {
         for (const res of world.resources) {
           if (!res) continue;
+          if (normalizeResourceHealthState(world, res)) {
+            normalizedResourceHealth = true;
+          }
           if (!Number.isFinite(res.x) || !Number.isFinite(res.y)) {
             issues.push(`${worldLabel}:resource non-finite position`);
             break;
@@ -9200,6 +9271,9 @@
             break;
           }
         }
+      }
+      if (normalizedResourceHealth && !netIsClientReady()) {
+        markDirty();
       }
     };
 
@@ -9647,6 +9721,7 @@
     net.enabled = false;
     net.ready = false;
     net.isHost = false;
+    net.connectIntent = "idle";
     net.playerId = null;
     net.connections.clear();
     net.players.clear();
@@ -13010,6 +13085,7 @@
     net.joinTimeoutNotified = false;
     net.hostConnPendingSince = 0;
     net.joinLastErrorCode = "";
+    net.hostCodeRetryCount = 0;
   }
 
   function resetNetSequenceState() {
@@ -13070,10 +13146,14 @@
     return !HOSTED_BASE_URL && window.location.protocol !== "file:";
   }
 
+  function generateRandomRoomId() {
+    return `island-${Math.random().toString(36).slice(2, 8)}`;
+  }
+
   function getOrCreateRoomId() {
     let roomId = getRoomIdFromUrl();
     if (!roomId) {
-      roomId = `island-${Math.random().toString(36).slice(2, 8)}`;
+      roomId = generateRandomRoomId();
       setRoomIdInUrl(roomId);
     }
     return roomId;
@@ -13105,6 +13185,8 @@
     resetJoinHandshakeState();
     net.roomId = roomId;
     net.hostId = `${roomId}-host`;
+    net.connectIntent = "host";
+    net.hostCodeRetryCount = 0;
     if (roomDisplay) {
       roomDisplay.textContent = `R: ${roomId}`;
     }
@@ -13180,6 +13262,7 @@
       updateMpStatus("MP: Offline");
       if (mpCopy) mpCopy.disabled = true;
       if (mpJoin) mpJoin.disabled = true;
+      if (state.loadingVisible) hideLoadingOverlay();
       return;
     }
     rollbackAllPendingClientRequests();
@@ -13205,6 +13288,8 @@
     net.helloRetryTimer = NET_CONFIG.helloRetryInterval;
     resetJoinHandshakeState();
     net.enabled = true;
+    net.connectIntent = "host";
+    net.hostCodeRetryCount = 0;
     const profile = getLocalProfile();
     net.localName = profile.name;
     net.localColor = normalizeHexColor(profile.color) || pickRandomDistinctPlayerColor(getAssignedPlayerColorSet());
@@ -13231,6 +13316,7 @@
   function initMultiplayerJoin(roomId) {
     if (typeof window.Peer !== "function") {
       updateMpStatus("MP: Offline");
+      if (state.loadingVisible) hideLoadingOverlay();
       return;
     }
     rollbackAllPendingClientRequests();
@@ -13256,6 +13342,8 @@
     net.helloRetryTimer = NET_CONFIG.helloRetryInterval;
     resetJoinHandshakeState();
     net.enabled = true;
+    net.connectIntent = "join";
+    net.hostCodeRetryCount = 0;
     const profile = getLocalProfile();
     net.localName = profile.name;
     net.localColor = normalizeHexColor(profile.color) || pickRandomDistinctPlayerColor(getAssignedPlayerColorSet());
@@ -13268,20 +13356,92 @@
     connectAsClient();
   }
 
-  function hideStartScreen() {
-    if (startScreen) startScreen.classList.add("hidden");
-    setStartMenuView("main");
+  let currentStartMenuView = "main";
+  let startMenuSwooshTimer = 0;
+  let startScreenExitTimer = 0;
+
+  function applyStartMenuViewClasses(nextView) {
+    const next = (nextView === "play" || nextView === "options") ? nextView : "main";
+    const nextOrder = START_MENU_VIEW_ORDER[next] ?? 0;
+    const views = [
+      { id: "main", el: startMainMenu },
+      { id: "play", el: startPlayMenu },
+      { id: "options", el: startOptionsMenu },
+    ];
+    for (const view of views) {
+      if (!view.el) continue;
+      const isActive = view.id === next;
+      const order = START_MENU_VIEW_ORDER[view.id] ?? 0;
+      view.el.classList.remove("active", "view-left", "view-right");
+      if (!isActive) {
+        view.el.classList.add(order < nextOrder ? "view-left" : "view-right");
+      }
+      view.el.classList.toggle("active", isActive);
+      view.el.setAttribute("aria-hidden", isActive ? "false" : "true");
+    }
+    if (startMenuShell) {
+      startMenuShell.dataset.view = next;
+    }
   }
 
-  function setStartMenuView(view = "main") {
-    const nextView = view === "play" || view === "options" ? view : "main";
-    if (startMainMenu) startMainMenu.classList.toggle("active", nextView === "main");
-    if (startPlayMenu) startPlayMenu.classList.toggle("active", nextView === "play");
-    if (startOptionsMenu) startOptionsMenu.classList.toggle("active", nextView === "options");
+  function setStartMenuView(view = "main", options = null) {
+    const nextView = (view === "play" || view === "options") ? view : "main";
+    const animate = options?.animate !== false;
+    const prevView = currentStartMenuView;
+    const prevOrder = START_MENU_VIEW_ORDER[prevView] ?? 0;
+    const nextOrder = START_MENU_VIEW_ORDER[nextView] ?? 0;
+    currentStartMenuView = nextView;
+
+    applyStartMenuViewClasses(nextView);
+    if (!animate || prevView === nextView || !startMenuShell) return;
+
+    startMenuShell.classList.remove("menu-swoosh-forward", "menu-swoosh-back");
+    // Force reflow so repeated transitions of the same direction still animate.
+    void startMenuShell.offsetWidth;
+    startMenuShell.classList.add(nextOrder >= prevOrder ? "menu-swoosh-forward" : "menu-swoosh-back");
+    if (startMenuSwooshTimer) {
+      window.clearTimeout(startMenuSwooshTimer);
+      startMenuSwooshTimer = 0;
+    }
+    startMenuSwooshTimer = window.setTimeout(() => {
+      startMenuShell?.classList.remove("menu-swoosh-forward", "menu-swoosh-back");
+      startMenuSwooshTimer = 0;
+    }, START_MENU_SWOOSH_DURATION_MS + 30);
+  }
+
+  function hideStartScreen() {
+    if (startScreenExitTimer) {
+      window.clearTimeout(startScreenExitTimer);
+      startScreenExitTimer = 0;
+    }
+    if (startScreen) {
+      startScreen.classList.remove("start-screen-transition-out");
+      startScreen.classList.add("hidden");
+    }
+    setStartMenuView("main", { animate: false });
+  }
+
+  function transitionStartScreenToLoading(titleText, stageText, onAfter = null) {
+    showLoadingOverlay(titleText, stageText);
+    if (!startScreen || startScreen.classList.contains("hidden")) {
+      if (typeof onAfter === "function") onAfter();
+      return;
+    }
+    if (startScreenExitTimer) {
+      window.clearTimeout(startScreenExitTimer);
+      startScreenExitTimer = 0;
+    }
+    startScreen.classList.add("start-screen-transition-out");
+    startScreenExitTimer = window.setTimeout(() => {
+      startScreenExitTimer = 0;
+      hideStartScreen();
+      if (typeof onAfter === "function") onAfter();
+    }, START_SCREEN_EXIT_TRANSITION_MS);
   }
 
   let startMenuListenersBound = false;
   function bindStartMenuListeners() {
+    qaRuntime.startMenuBindAttemptCount += 1;
     if (startMenuListenersBound) return;
     startMenuListenersBound = true;
     if (startScreen) {
@@ -13290,55 +13450,64 @@
       });
     }
     if (menuPlayBtn) {
-      menuPlayBtn.addEventListener("click", () => {
+      menuPlayBtn.addEventListener("click", (event) => {
+        event.stopPropagation();
         ensureAudioContext();
         setStartMenuView("play");
       });
     }
     if (menuOptionsBtn) {
-      menuOptionsBtn.addEventListener("click", () => {
+      menuOptionsBtn.addEventListener("click", (event) => {
+        event.stopPropagation();
         ensureAudioContext();
         setStartMenuView("options");
       });
     }
     if (menuQuitBtn) {
-      menuQuitBtn.addEventListener("click", () => {
+      menuQuitBtn.addEventListener("click", (event) => {
+        event.stopPropagation();
         ensureAudioContext();
         quitFromStartMenu();
       });
     }
     if (menuBackFromPlayBtn) {
-      menuBackFromPlayBtn.addEventListener("click", () => {
+      menuBackFromPlayBtn.addEventListener("click", (event) => {
+        event.stopPropagation();
         ensureAudioContext();
         setStartMenuView("main");
       });
     }
     if (menuBackFromOptionsBtn) {
-      menuBackFromOptionsBtn.addEventListener("click", () => {
+      menuBackFromOptionsBtn.addEventListener("click", (event) => {
+        event.stopPropagation();
         ensureAudioContext();
         setStartMenuView("main");
       });
     }
     if (menuResetWorldBtn) {
-      menuResetWorldBtn.addEventListener("click", () => {
+      menuResetWorldBtn.addEventListener("click", (event) => {
+        event.stopPropagation();
         ensureAudioContext();
         resetWorldFromSettings();
       });
     }
     if (soloBtn) {
-      soloBtn.addEventListener("click", () => {
+      soloBtn.addEventListener("click", (event) => {
+        event.stopPropagation();
         ensureAudioContext();
         startSolo();
       });
     }
     if (hostBtn) {
-      hostBtn.addEventListener("click", () => {
+      hostBtn.addEventListener("click", (event) => {
+        event.stopPropagation();
         ensureAudioContext();
         startHost();
       });
     }
     if (joinBtn) {
-      joinBtn.addEventListener("click", () => {
+      joinBtn.addEventListener("click", (event) => {
+        event.stopPropagation();
         ensureAudioContext();
         startJoin();
       });
@@ -13346,6 +13515,7 @@
   }
 
   function installStartMenuApiBridge() {
+    qaRuntime.menuApiBridgeInstallCount += 1;
     try {
       window.__isgMenuApi = {
         showMain: () => {
@@ -13409,9 +13579,40 @@
     }, 120);
   }
 
+  function restoreStartMenuAfterStartFailure(promptText = "Start failed") {
+    if (state.loadingVisible) hideLoadingOverlay();
+    if (startScreenExitTimer) {
+      window.clearTimeout(startScreenExitTimer);
+      startScreenExitTimer = 0;
+    }
+    if (startScreen) {
+      startScreen.classList.remove("start-screen-transition-out");
+      startScreen.classList.remove("hidden");
+      setStartMenuView("play", { animate: false });
+    }
+    setPrompt(promptText, 2.2);
+  }
+
   function startSolo() {
     if (state.loadingVisible) hideLoadingOverlay();
+    if (mpAutotest.active) {
+      mpAutotestStop({ restoreSeed: false, status: "idle" });
+    }
     rollbackAllPendingClientRequests();
+    try {
+      net.hostConn?.close();
+    } catch (err) {
+      // ignore close errors
+    }
+    if (net.connections instanceof Map && net.connections.size > 0) {
+      for (const conn of net.connections.values()) {
+        try {
+          conn?.close?.();
+        } catch (err) {
+          // ignore close errors
+        }
+      }
+    }
     try {
       net.peer?.destroy();
     } catch (err) {
@@ -13431,43 +13632,65 @@
     net.ready = false;
     net.isHost = false;
     net.playerId = null;
+    alignAllWorldEntityRenderPositions();
     syncNetworkCadenceTimers({ reset: true });
     net.helloRetryTimer = NET_CONFIG.helloRetryInterval;
-    hideStartScreen();
-    if (!state.world) {
-      runDeferredLoadingTask({
-        title: "Loading",
-        stage: "Generating...",
-        finalStage: "Ready",
-        task: () => {
-          setLoadingOverlayStage("Restoring...", "Loading");
-          loadOrCreateGame();
-          setLoadingOverlayStage("Syncing...", "Loading");
-          updateAllSlotUI();
-        },
-      });
-    }
+    transitionStartScreenToLoading("Loading", "Preparing...", () => {
+      try {
+        if (!state.world) {
+          runDeferredLoadingTask({
+            title: "Loading",
+            stage: "Generating...",
+            finalStage: "Ready",
+            task: () => {
+              setLoadingOverlayStage("Restoring...", "Loading");
+              loadOrCreateGame();
+              setLoadingOverlayStage("Syncing...", "Loading");
+              updateAllSlotUI();
+            },
+          });
+          return;
+        }
+        setLoadingOverlayStage("Ready", "Loading");
+        window.setTimeout(() => {
+          hideLoadingOverlay();
+        }, 120);
+      } catch (err) {
+        console.error("Failed to start solo mode", err);
+        restoreStartMenuAfterStartFailure("Failed to start solo");
+      }
+    });
   }
 
   function startHost() {
     if (state.loadingVisible) hideLoadingOverlay();
-    hideStartScreen();
-    if (!state.world) {
-      runDeferredLoadingTask({
-        title: "Loading",
-        stage: "Generating...",
-        finalStage: "Ready",
-        task: () => {
-          setLoadingOverlayStage("Restoring...", "Loading");
-          loadOrCreateGame();
-          setLoadingOverlayStage("Syncing...", "Loading");
-          updateAllSlotUI();
-          initMultiplayer();
-        },
-      });
-      return;
-    }
-    initMultiplayer();
+    transitionStartScreenToLoading("Loading", "Preparing host...", () => {
+      try {
+        if (!state.world) {
+          runDeferredLoadingTask({
+            title: "Loading",
+            stage: "Generating...",
+            finalStage: "Ready",
+            task: () => {
+              setLoadingOverlayStage("Restoring...", "Loading");
+              loadOrCreateGame();
+              setLoadingOverlayStage("Syncing...", "Loading");
+              updateAllSlotUI();
+              initMultiplayer();
+            },
+          });
+          return;
+        }
+        initMultiplayer();
+        setLoadingOverlayStage("Ready", "Loading");
+        window.setTimeout(() => {
+          hideLoadingOverlay();
+        }, 120);
+      } catch (err) {
+        console.error("Failed to start host mode", err);
+        restoreStartMenuAfterStartFailure("Failed to host game");
+      }
+    });
   }
 
   function startJoin() {
@@ -13477,10 +13700,15 @@
       setPrompt("Bad code", 1.2);
       return;
     }
-    hideStartScreen();
-    showLoadingOverlay("Joining", "Connecting...");
-    initMultiplayerJoin(roomId);
-    setPrompt("Connecting...", 0.8);
+    transitionStartScreenToLoading("Joining", "Connecting...", () => {
+      try {
+        initMultiplayerJoin(roomId);
+        setPrompt("Connecting...", 0.8);
+      } catch (err) {
+        console.error("Failed to start join flow", err);
+        restoreStartMenuAfterStartFailure("Failed to join game");
+      }
+    });
   }
 
   function connectAsHostCandidate() {
@@ -13491,6 +13719,8 @@
         net.isHost = true;
         net.playerId = id;
         net.ready = true;
+        net.connectIntent = "host";
+        net.hostCodeRetryCount = 0;
         updateMpStatus("MP: Host");
       }
     });
@@ -13499,7 +13729,38 @@
     });
     peer.on("error", (err) => {
       if (err.type === "unavailable-id") {
-        peer.destroy();
+        const hostIntent = net.connectIntent === "host";
+        const retryCount = Math.max(0, Number(net.hostCodeRetryCount) || 0);
+        const maxRetries = 2;
+        try {
+          peer.destroy();
+        } catch (destroyErr) {
+          // ignore destroy errors
+        }
+        net.peer = null;
+        if (hostIntent && retryCount < maxRetries) {
+          net.hostCodeRetryCount = retryCount + 1;
+          net.roomId = generateRandomRoomId();
+          net.hostId = `${net.roomId}-host`;
+          if (roomDisplay) roomDisplay.textContent = `R: ${net.roomId}`;
+          setRoomIdInUrl(net.roomId);
+          updateMpStatus("MP: Retrying host");
+          setPrompt(`Room busy, retrying host (${net.hostCodeRetryCount}/${maxRetries})`, 1.3);
+          connectAsHostCandidate();
+          return;
+        }
+        if (hostIntent) {
+          updateMpStatus("MP: Host failed");
+          net.joinLastErrorCode = "HOST_CODE_BUSY";
+          if (state.loadingVisible) hideLoadingOverlay();
+          if (startScreen) {
+            startScreen.classList.remove("start-screen-transition-out");
+            startScreen.classList.remove("hidden");
+            setStartMenuView("play", { animate: false });
+          }
+          setPrompt("Host failed: room code busy", 2.2);
+          return;
+        }
         connectAsClient();
         return;
       }
@@ -13509,6 +13770,7 @@
   }
 
   function connectAsClient() {
+    net.connectIntent = "join";
     net.isHost = false;
     net.ready = false;
     net.joinPhase = "connecting";
@@ -16188,6 +16450,9 @@
       return;
     }
     let resource = world.resources?.[resId];
+    if (resource && normalizeResourceHealthState(world, resource)) {
+      markDirty();
+    }
     const alreadyBroken = !!(
       resource
       && (
@@ -17513,13 +17778,19 @@
     net.debugBoatPlaceReceipts.clear();
     resetNetSequenceState();
     net.joinLastErrorCode = code;
+    net.connectIntent = "idle";
     if (state.loadingVisible && state.loadingTitle === "Joining") {
       hideLoadingOverlay();
     }
+    if (startScreenExitTimer) {
+      window.clearTimeout(startScreenExitTimer);
+      startScreenExitTimer = 0;
+    }
     updateMpStatus(`MP: ${code}`);
     if (startScreen) {
+      startScreen.classList.remove("start-screen-transition-out");
       startScreen.classList.remove("hidden");
-      setStartMenuView("play");
+      setStartMenuView("play", { animate: false });
     }
     setPrompt(`${detail} (${code})`, 2.4);
   }
@@ -17878,7 +18149,7 @@
       }
     }
 
-    if (!net.isHost) {
+    if (net.enabled && !net.isHost) {
       const clientWorlds = [];
       const surface = state.surfaceWorld || state.world;
       if (surface) {
@@ -17895,81 +18166,56 @@
               monster.burnTimer = Math.max(0, monster.burnTimer - dt);
             }
             if (!Number.isFinite(monster.x) || !Number.isFinite(monster.y)) continue;
-            if (net.enabled) {
-              smoothRemoteEntityRender(
-                monster,
-                dt,
-                monsterSmooth,
-                CONFIG.tileSize * 2.4
-              );
-            } else {
-              monster.renderX = monster.x;
-              monster.renderY = monster.y;
-            }
+            smoothRemoteEntityRender(
+              monster,
+              dt,
+              monsterSmooth,
+              CONFIG.tileSize * 2.4
+            );
           }
         }
         if (Array.isArray(world.animals)) {
           for (const animal of world.animals) {
             if (!Number.isFinite(animal.x) || !Number.isFinite(animal.y)) continue;
-            if (net.enabled) {
-              smoothRemoteEntityRender(
-                animal,
-                dt,
-                animalSmooth,
-                CONFIG.tileSize * 2.2
-              );
-            } else {
-              animal.renderX = animal.x;
-              animal.renderY = animal.y;
-            }
+            smoothRemoteEntityRender(
+              animal,
+              dt,
+              animalSmooth,
+              CONFIG.tileSize * 2.2
+            );
           }
         }
         if (Array.isArray(world.villagers)) {
           for (const villager of world.villagers) {
             if (!Number.isFinite(villager.x) || !Number.isFinite(villager.y)) continue;
-            if (net.enabled) {
-              smoothRemoteEntityRender(
-                villager,
-                dt,
-                villagerSmooth,
-                CONFIG.tileSize * 2.1
-              );
-            } else {
-              villager.renderX = villager.x;
-              villager.renderY = villager.y;
-            }
+            smoothRemoteEntityRender(
+              villager,
+              dt,
+              villagerSmooth,
+              CONFIG.tileSize * 2.1
+            );
           }
         }
         if (Array.isArray(world.projectiles)) {
           for (const projectile of world.projectiles) {
             if (!Number.isFinite(projectile.x) || !Number.isFinite(projectile.y)) continue;
-            if (net.enabled) {
-              smoothRemoteEntityRender(
-                projectile,
-                dt,
-                projectileSmooth,
-                CONFIG.tileSize * 1.65
-              );
-            } else {
-              projectile.renderX = projectile.x;
-              projectile.renderY = projectile.y;
-            }
+            smoothRemoteEntityRender(
+              projectile,
+              dt,
+              projectileSmooth,
+              CONFIG.tileSize * 1.65
+            );
           }
         }
         if (Array.isArray(world.poisonClouds)) {
           for (const cloud of world.poisonClouds) {
             if (!Number.isFinite(cloud.x) || !Number.isFinite(cloud.y)) continue;
-            if (net.enabled) {
-              smoothRemoteEntityRender(
-                cloud,
-                dt,
-                poisonCloudSmooth,
-                CONFIG.tileSize * 1.2
-              );
-            } else {
-              cloud.renderX = cloud.x;
-              cloud.renderY = cloud.y;
-            }
+            smoothRemoteEntityRender(
+              cloud,
+              dt,
+              poisonCloudSmooth,
+              CONFIG.tileSize * 1.2
+            );
           }
         }
       }
@@ -19846,8 +20092,108 @@
     return sides;
   }
 
+  function normalizeCaveV2SurfaceExitBySideMap(rawMap) {
+    if (!rawMap || typeof rawMap !== "object") return null;
+    const normalized = Object.create(null);
+    const usedEntrances = new Set();
+    for (const side of ["N", "S", "E", "W"]) {
+      const id = typeof rawMap[side] === "string" ? rawMap[side] : "";
+      if (!id || usedEntrances.has(id)) continue;
+      normalized[side] = id;
+      usedEntrances.add(id);
+    }
+    return Object.keys(normalized).length > 0 ? normalized : null;
+  }
+
+  function buildCaveV2SurfaceExitBySideMap(cave, entryEntranceId = null, linkedEntranceId = null) {
+    if (!cave) return null;
+    const entrySide = normalizeCaveV2Direction(cave.entrySurfaceSide) || "S";
+    const linkedSide = normalizeCaveV2Direction(cave.linkedSurfaceSide);
+    const entryId = typeof entryEntranceId === "string" && entryEntranceId.length > 0
+      ? entryEntranceId
+      : null;
+    const linkedId = typeof linkedEntranceId === "string" && linkedEntranceId.length > 0
+      ? linkedEntranceId
+      : null;
+    let primaryEntranceId = typeof cave.surfaceEntranceAId === "string" && cave.surfaceEntranceAId.length > 0
+      ? cave.surfaceEntranceAId
+      : null;
+    let secondaryEntranceId = typeof cave.surfaceEntranceBId === "string" && cave.surfaceEntranceBId.length > 0
+      ? cave.surfaceEntranceBId
+      : null;
+
+    if (!primaryEntranceId) {
+      const entryKey = typeof cave.entrySurfaceKey === "string" && cave.entrySurfaceKey.length > 0
+        ? cave.entrySurfaceKey
+        : null;
+      if (entryKey) primaryEntranceId = entryKey;
+    }
+
+    const pairA = typeof cave.linkedEntranceAId === "string" && cave.linkedEntranceAId.length > 0
+      ? cave.linkedEntranceAId
+      : null;
+    const pairB = typeof cave.linkedEntranceBId === "string" && cave.linkedEntranceBId.length > 0
+      ? cave.linkedEntranceBId
+      : null;
+    if (!secondaryEntranceId && pairA && pairB) {
+      if (primaryEntranceId && pairA === primaryEntranceId) secondaryEntranceId = pairB;
+      else if (primaryEntranceId && pairB === primaryEntranceId) secondaryEntranceId = pairA;
+    }
+
+    if (!primaryEntranceId && entryId) primaryEntranceId = entryId;
+    if (!secondaryEntranceId && linkedId && linkedId !== primaryEntranceId) secondaryEntranceId = linkedId;
+    if (!secondaryEntranceId && entryId && linkedId && entryId !== linkedId) {
+      if (primaryEntranceId === entryId) secondaryEntranceId = linkedId;
+      else if (primaryEntranceId === linkedId) secondaryEntranceId = entryId;
+    }
+
+    const map = Object.create(null);
+    if (primaryEntranceId) {
+      map[entrySide] = primaryEntranceId;
+    }
+    if (linkedSide && linkedSide !== entrySide) {
+      if (secondaryEntranceId) {
+        map[linkedSide] = secondaryEntranceId;
+      } else if (linkedId && linkedId !== primaryEntranceId) {
+        map[linkedSide] = linkedId;
+      }
+    }
+
+    const ensureIncluded = (id) => {
+      if (!id) return;
+      const values = Object.values(map);
+      if (values.includes(id)) return;
+      if (!map[entrySide]) {
+        map[entrySide] = id;
+        return;
+      }
+      if (linkedSide && linkedSide !== entrySide && !map[linkedSide]) {
+        map[linkedSide] = id;
+      }
+    };
+    ensureIncluded(entryId);
+    if (linkedId && linkedId !== entryId) ensureIncluded(linkedId);
+    return normalizeCaveV2SurfaceExitBySideMap(map);
+  }
+
+  function getCaveV2SurfaceExitSideForEntranceId(sideMap, entranceId) {
+    if (!sideMap || typeof sideMap !== "object") return null;
+    const targetId = typeof entranceId === "string" && entranceId.length > 0
+      ? entranceId
+      : null;
+    if (!targetId) return null;
+    for (const side of ["N", "S", "E", "W"]) {
+      if (sideMap[side] === targetId) return side;
+    }
+    return null;
+  }
+
   function getCaveV2SessionSurfaceExitSides(cave, active = null) {
     if (!cave) return [];
+    const sideMap = normalizeCaveV2SurfaceExitBySideMap(active?.surfaceExitBySide);
+    if (sideMap) {
+      return ["N", "S", "E", "W"].filter((side) => !!sideMap[side]);
+    }
     const fromSession = [];
     const activeEntry = normalizeCaveV2Direction(active?.entryExitSide);
     const activeLinked = normalizeCaveV2Direction(active?.linkedExitSide);
@@ -19861,6 +20207,10 @@
     if (!active) return null;
     const normalizedSide = normalizeCaveV2Direction(side);
     if (!normalizedSide) return null;
+    const sideMap = normalizeCaveV2SurfaceExitBySideMap(active.surfaceExitBySide);
+    if (sideMap && typeof sideMap[normalizedSide] === "string") {
+      return sideMap[normalizedSide];
+    }
     const entrySide = normalizeCaveV2Direction(active.entryExitSide);
     const linkedSide = normalizeCaveV2Direction(active.linkedExitSide);
     if (normalizedSide === entrySide) {
@@ -19911,32 +20261,56 @@
     const entryB = typeof cave?.linkedEntranceBId === "string" && cave.linkedEntranceBId.length > 0
       ? cave.linkedEntranceBId
       : null;
-    if (!pairId || !linkedSide || !entryId || !entryA || !entryB) {
+    const sideMap = buildCaveV2SurfaceExitBySideMap(cave, entryId, linkedId);
+    const mappedEntrySide = getCaveV2SurfaceExitSideForEntranceId(sideMap, entryId);
+    const mappedLinkedSide = getCaveV2SurfaceExitSideForEntranceId(sideMap, linkedId);
+    const hasLinkedSession = !!(pairId && linkedSide && entryId);
+    if (!hasLinkedSession) {
       return {
-        entryExitSide: entrySide,
+        entryExitSide: mappedEntrySide || entrySide,
         linkedExitSide: null,
         linkedPortalId: null,
+        surfaceExitBySide: sideMap,
+      };
+    }
+    const fallbackMappedLinkedSide = sideMap
+      ? ["N", "S", "E", "W"].find((side) => (
+        side !== (mappedEntrySide || entrySide)
+        && typeof sideMap[side] === "string"
+      )) || null
+      : null;
+    if (!entryA || !entryB) {
+      return {
+        entryExitSide: mappedEntrySide || entrySide,
+        linkedExitSide: mappedLinkedSide || fallbackMappedLinkedSide || linkedSide,
+        linkedPortalId: pairId,
+        surfaceExitBySide: sideMap,
       };
     }
     if (entryId === entryA) {
       return {
-        entryExitSide: entrySide,
-        linkedExitSide: linkedSide,
+        entryExitSide: mappedEntrySide || entrySide,
+        linkedExitSide: mappedLinkedSide || fallbackMappedLinkedSide || linkedSide,
         linkedPortalId: pairId,
+        surfaceExitBySide: sideMap,
       };
     }
     if (entryId === entryB) {
       return {
-        entryExitSide: linkedSide,
-        linkedExitSide: entrySide,
+        entryExitSide: mappedEntrySide || linkedSide,
+        linkedExitSide: mappedLinkedSide || fallbackMappedLinkedSide || entrySide,
         linkedPortalId: pairId,
+        surfaceExitBySide: sideMap,
       };
     }
     const flip = (seedToInt(`${pairId}:${entryId}`) & 1) === 1;
+    const fallbackEntrySide = flip ? linkedSide : entrySide;
+    const fallbackLinkedSide = flip ? entrySide : linkedSide;
     return {
-      entryExitSide: flip ? linkedSide : entrySide,
-      linkedExitSide: flip ? entrySide : linkedSide,
+      entryExitSide: mappedEntrySide || fallbackEntrySide,
+      linkedExitSide: mappedLinkedSide || fallbackMappedLinkedSide || fallbackLinkedSide,
       linkedPortalId: pairId,
+      surfaceExitBySide: sideMap,
     };
   }
 
@@ -19999,6 +20373,8 @@
       entrySurfaceKey,
       entrySurfaceTx: entrance.tx,
       entrySurfaceTy: entrance.ty,
+      surfaceEntranceAId: entryEntranceId,
+      surfaceEntranceBId: linkedExitKey && linkedExitKey !== entryEntranceId ? linkedExitKey : null,
       linkedPairId,
       linkedEntranceAId: linkedEntrances[0] || null,
       linkedEntranceBId: linkedEntrances[1] || null,
@@ -20009,6 +20385,19 @@
       nextDropSeq: 1,
     };
     generateCaveV2Rooms(cave);
+    const sideMap = buildCaveV2SurfaceExitBySideMap(cave, entryEntranceId, linkedExitKey);
+    if (sideMap) {
+      const entrySide = normalizeCaveV2Direction(cave.entrySurfaceSide) || "S";
+      const linkedSide = normalizeCaveV2Direction(cave.linkedSurfaceSide);
+      const mappedPrimary = typeof sideMap[entrySide] === "string" ? sideMap[entrySide] : null;
+      const mappedSecondary = (linkedSide && linkedSide !== entrySide && typeof sideMap[linkedSide] === "string")
+        ? sideMap[linkedSide]
+        : null;
+      if (mappedPrimary) cave.surfaceEntranceAId = mappedPrimary;
+      if (mappedSecondary && mappedSecondary !== cave.surfaceEntranceAId) {
+        cave.surfaceEntranceBId = mappedSecondary;
+      }
+    }
     return cave;
   }
 
@@ -20121,6 +20510,8 @@
         entrySurfaceTy: Math.floor(Number(cave?.entrySurfaceTy) || 0),
         entrySurfaceSide: normalizeCaveV2Direction(cave?.entrySurfaceSide) || "S",
         linkedSurfaceSide: normalizeCaveV2Direction(cave?.linkedSurfaceSide) || null,
+        surfaceEntranceAId: typeof cave?.surfaceEntranceAId === "string" ? cave.surfaceEntranceAId : null,
+        surfaceEntranceBId: typeof cave?.surfaceEntranceBId === "string" ? cave.surfaceEntranceBId : null,
         linkedPairId: typeof cave?.linkedPairId === "string" ? cave.linkedPairId : null,
         linkedEntranceAId: typeof cave?.linkedEntranceAId === "string" ? cave.linkedEntranceAId : null,
         linkedEntranceBId: typeof cave?.linkedEntranceBId === "string" ? cave.linkedEntranceBId : null,
@@ -20155,6 +20546,7 @@
             linkedPortalId: typeof caveState.active.linkedPortalId === "string"
               ? caveState.active.linkedPortalId
               : null,
+            surfaceExitBySide: normalizeCaveV2SurfaceExitBySideMap(caveState.active.surfaceExitBySide),
           }
         : null,
     };
@@ -20303,6 +20695,12 @@
         entrySurfaceTy: Math.floor(Number(caveSave?.entrySurfaceTy) || 0),
         entrySurfaceSide: normalizeCaveV2Direction(caveSave?.entrySurfaceSide) || "S",
         linkedSurfaceSide: normalizeCaveV2Direction(caveSave?.linkedSurfaceSide) || null,
+        surfaceEntranceAId: typeof caveSave?.surfaceEntranceAId === "string" && caveSave.surfaceEntranceAId.length > 0
+          ? caveSave.surfaceEntranceAId
+          : (String(caveSave?.entrySurfaceKey || "") || null),
+        surfaceEntranceBId: typeof caveSave?.surfaceEntranceBId === "string" && caveSave.surfaceEntranceBId.length > 0
+          ? caveSave.surfaceEntranceBId
+          : null,
         linkedPairId: typeof caveSave?.linkedPairId === "string" ? caveSave.linkedPairId : null,
         linkedEntranceAId: typeof caveSave?.linkedEntranceAId === "string" ? caveSave.linkedEntranceAId : null,
         linkedEntranceBId: typeof caveSave?.linkedEntranceBId === "string" ? caveSave.linkedEntranceBId : null,
@@ -20311,6 +20709,43 @@
         activeRoomId: roomsById[String(caveSave?.activeRoomId || entryRoomId)] ? String(caveSave.activeRoomId || entryRoomId) : entryRoomId,
         nextDropSeq: Math.max(1, Math.floor(Number(caveSave?.nextDropSeq) || 1)),
       };
+      if (
+        cave.linkedPairId
+        && (!cave.linkedEntranceAId || !cave.linkedEntranceBId)
+        && cave.surfaceEntranceAId
+        && cave.surfaceEntranceBId
+        && cave.surfaceEntranceAId !== cave.surfaceEntranceBId
+      ) {
+        const pair = [cave.surfaceEntranceAId, cave.surfaceEntranceBId].sort((a, b) => a.localeCompare(b));
+        cave.linkedEntranceAId = cave.linkedEntranceAId || pair[0];
+        cave.linkedEntranceBId = cave.linkedEntranceBId || pair[1];
+      }
+      const normalizedEntrySide = normalizeCaveV2Direction(cave.entrySurfaceSide) || "S";
+      const normalizedLinkedSide = normalizeCaveV2Direction(cave.linkedSurfaceSide);
+      if (
+        (!normalizedLinkedSide || normalizedLinkedSide === normalizedEntrySide)
+        && cave.linkedPairId
+        && cave.linkedEntranceAId
+        && cave.linkedEntranceBId
+      ) {
+        cave.linkedSurfaceSide = chooseCaveV2LinkedExitSideForEntryRoom(
+          cave.roomsById?.[cave.entryRoomId],
+          cave.entrySurfaceSide,
+          cave.linkedPairId,
+          cave.caveId
+        );
+      }
+      const restoredSideMap = buildCaveV2SurfaceExitBySideMap(cave, cave.surfaceEntranceAId, cave.surfaceEntranceBId);
+      if (restoredSideMap) {
+        const entrySide = normalizeCaveV2Direction(cave.entrySurfaceSide) || "S";
+        const linkedSide = normalizeCaveV2Direction(cave.linkedSurfaceSide);
+        if (typeof restoredSideMap[entrySide] === "string") {
+          cave.surfaceEntranceAId = restoredSideMap[entrySide];
+        }
+        if (linkedSide && linkedSide !== entrySide && typeof restoredSideMap[linkedSide] === "string") {
+          cave.surfaceEntranceBId = restoredSideMap[linkedSide];
+        }
+      }
       const entryRoom = roomsById[entryRoomId];
       for (const side of getCaveV2EntryRoomSurfaceExitSides(cave, entryRoom)) {
         carveCaveV2SideCorridor(entryRoom, side);
@@ -20334,6 +20769,43 @@
       },
       cave.entrySurfaceSide || "S"
     );
+    let restoredEntryEntranceId = typeof savedActive.entryEntranceId === "string" && savedActive.entryEntranceId.length > 0
+      ? savedActive.entryEntranceId
+      : null;
+    let restoredExitEntranceId = typeof savedActive.exitEntranceId === "string" && savedActive.exitEntranceId.length > 0
+      ? savedActive.exitEntranceId
+      : null;
+    const restoredSurfaceExitBySide = normalizeCaveV2SurfaceExitBySideMap(savedActive.surfaceExitBySide)
+      || buildCaveV2SurfaceExitBySideMap(cave, restoredEntryEntranceId, restoredExitEntranceId);
+    if (!restoredEntryEntranceId && restoredSurfaceExitBySide) {
+      const defaultEntrySide = normalizeCaveV2Direction(cave.entrySurfaceSide) || "S";
+      restoredEntryEntranceId = typeof restoredSurfaceExitBySide[defaultEntrySide] === "string"
+        ? restoredSurfaceExitBySide[defaultEntrySide]
+        : null;
+    }
+    if (!restoredExitEntranceId && restoredSurfaceExitBySide) {
+      const defaultEntrySide = normalizeCaveV2Direction(cave.entrySurfaceSide) || "S";
+      for (const side of ["N", "S", "E", "W"]) {
+        if (side === defaultEntrySide) continue;
+        if (typeof restoredSurfaceExitBySide[side] !== "string") continue;
+        restoredExitEntranceId = restoredSurfaceExitBySide[side];
+        break;
+      }
+    }
+    const derivedEntryExitSide = getCaveV2SurfaceExitSideForEntranceId(
+      restoredSurfaceExitBySide,
+      restoredEntryEntranceId
+    );
+    const derivedLinkedExitSide = getCaveV2SurfaceExitSideForEntranceId(
+      restoredSurfaceExitBySide,
+      restoredExitEntranceId
+    );
+    const fallbackLinkedExitSide = restoredSurfaceExitBySide
+      ? ["N", "S", "E", "W"].find((side) => (
+        side !== (derivedEntryExitSide || normalizeCaveV2Direction(savedActive.entryExitSide) || normalizeCaveV2Direction(cave.entrySurfaceSide) || "S")
+        && typeof restoredSurfaceExitBySide[side] === "string"
+      )) || null
+      : null;
     caveState.active = {
       caveId: cave.caveId,
       roomId: room.roomId,
@@ -20346,12 +20818,15 @@
       entrySurfaceTx: Math.floor(Number(savedActive.entrySurfaceTx) || cave.entrySurfaceTx || 0),
       entrySurfaceTy: Math.floor(Number(savedActive.entrySurfaceTy) || cave.entrySurfaceTy || 0),
       linkedPairId: typeof savedActive.linkedPairId === "string" ? savedActive.linkedPairId : null,
-      entryEntranceId: typeof savedActive.entryEntranceId === "string" ? savedActive.entryEntranceId : null,
-      exitEntranceId: typeof savedActive.exitEntranceId === "string" ? savedActive.exitEntranceId : null,
-      entryExitSide: normalizeCaveV2Direction(savedActive.entryExitSide)
+      entryEntranceId: restoredEntryEntranceId,
+      exitEntranceId: restoredExitEntranceId,
+      entryExitSide: derivedEntryExitSide
+        || normalizeCaveV2Direction(savedActive.entryExitSide)
         || normalizeCaveV2Direction(cave.entrySurfaceSide)
         || "S",
-      linkedExitSide: normalizeCaveV2Direction(savedActive.linkedExitSide)
+      linkedExitSide: derivedLinkedExitSide
+        || normalizeCaveV2Direction(savedActive.linkedExitSide)
+        || fallbackLinkedExitSide
         || normalizeCaveV2Direction(cave.linkedSurfaceSide)
         || null,
       pendingExitEntranceId: typeof savedActive.pendingExitEntranceId === "string"
@@ -20360,6 +20835,7 @@
       linkedPortalId: typeof savedActive.linkedPortalId === "string"
         ? savedActive.linkedPortalId
         : (typeof savedActive.linkedPairId === "string" ? savedActive.linkedPairId : null),
+      surfaceExitBySide: restoredSurfaceExitBySide,
     };
     cave.activeRoomId = room.roomId;
     caveState.transitioning = false;
@@ -20385,25 +20861,48 @@
         : null;
       const entrySurfaceKey = entrance.key || buildCaveV2EntranceSurfaceKey(surfaceWorld, entrance.tx, entrance.ty);
       const entryEntranceId = String(entrance.entranceId || entrySurfaceKey);
+      if (!cave.surfaceEntranceAId) cave.surfaceEntranceAId = entryEntranceId;
       if (linkedPairId && linkedExitKey) {
         const pair = [entryEntranceId, linkedExitKey].sort((a, b) => a.localeCompare(b));
         cave.linkedPairId = linkedPairId;
         cave.linkedEntranceAId = pair[0] || cave.linkedEntranceAId || null;
         cave.linkedEntranceBId = pair[1] || cave.linkedEntranceBId || null;
-        if (!normalizeCaveV2Direction(cave.linkedSurfaceSide)) {
+        const normalizedEntrySide = normalizeCaveV2Direction(cave.entrySurfaceSide) || "S";
+        const normalizedLinkedSide = normalizeCaveV2Direction(cave.linkedSurfaceSide);
+        if (!normalizedLinkedSide || normalizedLinkedSide === normalizedEntrySide) {
           cave.linkedSurfaceSide = chooseCaveV2LinkedExitSideForEntryRoom(
             cave.roomsById?.[cave.entryRoomId],
             cave.entrySurfaceSide,
             cave.linkedPairId,
             cave.caveId
           );
-          const entryRoom = cave.roomsById?.[cave.entryRoomId];
-          if (entryRoom) {
-            for (const side of getCaveV2EntryRoomSurfaceExitSides(cave, entryRoom)) {
-              carveCaveV2SideCorridor(entryRoom, side);
-            }
-            ensureCaveV2RoomPassagesOpen(cave, entryRoom);
+        }
+      }
+      const sideMap = buildCaveV2SurfaceExitBySideMap(
+        cave,
+        entryEntranceId,
+        linkedPairId && linkedExitKey ? linkedExitKey : null
+      );
+      if (sideMap) {
+        const entrySide = normalizeCaveV2Direction(cave.entrySurfaceSide) || "S";
+        const linkedSide = normalizeCaveV2Direction(cave.linkedSurfaceSide);
+        if (typeof sideMap[entrySide] === "string") {
+          cave.surfaceEntranceAId = sideMap[entrySide];
+        }
+        if (linkedSide && linkedSide !== entrySide && typeof sideMap[linkedSide] === "string") {
+          cave.surfaceEntranceBId = sideMap[linkedSide];
+        }
+        if (cave.surfaceEntranceBId === cave.surfaceEntranceAId) {
+          cave.surfaceEntranceBId = null;
+        }
+      }
+      if (linkedPairId && linkedExitKey) {
+        const entryRoom = cave.roomsById?.[cave.entryRoomId];
+        if (entryRoom) {
+          for (const side of getCaveV2EntryRoomSurfaceExitSides(cave, entryRoom)) {
+            carveCaveV2SideCorridor(entryRoom, side);
           }
+          ensureCaveV2RoomPassagesOpen(cave, entryRoom);
         }
       }
     }
@@ -20667,7 +21166,25 @@
     const cave = getOrCreateCaveV2(state.surfaceWorld, entrance);
     const entryRoom = cave.roomsById[cave.entryRoomId];
     if (!entryRoom) return false;
-    const entrySide = cave.entrySurfaceSide || "S";
+    const entryEntranceId = String(
+      entrance.entranceId
+      || entrance.key
+      || buildCaveV2EntranceSurfaceKey(state.surfaceWorld, entrance.tx, entrance.ty)
+    );
+    const linkedPairId = typeof entrance.linkedPairId === "string" && entrance.linkedPairId.length > 0
+      ? entrance.linkedPairId
+      : null;
+    const exitEntranceId = typeof entrance.linkedExitKey === "string" && entrance.linkedExitKey.length > 0
+      ? entrance.linkedExitKey
+      : null;
+    const surfaceExitMapping = resolveCaveV2LinkedSurfaceExitMapping(
+      cave,
+      entryEntranceId,
+      exitEntranceId
+    );
+    const entrySide = normalizeCaveV2Direction(surfaceExitMapping.entryExitSide)
+      || normalizeCaveV2Direction(cave.entrySurfaceSide)
+      || "S";
     const rawSpawn = getCaveV2EntrySpawnPosition(entryRoom, entrySide);
     const spawnMeta = {};
     let spawn = resolveCaveV2SpawnPosition(
@@ -20719,22 +21236,22 @@
       setPrompt("Cave entrance blocked (spawn invalid)", 1.35);
       return false;
     }
-    const entryEntranceId = String(
-      entrance.entranceId
-      || entrance.key
-      || buildCaveV2EntranceSurfaceKey(state.surfaceWorld, entrance.tx, entrance.ty)
-    );
-    const linkedPairId = typeof entrance.linkedPairId === "string" && entrance.linkedPairId.length > 0
-      ? entrance.linkedPairId
-      : null;
-    const exitEntranceId = typeof entrance.linkedExitKey === "string" && entrance.linkedExitKey.length > 0
-      ? entrance.linkedExitKey
-      : null;
-    const surfaceExitMapping = resolveCaveV2LinkedSurfaceExitMapping(
-      cave,
-      entryEntranceId,
-      exitEntranceId
-    );
+    const surfaceExitBySide = normalizeCaveV2SurfaceExitBySideMap(surfaceExitMapping.surfaceExitBySide);
+    if (surfaceExitBySide) {
+      const entrySurfaceSide = normalizeCaveV2Direction(cave.entrySurfaceSide) || "S";
+      const linkedSide = normalizeCaveV2Direction(cave.linkedSurfaceSide);
+      if (typeof surfaceExitBySide[entrySurfaceSide] === "string") {
+        cave.surfaceEntranceAId = surfaceExitBySide[entrySurfaceSide];
+      }
+      if (linkedSide && linkedSide !== entrySurfaceSide && typeof surfaceExitBySide[linkedSide] === "string") {
+        cave.surfaceEntranceBId = surfaceExitBySide[linkedSide];
+      }
+      if (cave.surfaceEntranceBId === cave.surfaceEntranceAId) cave.surfaceEntranceBId = null;
+    }
+    const resolvedExitEntranceId = exitEntranceId
+      || (surfaceExitBySide && surfaceExitMapping.linkedExitSide
+        ? (surfaceExitBySide[surfaceExitMapping.linkedExitSide] || null)
+        : null);
     cave.activeRoomId = cave.entryRoomId;
     caveState.active = {
       caveId: cave.caveId,
@@ -20745,13 +21262,14 @@
       entrySurfaceKey: cave.entrySurfaceKey,
       entrySurfaceTx: cave.entrySurfaceTx,
       entrySurfaceTy: cave.entrySurfaceTy,
-      linkedPairId,
+      linkedPairId: linkedPairId || cave.linkedPairId || null,
       entryEntranceId,
-      exitEntranceId,
+      exitEntranceId: resolvedExitEntranceId,
       entryExitSide: surfaceExitMapping.entryExitSide,
       linkedExitSide: surfaceExitMapping.linkedExitSide,
       pendingExitEntranceId: null,
       linkedPortalId: surfaceExitMapping.linkedPortalId,
+      surfaceExitBySide,
     };
     caveState.transitioning = false;
     caveState.transitionT = 0;
@@ -20781,10 +21299,11 @@
         meta: spawnMeta,
         linkedPairId,
         entryEntranceId,
-        exitEntranceId,
+        exitEntranceId: resolvedExitEntranceId,
         entryExitSide: surfaceExitMapping.entryExitSide,
         linkedExitSide: surfaceExitMapping.linkedExitSide,
         linkedPortalId: surfaceExitMapping.linkedPortalId,
+        surfaceExitBySide,
         lightingOverlay: "cavev2_room_vignette",
       });
     }
@@ -20842,6 +21361,7 @@
           entryEntranceId: active.entryEntranceId || null,
           exitEntranceId: active.exitEntranceId || null,
           pendingExitEntranceId,
+          surfaceExitBySide: normalizeCaveV2SurfaceExitBySideMap(active.surfaceExitBySide),
           x: exitPos.x,
           y: exitPos.y,
         });
@@ -21451,8 +21971,15 @@
     }
 
     // Darken normal inter-room passages so entry-room surface exits stand out clearly.
+    const activeSession = isActive ? state.caveV2?.active : null;
+    const linkedSurfaceSideForDraw = normalizeCaveV2Direction(activeSession?.linkedExitSide)
+      || normalizeCaveV2Direction(cave?.linkedSurfaceSide);
     const surfaceExitSides = (cave && room.roomId === cave.entryRoomId)
-      ? getCaveV2EntryRoomSurfaceExitSides(cave, room)
+      ? (
+        isActive
+          ? getCaveV2SessionSurfaceExitSides(cave, activeSession)
+          : getCaveV2EntryRoomSurfaceExitSides(cave, room)
+      )
       : [];
     for (const side of ["N", "S", "E", "W"]) {
       if (!room.exits?.[side]) continue;
@@ -21477,11 +22004,10 @@
 
     // Entry room daylight spill / surface-exit guidance
     if (cave && room.roomId === cave.entryRoomId) {
-      const sides = getCaveV2EntryRoomSurfaceExitSides(cave, room);
-      for (const side of sides) {
+      for (const side of surfaceExitSides) {
         const laneRect = getCaveV2ExitLaneRectPx(room, side);
         if (!laneRect) continue;
-        const isLinkedSide = normalizeCaveV2Direction(side) === normalizeCaveV2Direction(cave.linkedSurfaceSide);
+        const isLinkedSide = normalizeCaveV2Direction(side) === linkedSurfaceSideForDraw;
         const lx = drawX + laneRect.x;
         const ly = drawY + laneRect.y;
         const lw = laneRect.w;
@@ -21527,11 +22053,10 @@
 
     // Surface exit openings in entry room (return + linked, visually distinct).
     if (cave && room.roomId === cave.entryRoomId) {
-      const sides = getCaveV2EntryRoomSurfaceExitSides(cave, room);
-      for (const side of sides) {
+      for (const side of surfaceExitSides) {
         const laneRect = getCaveV2ExitLaneRectPx(room, side);
         if (!laneRect) continue;
-        const isLinkedSide = normalizeCaveV2Direction(side) === normalizeCaveV2Direction(cave.linkedSurfaceSide);
+        const isLinkedSide = normalizeCaveV2Direction(side) === linkedSurfaceSideForDraw;
         const lx = drawX + laneRect.x;
         const ly = drawY + laneRect.y;
         const lw = laneRect.w;
@@ -25286,6 +25811,7 @@
       const existing = resources[existingId];
       if (!existing || existing.type === "biomeStone") return false;
       existing.removed = true;
+      existing.hp = 0;
       resourceGrid[idx] = -1;
       occupancy[idx] = false;
       return true;
@@ -25382,6 +25908,7 @@
       const res = resources[resId];
       if (!res) return;
       res.removed = true;
+      res.hp = 0;
       resourceGrid[idx] = -1;
       occupancy[idx] = false;
     }
@@ -26757,9 +27284,15 @@
         if (savedRes.isBiomeStone === true) res.isBiomeStone = true;
         normalizeBiomeStoneMetadata(world, res);
       }
+      normalizeResourceHealthState(world, res);
       if (res.removed) {
         const idx = tileIndex(res.tx, res.ty, world.size);
         world.resourceGrid[idx] = -1;
+      } else if (!isTreeRegrowthStage(res)) {
+        const idx = tileIndex(res.tx, res.ty, world.size);
+        if (idx >= 0 && idx < world.resourceGrid.length) {
+          world.resourceGrid[idx] = res.id;
+        }
       }
     }
   }
@@ -27614,6 +28147,7 @@
     const res = getResourceAt(world, tx, ty);
     if (res) {
       res.removed = true;
+      res.hp = 0;
       const idx = tileIndex(tx, ty, world.size);
       world.resourceGrid[idx] = -1;
     }
@@ -30690,6 +31224,73 @@
     }
   }
 
+  function normalizeResourceHealthState(world, resource) {
+    if (!resource) return false;
+    let changed = false;
+    const baseHp = getResourceBaseHp(resource);
+    if (!Number.isFinite(resource.maxHp) || resource.maxHp <= 0) {
+      resource.maxHp = Math.max(1, baseHp);
+      changed = true;
+    }
+    if (resource.type === "tree") {
+      const normalizedStage = normalizeResourceStage(resource);
+      if (resource.stage !== normalizedStage) {
+        resource.stage = normalizedStage;
+        changed = true;
+      }
+      if (isTreeRegrowthStage(resource)) {
+        if (resource.removed) {
+          resource.removed = false;
+          changed = true;
+        }
+        if (!Number.isFinite(resource.hp) || resource.hp !== 0) {
+          resource.hp = 0;
+          changed = true;
+        }
+        return changed;
+      }
+    }
+
+    if (resource.removed) {
+      if (!Number.isFinite(resource.hp) || resource.hp !== 0) {
+        resource.hp = 0;
+        changed = true;
+      }
+      return changed;
+    }
+
+    if (!Number.isFinite(resource.hp)) {
+      resource.hp = resource.maxHp;
+      changed = true;
+    }
+    if (resource.hp < 0) {
+      resource.hp = 0;
+      changed = true;
+    }
+    if (resource.hp > resource.maxHp) {
+      resource.hp = resource.maxHp;
+      changed = true;
+    }
+    if (resource.hp <= 0) {
+      if (resource.type === "tree") {
+        resource.stage = "stump";
+        resource.removed = false;
+        resource.respawnTimer = Math.max(0, Number(resource.respawnTimer) || RESPAWN.treeStump);
+      } else {
+        resource.removed = true;
+        if (world && Array.isArray(world.resourceGrid) && Number.isInteger(resource.tx) && Number.isInteger(resource.ty)) {
+          const idx = tileIndex(resource.tx, resource.ty, world.size);
+          if (idx >= 0 && idx < world.resourceGrid.length && world.resourceGrid[idx] === resource.id) {
+            world.resourceGrid[idx] = -1;
+          }
+        }
+      }
+      resource.hp = 0;
+      changed = true;
+    }
+    return changed;
+  }
+
   function getBiomeStoneBiomeCount() {
     return Math.min(BIOMES.length, BIOME_STONES.length);
   }
@@ -33225,6 +33826,7 @@
       nextDamage = Math.min(nextDamage, Math.max(1, resource.maxHp - 1));
     }
     resource.hp -= nextDamage;
+    resource.hp = Math.max(0, Number(resource.hp) || 0);
     resource.hitTimer = 0.18;
     const didBreak = resource.hp <= 0;
     if (emitSfx) {
@@ -35635,12 +36237,19 @@
     const upgradeRecipe = isUpgradeRecipe(recipe);
     const card = document.createElement("div");
     card.className = "recipe-card recipe-card-compact";
+    const header = document.createElement("div");
+    header.className = "recipe-card-header";
     const icon = document.createElement("div");
     icon.className = "recipe-icon";
     applyItemVisual(icon, recipe.icon || recipe.id, true);
+    header.appendChild(icon);
+    const titleWrap = document.createElement("div");
+    titleWrap.className = "recipe-card-title-wrap";
     const title = document.createElement("div");
     title.className = "recipe-title";
     title.textContent = recipe.name;
+    titleWrap.appendChild(title);
+    header.appendChild(titleWrap);
     const cost = document.createElement("div");
     cost.className = "recipe-cost";
     if (recipe.cost && isInfiniteResourcesEnabled()) {
@@ -35692,13 +36301,12 @@
     }
     button.addEventListener("click", () => craftRecipe(recipe));
 
-    card.appendChild(icon);
-    card.appendChild(title);
+    card.appendChild(header);
     if (recipe.description) {
       const detailToggle = document.createElement("button");
       detailToggle.type = "button";
       detailToggle.className = "recipe-detail-toggle";
-      detailToggle.textContent = buildRecipeDetailsExpanded ? "Hide details" : "Show details";
+      detailToggle.textContent = buildRecipeDetailsExpanded ? "Hide" : "Details";
       detailToggle.addEventListener("click", () => {
         buildRecipeDetailsExpanded = !buildRecipeDetailsExpanded;
         renderBuildMenu();
@@ -35857,18 +36465,20 @@
     const prevBtn = document.createElement("button");
     prevBtn.className = "recipe-nav-btn";
     prevBtn.type = "button";
-    prevBtn.textContent = "Prev";
+    prevBtn.textContent = "<";
+    prevBtn.setAttribute("aria-label", `Previous ${label.toLowerCase()}`);
     prevBtn.disabled = count <= 1;
     prevBtn.addEventListener("click", onPrev);
     const nextBtn = document.createElement("button");
     nextBtn.className = "recipe-nav-btn";
     nextBtn.type = "button";
-    nextBtn.textContent = "Next";
+    nextBtn.textContent = ">";
+    nextBtn.setAttribute("aria-label", `Next ${label.toLowerCase()}`);
     nextBtn.disabled = count <= 1;
     nextBtn.addEventListener("click", onNext);
     const status = document.createElement("div");
     status.className = "recipe-single-meta";
-    status.textContent = `${label} ${index + 1}/${count}`;
+    status.textContent = `${label} ${index + 1} of ${count}`;
     nav.appendChild(prevBtn);
     nav.appendChild(status);
     nav.appendChild(nextBtn);
@@ -35909,21 +36519,27 @@
       const recipe = recipes[cursor];
       const card = document.createElement("div");
       card.className = "recipe-card recipe-card-compact";
+      const header = document.createElement("div");
+      header.className = "recipe-card-header";
       const icon = document.createElement("div");
       icon.className = "recipe-icon";
       const firstOutput = Object.keys(recipe.output || {})[0];
       applyItemVisual(icon, firstOutput || "stone", true);
+      header.appendChild(icon);
+      const titleWrap = document.createElement("div");
+      titleWrap.className = "recipe-card-title-wrap";
       const title = document.createElement("div");
       title.className = "recipe-title";
       title.textContent = recipe.name;
-      card.appendChild(icon);
-      card.appendChild(title);
+      titleWrap.appendChild(title);
+      header.appendChild(titleWrap);
+      card.appendChild(header);
 
       if (recipe.description) {
         const detailToggle = document.createElement("button");
         detailToggle.type = "button";
         detailToggle.className = "recipe-detail-toggle";
-        detailToggle.textContent = stationRecipeDetailsExpanded ? "Hide details" : "Show details";
+        detailToggle.textContent = stationRecipeDetailsExpanded ? "Hide" : "Details";
         detailToggle.addEventListener("click", () => {
           stationRecipeDetailsExpanded = !stationRecipeDetailsExpanded;
           renderStationMenu();
@@ -37380,6 +37996,9 @@
       if (applyResourceStageNormalization(res)) {
         markDirty();
       }
+      if (normalizeResourceHealthState(world, res)) {
+        markDirty();
+      }
       if (res.hitTimer > 0) res.hitTimer -= dt;
       if (res.type === "tree" && res.stage && res.stage !== "alive") {
         if (res.removed) {
@@ -37400,17 +38019,24 @@
           markDirty();
         }
       }
-      if (res.removed && res.type === "ore") {
-        const hasTask = world.respawnTasks.some((task) => task?.type === "ore" && task.id === res.id);
-        if (!hasTask) {
-          world.respawnTasks.push({
-            type: "ore",
-            id: res.id,
-            tx: res.tx,
-            ty: res.ty,
-            timer: RESPAWN.ore,
-          });
-          markDirty();
+      if (res.removed && (res.type === "ore" || res.type === "rock" || res.type === "grass" || res.type === "biomeStone")) {
+        const respawnType = res.type === "biomeStone" ? "biomeStone" : res.type;
+        if (respawnType === "biomeStone") {
+          if (queueBiomeStoneRespawnTask(world, res)) {
+            markDirty();
+          }
+        } else {
+          const hasTask = world.respawnTasks.some((task) => task?.type === respawnType && task.id === res.id);
+          if (!hasTask) {
+            world.respawnTasks.push({
+              type: respawnType,
+              id: res.id,
+              tx: res.tx,
+              ty: res.ty,
+              timer: getRespawnDelayForTaskType(respawnType),
+            });
+            markDirty();
+          }
         }
       }
       if (res.removed) continue;
@@ -42807,7 +43433,13 @@
   }
 
   function updateJoinLoadingOverlay() {
-    if (!net.enabled || net.isHost) return;
+    const joiningIntent = net.enabled && !net.isHost && net.connectIntent === "join";
+    if (!joiningIntent) {
+      if (state.loadingVisible && state.loadingTitle === "Joining") {
+        hideLoadingOverlay();
+      }
+      return;
+    }
     if (net.ready || net.joinPhase === "playable") {
       if (state.loadingVisible && state.loadingTitle === "Joining") {
         hideLoadingOverlay();
@@ -49366,8 +49998,11 @@
     setupSlots();
     setupMobileZoomLock();
     resize();
-    if (startScreen) startScreen.classList.remove("hidden");
-    setStartMenuView("main");
+    if (startScreen) {
+      startScreen.classList.remove("start-screen-transition-out");
+      startScreen.classList.remove("hidden");
+    }
+    setStartMenuView("main", { animate: false });
     bindStartMenuListeners();
     setSettingsTab("settings");
     updateVolumeUI();

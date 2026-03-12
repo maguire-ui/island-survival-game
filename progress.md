@@ -246,3 +246,33 @@ Original prompt: Fix CaveV2 so caves use Zelda-style screen-to-screen room trans
 - Mini-map/debug ordering: added a third under-map toggle row for `Continental Shift` below existing mini-map toggles, including click handling and host-only availability indicator.
 - Cache-buster bump: `index.html` now references `styles.css?v=20260312-1` and `src/main.js?v=20260312-1`.
 - Validation limitation: runtime automation still blocked in this shell (`node`/`npx` unavailable), so this pass used targeted code-path audit + diff inspection only.
+- Linked CaveV2 routing stabilization pass (2026-03-11): added explicit side->surface-entrance mapping (`surfaceExitBySide`) and persisted optional cave/session fields (`surfaceEntranceAId`, `surfaceEntranceBId`, active `surfaceExitBySide`) through CaveV2 save/restore.
+- `resolveCaveV2LinkedSurfaceExitMapping` now derives entry/linked sides from explicit mapping (with backward-compatible fallbacks), including recovery when pair metadata is partially missing; this prevents single-exit swap behavior and keeps A<->B intent stable.
+- `enterCaveV2` now stores resolved side mapping in active session, derives fallback linked exit entrance IDs from that map, and updates cave-level entrance mapping cache for deterministic repeat entries.
+- Cave restore/get-or-create now repair invalid linked side state (including linked side == entry side), backfill missing pair IDs from saved surface entrance IDs, and recarve/ensure entry-room surface corridors for linked pairs.
+- Cave room rendering now uses active-session surface exit sides + linked side for guidance lighting in active rooms, so both exits are shown consistently during linked traversal.
+- Validation note: runtime browser loop still blocked in this shell because `node`/`npx` are unavailable; validated via targeted code-path audit + diff integrity checks (`git diff --check`).
+- Crafting menu cleanup pass (2026-03-11): decluttered build/station recipe UI for better readability without changing crafting logic.
+- `src/main.js`: compact recipe navigator labels simplified (`<` / `>` with aria labels, `Recipe X of Y`), build/station cards now use a cleaner header layout (`.recipe-card-header` with icon + title), and detail toggles shortened (`Details` / `Hide`).
+- `styles.css`: converted crafting category grid into a horizontal tab strip, simplified category button chrome, reduced heavy gradients/shadows, tightened recipe card visuals, restyled recipe chips into a cleaner inline format (icon + name + qty), softened separators/arrows/lock state, and updated mobile sizing for the new compact layout.
+- Validation note: runtime Playwright loop is still blocked in this shell because `node`/`npx` are unavailable; pass verified via targeted code-path/CSS inspection.
+- Host->solo lag hardening pass (2026-03-11): improved multiplayer teardown and removed expensive client-only interpolation work from offline mode.
+- `startSolo()` now explicitly closes host/client connections before destroying peer (`net.hostConn` + each `net.connections` entry), then clears net state as before.
+- Added render resync on solo switch (`alignAllWorldEntityRenderPositions()`) to avoid stale interpolation drift after mode transition.
+- `updateRemoteRender()` optimization: cave/surface entity interpolation loop now runs only for active multiplayer clients (`net.enabled && !net.isHost`) instead of all non-host contexts, reducing solo CPU load/stutter.
+- Validation note: runtime browser loop remains unavailable in this shell (`node`/`npx` missing), so this pass was verified via targeted code-path and diff checks.
+- Follow-up hardening: `startSolo()` now force-stops MP autotest loopback if it is active (`mpAutotestStop({ restoreSeed: false })`) before network teardown, preventing hidden stress loops from carrying over and causing solo lag.
+- `updateRemoteRender()` cleanup: removed unreachable offline branches in client interpolation loop after gating by `net.enabled && !net.isHost`.
+- Cache-buster bump for delivery: `/index.html` now references `styles.css?v=20260312-2` and `src/main.js?v=20260312-2` so the host->solo lag fixes load immediately instead of stale cached assets.
+- Start-menu transition UX pass (2026-03-11): added directional swoosh transitions between `Main -> Play -> Options` views and fade transition from start menu into loading overlay for Solo/Host/Join.
+- `src/main.js`: introduced `setStartMenuView(view, { animate })` directional class mapping (`view-left` / `view-right`), shell swoosh state, and `transitionStartScreenToLoading(title, stage, onAfter)` for click-to-loading fade.
+- Solo/Host/Join now route through start-screen->loading transition so selecting game mode visibly fades into loading instead of abrupt swap.
+- Added join-failure transition safety: clears pending start-screen exit timer and restores play submenu without animation.
+- `styles.css`: start-screen exit animation (`.start-screen-transition-out`), new sliding start-menu view system, and loading overlay opacity transition while hidden (`.loading-overlay.hidden` keeps `display:flex` + `opacity:0`).
+- `index.html`: added `id="startMenuShell"` and bumped cache-busters to `styles.css?v=20260312-3` and `src/main.js?v=20260312-3`.
+- `src/menu-bridge.js`: fallback menu view switching now applies directional classes + `aria-hidden` + shell `data-view` for consistent behavior when API bridge is not ready.
+- 2026-03-12 (QA hardening follow-up): fixed host-start loading overlay race in `updateJoinLoadingOverlay` by gating join overlay to explicit join intent (`net.connectIntent === "join"`) and force-hiding stale "Joining" overlay when not joining (prevents host getting stuck behind join loading UI).
+- Added startup failure recovery helper `restoreStartMenuAfterStartFailure()` and wrapped `startSolo`, `startHost`, and `startJoin` transition callbacks in try/catch so runtime startup exceptions restore the start menu instead of trapping the player on a loading transition.
+- MP autotest safety hardening: `mpAutotestValidateSafety` now normalizes resource HP state (`normalizeResourceHealthState`) during safety scans and marks dirty when self-healed, preventing stale/legacy negative HP resource states from causing repeated `surface:resource negative hp` safety aborts.
+- Added linked-cave regression guardrails in `qaCheckCaveV2State`: linked pairs now assert distinct entry/linked surface sides, distinct mapped entrance IDs, and an unblocked linked surface doorway in entry room.
+- Validation limitation remains: Playwright/runtime browser loop could not be executed in this shell because `node`, `npm`, `npx`, and `playwright` are unavailable.
