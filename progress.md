@@ -318,3 +318,5 @@ Validation (2026-03-12):
   - Pass 3: menu -> Host -> playable host world loaded (no stuck loading) (`output/web-game-cavev2-pass3-host/shot-0.png`).
   - Pass 4: menu flow sanity capture for join path (`output/web-game-cavev2-pass4-join/shot-0.png`).
 - Cleanup note: transient Playwright artifacts were removed after validation (`/tmp/isg-qa-tools`, local `output/` screenshots, and `~/Library/Caches/ms-playwright`) per reversible-only cleanup policy.
+- UI fix (2026-03-12): moved debug FPS overlay Y-offset below the top HUD bar in `drawDebugFpsOverlay` (`panelY` now clamped around 56px top inset) so the FPS readout is not covered.
+- Validation: `node --check src/main.js` passed after FPS overlay position change.
