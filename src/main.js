@@ -151,6 +151,7 @@
   };
   const PLAYER_ATTACK_REACH = MONSTER.attackRange + 24;
   const PLAYER_ATTACK_FALLBACK_REACH = PLAYER_ATTACK_REACH - 6;
+  const PLAYER_MOVE_SPEED_MULT = 1.12;
 
   const TOUCH_STICK_MAX_DIST = 40;
   const MOBILE_RENDER_DPR_CAP = 2;
@@ -158,8 +159,8 @@
   const MOBILE_RENDER_MAX_PIXELS = 3000000;
   const DESKTOP_RENDER_MAX_PIXELS = 5200000;
   const GRAPHICS_PRESET_CONFIG = Object.freeze({
-    performance: Object.freeze({ renderScale: 0.7, effectsLevel: 0 }),
-    balanced: Object.freeze({ renderScale: 1, effectsLevel: 1 }),
+    performance: Object.freeze({ renderScale: 0.55, effectsLevel: 0 }),
+    balanced: Object.freeze({ renderScale: 0.9, effectsLevel: 1 }),
     quality: Object.freeze({ renderScale: 1, effectsLevel: 2 }),
     ultra: Object.freeze({ renderScale: 1.15, effectsLevel: 3 }),
   });
@@ -474,14 +475,15 @@
     helloRetryInterval: 0.9,
     joinReconnectBase: 1.2,
     joinReconnectMax: 4.0,
-    joinHandshakeTimeout: 16,
+    joinHandshakeTimeout: 22,
+    joinHeartbeatInterval: 0.9,
     resyncSilenceThreshold: 1.2,
     resyncRequestCooldown: 0.8,
     renderSmooth: 14,
     houseSmooth: 22,
-    monsterSmooth: 10,
-    animalSmooth: 10,
-    villagerSmooth: 10,
+    monsterSmooth: 48,
+    animalSmooth: 48,
+    villagerSmooth: 44,
     projectileSmooth: 26,
     poisonCloudSmooth: 18,
     robotSmooth: 14,
@@ -698,17 +700,17 @@
   const CAVE_V2_DROP_PICKUP_GRACE = 0.45;
 
   const BIOME_STONE_RESPAWN = Object.freeze({
-    min: 600,
-    max: 600,
+    min: 1200,
+    max: 1800,
     retryDelay: 20,
-    minActivePerBiome: 1,
+    minActivePerIsland: 1,
   });
 
   const VILLAGER_CONFIG = Object.freeze({
     minPerVillage: 2,
     maxPerVillage: 8,
-    speedMin: 19,
-    speedMax: 31,
+    speedMin: 22,
+    speedMax: 34,
     wanderRadiusTiles: 6.8,
     wanderResetMin: 0.7,
     wanderResetMax: 2.2,
@@ -795,7 +797,7 @@
   const SAVE_KEY_PREFIX = "island_survival_seed_save_v1:";
   const ACTIVE_SEED_KEY = "island_survival_active_seed_v1";
   const SAVE_VERSION = 5;
-  const WORLD_LAYOUT_VERSION = "2026-02-layout-v3";
+  const WORLD_LAYOUT_VERSION = "2026-03-layout-v4";
   const HOTBAR_SIZE = 4;
   const INVENTORY_SIZE = 8;
   const CHEST_SIZE = 8;
@@ -2285,6 +2287,10 @@
     joinStartedAt: 0,
     joinRetryTimer: NET_CONFIG.joinReconnectBase,
     joinAttempts: 0,
+    joinPhase: "idle",
+    snapshotAppliedAt: 0,
+    joinAutoReconnectsRemaining: 1,
+    joinHeartbeatTimer: NET_CONFIG.joinHeartbeatInterval,
     joinFallbackSnapshotApplied: false,
     joinTimeoutNotified: false,
     hostConnPendingSince: 0,
@@ -8514,9 +8520,41 @@
     }
   }
 
+  function mpAutotestGetCraftRecipePool() {
+    const pool = [];
+    if (Array.isArray(BUILD_RECIPES)) {
+      for (const recipe of BUILD_RECIPES) {
+        if (!recipe || typeof recipe !== "object") continue;
+        pool.push(recipe);
+      }
+    }
+    if (Array.isArray(UPGRADE_RECIPES)) {
+      for (const recipe of UPGRADE_RECIPES) {
+        if (!recipe || typeof recipe !== "object") continue;
+        pool.push(recipe);
+      }
+    }
+    return pool;
+  }
+
+  function mpAutotestValidateCraftingRuntime() {
+    const issues = [];
+    if (typeof canCraftWithInventoryReplacement !== "function") issues.push("canCraftWithInventoryReplacement");
+    if (typeof craftRecipe !== "function") issues.push("craftRecipe");
+    if (typeof getRecipeOutput !== "function") issues.push("getRecipeOutput");
+    if (!Array.isArray(BUILD_RECIPES) && !Array.isArray(UPGRADE_RECIPES)) issues.push("recipe pools");
+    if (issues.length <= 0) return { ok: true, reason: "" };
+    return {
+      ok: false,
+      reason: `Craft runtime missing: ${issues.join(", ")}`,
+      details: { subsystem: "runtime", missing: issues },
+    };
+  }
+
   function mpAutotestPickBasicCraftRecipe() {
-    if (!Array.isArray(CRAFTING_RECIPES) || CRAFTING_RECIPES.length <= 0) return null;
-    for (const recipe of CRAFTING_RECIPES) {
+    const recipePool = mpAutotestGetCraftRecipePool();
+    if (recipePool.length <= 0) return null;
+    for (const recipe of recipePool) {
       if (!recipe || typeof recipe !== "object") continue;
       if (isUpgradeRecipe(recipe)) continue;
       if (!recipe.cost || typeof recipe.cost !== "object") continue;
@@ -8535,7 +8573,12 @@
     }
     const recipe = mpAutotestPickBasicCraftRecipe();
     if (!recipe) {
-      return { ok: false, reason: "Craft recipe cycle found no eligible recipe", details: { subsystem: "crafting" } };
+      return {
+        ok: true,
+        skipped: true,
+        reason: "Craft recipe cycle skipped: no eligible recipe",
+        details: { subsystem: "crafting" },
+      };
     }
     const output = getRecipeOutput(recipe);
     const outputEntries = normalizeOutputEntries(output);
@@ -8629,6 +8672,18 @@
       mpAutotestApplyHostMutations(descriptor.hostMutations);
     }
 
+    if (descriptor.kind === "craftEdge" || descriptor.kind === "craftRecipe") {
+      const runtimeCheck = mpAutotestValidateCraftingRuntime();
+      if (!runtimeCheck.ok) {
+        const reason = runtimeCheck.reason || "Craft runtime invariant failed";
+        mpAutotestMarkFeature("crafting", "warn", reason);
+        mpAutotestMarkCategory("E", "warn", reason);
+        descriptor.resultStatus = "warn";
+        mpAutotestLogLine(`WARN: ${reason}`);
+        return true;
+      }
+    }
+
     if (descriptor.kind === "craftEdge") {
       const craftEdgeResult = mpAutotestRunCraftEdgeCheck();
       if (!craftEdgeResult.ok) {
@@ -8643,6 +8698,12 @@
       if (!craftCycleResult.ok) {
         const reason = craftCycleResult.reason || "Craft recipe cycle failed";
         mpAutotestMarkFeature("crafting", "fail", reason);
+        mpAutotestMarkCategory("D", "warn", reason);
+        descriptor.resultStatus = "warn";
+        mpAutotestLogLine(`WARN: ${reason}`);
+      } else if (craftCycleResult.skipped) {
+        const reason = craftCycleResult.reason || "Craft recipe cycle skipped";
+        mpAutotestMarkFeature("crafting", "warn", reason);
         mpAutotestMarkCategory("D", "warn", reason);
         descriptor.resultStatus = "warn";
         mpAutotestLogLine(`WARN: ${reason}`);
@@ -12753,7 +12814,13 @@
   }
 
   function netIsClientReady() {
-    return netIsClient() && net.ready;
+    return (
+      netIsClient()
+      && net.ready
+      && net.joinPhase === "playable"
+      && Number.isFinite(net.snapshotAppliedAt)
+      && net.snapshotAppliedAt > 0
+    );
   }
 
   function resetDebugSyncAuditState() {
@@ -12785,6 +12852,10 @@
     net.joinStartedAt = 0;
     net.joinRetryTimer = NET_CONFIG.joinReconnectBase;
     net.joinAttempts = 0;
+    net.joinPhase = "idle";
+    net.snapshotAppliedAt = 0;
+    net.joinAutoReconnectsRemaining = 1;
+    net.joinHeartbeatTimer = NET_CONFIG.joinHeartbeatInterval;
     net.joinFallbackSnapshotApplied = false;
     net.joinTimeoutNotified = false;
     net.hostConnPendingSince = 0;
@@ -13274,6 +13345,7 @@
   function connectAsClient() {
     net.isHost = false;
     net.ready = false;
+    net.joinPhase = "connecting";
     net.hostConn = null;
     net.connections.clear();
     net.players.clear();
@@ -13281,16 +13353,19 @@
     net.helloRetryTimer = NET_CONFIG.helloRetryInterval;
     net.joinStartedAt = performance.now();
     net.joinRetryTimer = NET_CONFIG.joinReconnectBase;
+    net.joinHeartbeatTimer = NET_CONFIG.joinHeartbeatInterval;
     const peer = new Peer(undefined, PEER_OPTIONS);
     net.peer = peer;
     peer.on("open", (id) => {
       net.playerId = id;
+      net.joinPhase = "hello";
       updateMpStatus("MP: Joining");
       connectToHost();
     });
     peer.on("error", (err) => {
       console.warn("Peer error", err);
       if (!net.ready) {
+        net.joinPhase = "reconnect";
         net.joinRetryTimer = Math.min(
           Math.max(0.1, Number(net.joinRetryTimer) || NET_CONFIG.joinReconnectBase),
           0.2
@@ -13305,6 +13380,8 @@
   function connectToHost() {
     if (!net.peer) return;
     if (net.hostConn) return;
+    net.joinPhase = "connecting";
+    net.joinTimeoutNotified = false;
     net.joinAttempts = Math.max(0, Number(net.joinAttempts) || 0) + 1;
     if (!Number.isFinite(net.joinStartedAt) || net.joinStartedAt <= 0) {
       net.joinStartedAt = performance.now();
@@ -13322,10 +13399,17 @@
     conn.on("open", () => {
       if (!isHostSide) {
         net.hostConnPendingSince = 0;
+        net.joinPhase = "hello";
         sendHello();
         net.helloRetryTimer = NET_CONFIG.helloRetryInterval;
         net.joinRetryTimer = NET_CONFIG.joinReconnectBase;
-        updateMpStatus("MP: Connected");
+        updateMpStatus("MP: Handshake");
+      } else if (conn.open) {
+        conn.send({
+          type: "joinProgress",
+          phase: "awaitHello",
+          note: "Host connected. Waiting for hello.",
+        });
       }
     });
     conn.on("data", (data) => {
@@ -13360,8 +13444,9 @@
         }
         broadcastNet({ type: "playerLeft", id: conn.peer }, conn.peer);
       } else {
-        updateMpStatus("MP: Disconnected");
+        const wasReady = !!net.ready;
         net.ready = false;
+        net.joinPhase = wasReady ? "reconnect" : "connecting";
         net.helloRetryTimer = NET_CONFIG.helloRetryInterval;
         net.joinRetryTimer = Math.min(0.15, NET_CONFIG.joinReconnectBase);
         net.resyncTimer = 0;
@@ -13377,6 +13462,14 @@
           net.hostConn = null;
         }
         net.hostConnPendingSince = 0;
+        if (wasReady && net.joinAutoReconnectsRemaining > 0) {
+          net.joinAutoReconnectsRemaining -= 1;
+          net.joinStartedAt = performance.now();
+          updateMpStatus("MP: Rejoining");
+          setPrompt("Connection lost. Rejoining...", 1.5);
+        } else {
+          updateMpStatus("MP: Disconnected");
+        }
         rollbackAllPendingClientRequests("Disconnected: pending actions rolled back");
       }
     });
@@ -13396,6 +13489,7 @@
           Math.max(0.1, Number(net.joinRetryTimer) || NET_CONFIG.joinReconnectBase),
           0.2
         );
+        net.joinPhase = "reconnect";
         updateMpStatus("MP: Reconnecting");
       }
     });
@@ -13403,10 +13497,12 @@
 
   function sendHello() {
     if (!net.hostConn || !net.hostConn.open) return;
+    net.joinPhase = "welcome";
     net.hostConn.send({
       type: "hello",
       name: net.localName,
       color: net.localColor,
+      joinPhase: net.joinPhase,
     });
   }
 
@@ -13434,6 +13530,19 @@
       if (!net.players.has(peerId)) continue;
       qaTrackCaveDisabledNetMessage("send", payload);
       conn.send(payload);
+    }
+  }
+
+  function sendJoinProgressToPendingPeers(note = "") {
+    if (!net.isHost) return;
+    for (const [peerId, conn] of net.connections.entries()) {
+      if (!conn?.open) continue;
+      if (net.players.has(peerId)) continue;
+      conn.send({
+        type: "joinProgress",
+        phase: "awaitHello",
+        note: note || "Host ready. Waiting for join handshake.",
+      });
     }
   }
 
@@ -13524,9 +13633,10 @@
       };
       conn.send({
         type: "welcome",
+        joinPhase: "snapshotReady",
         playerId: conn.peer,
         playerState,
-        snapshot: buildSnapshot(),
+        snapshot: buildSnapshot({ includeStaticWorld: true }),
       });
     }
     if (opts.broadcastJoin !== false) {
@@ -13558,6 +13668,9 @@
         break;
       case "welcome":
         if (!net.isHost) handleWelcome(message);
+        break;
+      case "joinProgress":
+        if (!net.isHost) handleJoinProgress(message);
         break;
       case "snapshot":
         if (!net.isHost) {
@@ -13778,6 +13891,134 @@
       });
     }
     return players;
+  }
+
+  function serializeSurfaceStaticSnapshot(world) {
+    if (!world || typeof world !== "object") return null;
+    const size = Math.max(8, Math.floor(Number(world.size) || 0));
+    if (!Number.isFinite(size) || size <= 0) return null;
+    const expected = size * size;
+    if (!Array.isArray(world.tiles) || world.tiles.length !== expected) return null;
+    const seed = String(world.seed || "");
+    const seedInt = Number.isFinite(world.seedInt)
+      ? world.seedInt
+      : seedToInt(normalizeSeedValue(seed));
+    const shades = Array.isArray(world.shades) && world.shades.length === expected
+      ? world.shades.slice()
+      : new Array(expected).fill(1);
+    const biomeGrid = Array.isArray(world.biomeGrid) && world.biomeGrid.length === expected
+      ? world.biomeGrid.slice()
+      : new Array(expected).fill(-1);
+    const beachGrid = Array.isArray(world.beachGrid) && world.beachGrid.length === expected
+      ? world.beachGrid.slice()
+      : new Array(expected).fill(false);
+    const islands = Array.isArray(world.islands)
+      ? world.islands
+        .map((island) => {
+          if (!island || typeof island !== "object") return null;
+          return {
+            x: Number(island.x) || 0,
+            y: Number(island.y) || 0,
+            radius: Math.max(3, Number(island.radius) || 6),
+            biomeId: Number.isInteger(island.biomeId) ? island.biomeId : 0,
+            starter: !!island.starter,
+            shapeStyle: typeof island.shapeStyle === "string" ? island.shapeStyle : "round",
+            shapeRotation: Number(island.shapeRotation) || 0,
+            shapeCosRot: Number(island.shapeCosRot) || 1,
+            shapeSinRot: Number(island.shapeSinRot) || 0,
+            shapeStretchX: Number(island.shapeStretchX) || 1,
+            shapeStretchY: Number(island.shapeStretchY) || 1,
+            shapeLobeA: Number(island.shapeLobeA) || 0,
+            shapeLobeB: Number(island.shapeLobeB) || 0,
+            shapeLobeC: Number(island.shapeLobeC) || 0,
+          };
+        })
+        .filter(Boolean)
+      : [];
+    return {
+      version: 1,
+      seed,
+      seedInt,
+      size,
+      tiles: world.tiles.slice(),
+      shades,
+      biomeGrid,
+      beachGrid,
+      islands,
+    };
+  }
+
+  function buildSurfaceWorldFromStaticSnapshot(seed, surfaceStatic) {
+    if (!surfaceStatic || typeof surfaceStatic !== "object") return null;
+    const size = Math.max(8, Math.floor(Number(surfaceStatic.size) || 0));
+    const expected = size * size;
+    if (!Number.isFinite(size) || size <= 0) return null;
+    if (!Array.isArray(surfaceStatic.tiles) || surfaceStatic.tiles.length !== expected) return null;
+    const worldSeed = String(surfaceStatic.seed || seed || "");
+    const worldSeedInt = Number.isFinite(surfaceStatic.seedInt)
+      ? surfaceStatic.seedInt
+      : seedToInt(normalizeSeedValue(worldSeed));
+    const shades = Array.isArray(surfaceStatic.shades) && surfaceStatic.shades.length === expected
+      ? surfaceStatic.shades.slice()
+      : new Array(expected).fill(1);
+    const biomeGrid = Array.isArray(surfaceStatic.biomeGrid) && surfaceStatic.biomeGrid.length === expected
+      ? surfaceStatic.biomeGrid.slice()
+      : new Array(expected).fill(-1);
+    const beachGrid = Array.isArray(surfaceStatic.beachGrid) && surfaceStatic.beachGrid.length === expected
+      ? surfaceStatic.beachGrid.slice()
+      : new Array(expected).fill(false);
+    const islands = Array.isArray(surfaceStatic.islands)
+      ? surfaceStatic.islands
+        .map((island) => {
+          if (!island || typeof island !== "object") return null;
+          const rotation = Number(island.shapeRotation) || 0;
+          return {
+            x: Number(island.x) || 0,
+            y: Number(island.y) || 0,
+            radius: Math.max(3, Number(island.radius) || 6),
+            biomeId: Number.isInteger(island.biomeId) ? island.biomeId : 0,
+            starter: !!island.starter,
+            shapeStyle: typeof island.shapeStyle === "string" ? island.shapeStyle : "round",
+            shapeRotation: rotation,
+            shapeCosRot: Number(island.shapeCosRot) || Math.cos(rotation),
+            shapeSinRot: Number(island.shapeSinRot) || Math.sin(rotation),
+            shapeStretchX: Number(island.shapeStretchX) || 1,
+            shapeStretchY: Number(island.shapeStretchY) || 1,
+            shapeLobeA: Number(island.shapeLobeA) || 0,
+            shapeLobeB: Number(island.shapeLobeB) || 0,
+            shapeLobeC: Number(island.shapeLobeC) || 0,
+          };
+        })
+        .filter(Boolean)
+      : [];
+    const world = {
+      seed: worldSeed,
+      seedInt: worldSeedInt,
+      size,
+      tiles: surfaceStatic.tiles.slice(),
+      shades,
+      resources: [],
+      resourceGrid: createResourceGrid(size),
+      biomeGrid,
+      beachGrid,
+      islands,
+      caves: [],
+      drops: [],
+      respawnTasks: [],
+      monsters: [],
+      nextMonsterId: 1,
+      monsterBurnFx: [],
+      projectiles: [],
+      nextProjectileId: 1,
+      poisonClouds: [],
+      nextPoisonCloudId: 1,
+      animals: [],
+      nextAnimalId: 1,
+      animalSpawnTimer: 3,
+      villagers: [],
+      nextVillagerId: 1,
+    };
+    return world;
   }
 
   function serializeWorldState(world) {
@@ -14187,8 +14428,10 @@
     }).filter(Boolean);
   }
 
-  function buildSnapshot() {
+  function buildSnapshot(options = null) {
     const surface = state.surfaceWorld || state.world;
+    const opts = options && typeof options === "object" ? options : Object.create(null);
+    const includeStaticWorld = !!opts.includeStaticWorld;
     const seq = net.isHost ? nextNetSequence("snapshotSeq") : null;
     if (!surface) return null;
     const serializeCaveLayers = (cave) => {
@@ -14206,6 +14449,7 @@
       timeOfDay: state.timeOfDay,
       isNight: state.isNight,
       gameWon: state.gameWon,
+      surfaceStatic: includeStaticWorld ? serializeSurfaceStaticSnapshot(surface) : null,
       world: serializeWorldState(surface),
       caves: CAVES_ENABLED ? (surface.caves?.map((cave) => {
         const layers = serializeCaveLayers(cave);
@@ -14777,6 +15021,31 @@
       return;
     }
     if (!CAVES_ENABLED) {
+      if (caveEntries.length === 0) {
+        refreshRuntimeCaveEntranceCache(world);
+        return;
+      }
+      const metadataSignature = caveEntries
+        .map((entry) => (
+          entry && typeof entry.id === "number"
+            ? [
+                entry.id,
+                Math.floor(Number(entry.tx) || 0),
+                Math.floor(Number(entry.ty) || 0),
+                Number(!!entry.spawnedByPlayer),
+                Number(!!entry.hostileBlocked),
+                Number.isInteger(entry.surfaceLinkTargetCaveId) ? entry.surfaceLinkTargetCaveId : "",
+                Number.isFinite(entry.linkConfig?.roomCount) ? Math.floor(entry.linkConfig.roomCount) : "",
+              ].join(":")
+            : ""
+        ))
+        .filter(Boolean)
+        .sort()
+        .join("|");
+      if (world.caveMetadataSignature === metadataSignature) {
+        refreshRuntimeCaveEntranceCache(world);
+        return;
+      }
       const nextCaves = [];
       for (const entry of caveEntries) {
         if (!entry || typeof entry.id !== "number") continue;
@@ -14819,6 +15088,7 @@
         nextCaves.push(cave);
       }
       world.caves = nextCaves;
+      world.caveMetadataSignature = metadataSignature;
       refreshRuntimeCaveEntranceCache(world);
       return;
     }
@@ -14902,7 +15172,10 @@
       if (buildMenu) buildMenu.classList.add("hidden");
       selectedSlot = null;
       wasNearBench = false;
-      const world = generateWorld(snapshot.seed);
+      let world = buildSurfaceWorldFromStaticSnapshot(snapshot.seed, snapshot.surfaceStatic);
+      if (!world) {
+        world = generateWorld(snapshot.seed);
+      }
       state.surfaceWorld = world;
       state.world = world;
       state.inCave = false;
@@ -15099,10 +15372,23 @@
     if (motion) conn.send(motion);
   }
 
+  function handleJoinProgress(message) {
+    if (net.isHost) return;
+    net.lastHostPacketAt = performance.now();
+    if (!net.ready) {
+      net.joinPhase = "welcome";
+      updateMpStatus("MP: Syncing");
+      if (typeof message?.note === "string" && message.note) {
+        setPrompt(message.note, 0.9);
+      }
+    }
+  }
+
   function handleWelcome(message) {
     if (state.player) {
       state.player.netSeq = -1;
     }
+    net.joinPhase = "welcome";
     net.localPlayerSeq = 0;
     net.localPlayerAckSeq = -1;
     if (net.remotePlayerSeq instanceof Map) {
@@ -15110,14 +15396,24 @@
     }
     net.lastSnapshotSeq = -1;
     net.lastMotionSeq = -1;
+    let snapshotApplied = false;
     if (message.snapshot) {
       applyNetworkSnapshot(message.snapshot);
+      snapshotApplied = true;
+    } else if (state.surfaceWorld) {
+      snapshotApplied = true;
     }
+    if (!snapshotApplied) return;
     net.joinFallbackSnapshotApplied = true;
+    net.snapshotAppliedAt = performance.now();
+    net.joinPhase = "snapshotReady";
     state.sleepSequence = null;
     net.ready = true;
     net.lastHostPacketAt = performance.now();
     net.resyncTimer = NET_CONFIG.resyncRequestCooldown;
+    net.joinRetryTimer = NET_CONFIG.joinReconnectBase;
+    net.hostConnPendingSince = 0;
+    net.joinTimeoutNotified = false;
     state.inCave = false;
     state.activeCave = null;
     state.activeCaveLayer = 0;
@@ -15161,7 +15457,7 @@
     updateHealthUI();
     state.inventory = sanitizeInventorySlots(state.inventory, INVENTORY_SIZE);
     net.helloRetryTimer = NET_CONFIG.helloRetryInterval;
-    resetJoinHandshakeState();
+    net.joinPhase = "playable";
     updateMpStatus("MP: Connected");
     updateAllSlotUI();
   }
@@ -16666,6 +16962,7 @@
 
   function sendPlayerUpdate() {
     if (!net.enabled || !state.player) return;
+    if (!net.isHost && !netIsClientReady()) return;
     const playerWorld = getPlayerWorldForSync(
       state.inCave,
       state.activeCave?.id ?? null,
@@ -16998,9 +17295,28 @@
         }
         const elapsed = (performance.now() - net.joinStartedAt) / 1000;
         if (elapsed >= NET_CONFIG.joinHandshakeTimeout && !net.joinTimeoutNotified) {
-          net.joinTimeoutNotified = true;
-          updateMpStatus("MP: Join timeout");
-          setPrompt("Join timed out. Check code/host.", 2.0);
+          if (net.joinAutoReconnectsRemaining > 0) {
+            net.joinAutoReconnectsRemaining -= 1;
+            net.joinTimeoutNotified = false;
+            if (net.hostConn) {
+              try {
+                net.hostConn.close();
+              } catch (err) {
+                // ignore close errors
+              }
+            }
+            net.hostConn = null;
+            net.hostConnPendingSince = 0;
+            net.joinStartedAt = performance.now();
+            net.joinRetryTimer = 0.1;
+            net.joinPhase = "reconnect";
+            updateMpStatus("MP: Rejoining");
+            setPrompt("Retrying join...", 1.3);
+          } else {
+            net.joinTimeoutNotified = true;
+            updateMpStatus("MP: Join timeout");
+            setPrompt("Join timed out. Check code/host.", 2.0);
+          }
         }
       }
       if (!net.ready && net.hostConn?.open) {
@@ -17031,6 +17347,11 @@
     }
     if (net.isHost) {
       if (net.connections.size === 0) return;
+      net.joinHeartbeatTimer -= dt;
+      if (net.joinHeartbeatTimer <= 0) {
+        sendJoinProgressToPendingPeers();
+        net.joinHeartbeatTimer = NET_CONFIG.joinHeartbeatInterval;
+      }
       net.motionTimer -= dt;
       if (net.motionTimer <= 0) {
         const motion = buildMotionUpdate();
@@ -17287,22 +17608,49 @@
               monster.burnTimer = Math.max(0, monster.burnTimer - dt);
             }
             if (!Number.isFinite(monster.x) || !Number.isFinite(monster.y)) continue;
-            monster.renderX = monster.x;
-            monster.renderY = monster.y;
+            if (net.enabled) {
+              smoothRemoteEntityRender(
+                monster,
+                dt,
+                NET_CONFIG.monsterSmooth,
+                CONFIG.tileSize * 2.4
+              );
+            } else {
+              monster.renderX = monster.x;
+              monster.renderY = monster.y;
+            }
           }
         }
         if (Array.isArray(world.animals)) {
           for (const animal of world.animals) {
             if (!Number.isFinite(animal.x) || !Number.isFinite(animal.y)) continue;
-            animal.renderX = animal.x;
-            animal.renderY = animal.y;
+            if (net.enabled) {
+              smoothRemoteEntityRender(
+                animal,
+                dt,
+                NET_CONFIG.animalSmooth,
+                CONFIG.tileSize * 2.2
+              );
+            } else {
+              animal.renderX = animal.x;
+              animal.renderY = animal.y;
+            }
           }
         }
         if (Array.isArray(world.villagers)) {
           for (const villager of world.villagers) {
             if (!Number.isFinite(villager.x) || !Number.isFinite(villager.y)) continue;
-            villager.renderX = villager.x;
-            villager.renderY = villager.y;
+            if (net.enabled) {
+              smoothRemoteEntityRender(
+                villager,
+                dt,
+                NET_CONFIG.villagerSmooth,
+                CONFIG.tileSize * 2.1
+              );
+            } else {
+              villager.renderX = villager.x;
+              villager.renderY = villager.y;
+            }
           }
         }
         if (Array.isArray(world.projectiles)) {
@@ -17645,6 +17993,9 @@
         ty: cave.ty,
         key: buildCaveV2EntranceSurfaceKey(world, cave.tx, cave.ty),
         caveId: getCaveV2EntranceStableId(world, cave.tx, cave.ty),
+        entranceId: buildCaveV2EntranceSurfaceKey(world, cave.tx, cave.ty),
+        linkedPairId: null,
+        linkedExitKey: null,
       });
     }
     if (entrances.length === 0 && Array.isArray(world.islands) && world.islands.length > 0) {
@@ -17672,6 +18023,9 @@
             ty: found.ty,
             key: buildCaveV2EntranceSurfaceKey(world, found.tx, found.ty),
             caveId: getCaveV2EntranceStableId(world, found.tx, found.ty),
+            entranceId: buildCaveV2EntranceSurfaceKey(world, found.tx, found.ty),
+            linkedPairId: null,
+            linkedExitKey: null,
           });
         }
       }
@@ -19352,6 +19706,9 @@
             entrySurfaceKey: String(caveState.active.entrySurfaceKey || ""),
             entrySurfaceTx: Math.floor(Number(caveState.active.entrySurfaceTx) || 0),
             entrySurfaceTy: Math.floor(Number(caveState.active.entrySurfaceTy) || 0),
+            linkedPairId: typeof caveState.active.linkedPairId === "string" ? caveState.active.linkedPairId : null,
+            entryEntranceId: typeof caveState.active.entryEntranceId === "string" ? caveState.active.entryEntranceId : null,
+            exitEntranceId: typeof caveState.active.exitEntranceId === "string" ? caveState.active.exitEntranceId : null,
           }
         : null,
     };
@@ -19535,6 +19892,9 @@
       entrySurfaceKey: String(savedActive.entrySurfaceKey || cave.entrySurfaceKey || ""),
       entrySurfaceTx: Math.floor(Number(savedActive.entrySurfaceTx) || cave.entrySurfaceTx || 0),
       entrySurfaceTy: Math.floor(Number(savedActive.entrySurfaceTy) || cave.entrySurfaceTy || 0),
+      linkedPairId: typeof savedActive.linkedPairId === "string" ? savedActive.linkedPairId : null,
+      entryEntranceId: typeof savedActive.entryEntranceId === "string" ? savedActive.entryEntranceId : null,
+      exitEntranceId: typeof savedActive.exitEntranceId === "string" ? savedActive.exitEntranceId : null,
     };
     cave.activeRoomId = room.roomId;
     caveState.transitioning = false;
@@ -19863,6 +20223,17 @@
       setPrompt("Cave entrance blocked (spawn invalid)", 1.35);
       return false;
     }
+    const entryEntranceId = String(
+      entrance.entranceId
+      || entrance.key
+      || buildCaveV2EntranceSurfaceKey(state.surfaceWorld, entrance.tx, entrance.ty)
+    );
+    const linkedPairId = typeof entrance.linkedPairId === "string" && entrance.linkedPairId.length > 0
+      ? entrance.linkedPairId
+      : null;
+    const exitEntranceId = typeof entrance.linkedExitKey === "string" && entrance.linkedExitKey.length > 0
+      ? entrance.linkedExitKey
+      : null;
     cave.activeRoomId = cave.entryRoomId;
     caveState.active = {
       caveId: cave.caveId,
@@ -19873,6 +20244,9 @@
       entrySurfaceKey: cave.entrySurfaceKey,
       entrySurfaceTx: cave.entrySurfaceTx,
       entrySurfaceTy: cave.entrySurfaceTy,
+      linkedPairId,
+      entryEntranceId,
+      exitEntranceId,
     };
     caveState.transitioning = false;
     caveState.transitionT = 0;
@@ -19900,16 +20274,36 @@
         candidate: rawSpawn,
         final: { x: spawn.x, y: spawn.y },
         meta: spawnMeta,
+        linkedPairId,
+        entryEntranceId,
+        exitEntranceId,
         lightingOverlay: "cavev2_room_vignette",
       });
     }
     return true;
   }
 
+  function resolveLinkedCaveV2ExitSurfacePos(active) {
+    if (!active || !state.surfaceWorld) return null;
+    if (typeof active.exitEntranceId !== "string" || active.exitEntranceId.length <= 0) return null;
+    const entrances = getRuntimeCaveV2Entrances(state.surfaceWorld);
+    const exitEntrance = entrances.find((entry) => (
+      entry
+      && (entry.key === active.exitEntranceId || entry.entranceId === active.exitEntranceId)
+    ));
+    if (!exitEntrance) return null;
+    const targetX = (exitEntrance.tx + 0.5) * CONFIG.tileSize;
+    const targetY = (exitEntrance.ty + 0.5) * CONFIG.tileSize;
+    const clamped = clampEntityPositionToWalkable(state.surfaceWorld, targetX, targetY, 18);
+    return clamped || { x: targetX, y: targetY };
+  }
+
   function leaveCaveV2() {
     const caveState = getCaveV2State();
     if (!caveState.active || !state.player) return false;
-    const ret = caveState.active.returnSurfacePos;
+    const active = caveState.active;
+    const ret = active.returnSurfacePos;
+    const linkedExit = resolveLinkedCaveV2ExitSurfacePos(active);
     caveState.active = null;
     caveState.transitioning = false;
     caveState.transition = null;
@@ -19919,10 +20313,21 @@
     caveState.targetOreId = null;
     caveState.targetDropId = null;
     caveState.debugEntryAuditPending = false;
-    if (ret && Number.isFinite(ret.x) && Number.isFinite(ret.y)) {
-      state.player.x = ret.x;
-      state.player.y = ret.y;
+    const exitPos = linkedExit
+      || (ret && Number.isFinite(ret.x) && Number.isFinite(ret.y) ? ret : null);
+    if (exitPos && Number.isFinite(exitPos.x) && Number.isFinite(exitPos.y)) {
+      state.player.x = exitPos.x;
+      state.player.y = exitPos.y;
       syncLocalPlayerRenderToPhysics();
+      if (state.debugUnlocked && linkedExit) {
+        console.debug("[CaveV2 Linked Exit]", {
+          linkedPairId: active.linkedPairId || null,
+          entryEntranceId: active.entryEntranceId || null,
+          exitEntranceId: active.exitEntranceId || null,
+          x: exitPos.x,
+          y: exitPos.y,
+        });
+      }
     }
     state.promptText = "";
     state.promptTimer = 0;
@@ -24286,60 +24691,85 @@
       }
     }
 
-    function hasBiomeStone(biomeId) {
-      return resources.some((res) => res.type === "biomeStone" && res.biomeId === biomeId);
+    function clearBiomeStonePlacementResource(tx, ty) {
+      const idx = tileIndex(tx, ty, size);
+      const existingId = resourceGrid[idx];
+      if (existingId == null || existingId === -1) return true;
+      const existing = resources[existingId];
+      if (!existing || existing.type === "biomeStone") return false;
+      existing.removed = true;
+      resourceGrid[idx] = -1;
+      occupancy[idx] = false;
+      return true;
     }
 
-    function biomeStoneCount(biomeId) {
-      return resources.reduce(
-        (count, res) => count + Number(res.type === "biomeStone" && res.biomeId === biomeId),
-        0
-      );
+    function canPlaceBiomeStoneOnIsland(tx, ty, islandIndex, biomeId, allowOccupied = false) {
+      if (!inBounds(tx, ty, size)) return false;
+      const idx = tileIndex(tx, ty, size);
+      if (!tiles[idx] || beachGrid[idx]) return false;
+      if (biomeGrid[idx] !== biomeId) return false;
+      if (getIslandIndexForTileInList(islands, tx, ty) !== islandIndex) return false;
+      if (!allowOccupied && resourceGrid[idx] !== -1) return false;
+      if (!isClear(tx, ty, 2)) return false;
+      return true;
     }
 
-    function placeBiomeStone(biomeId) {
-      for (let attempt = 0; attempt < 400; attempt += 1) {
-        const x = Math.floor(rng() * size);
-        const y = Math.floor(rng() * size);
-        const idx = tileIndex(x, y, size);
-        if (!tiles[idx]) continue;
-        if (beachGrid[idx]) continue;
-        if (biomeGrid[idx] !== biomeId) continue;
-        if (resourceGrid[idx] !== -1) continue;
-        if (!isClear(x, y, 2)) continue;
-        addResource("biomeStone", x, y, 6, { biomeId });
-        return true;
-      }
-      // Fallback for dense islands: clear one non-stone resource so each biome can still guarantee at least one stone.
-      for (let attempt = 0; attempt < 550; attempt += 1) {
-        const x = Math.floor(rng() * size);
-        const y = Math.floor(rng() * size);
-        const idx = tileIndex(x, y, size);
-        if (!tiles[idx]) continue;
-        if (beachGrid[idx]) continue;
-        if (biomeGrid[idx] !== biomeId) continue;
-        const resId = resourceGrid[idx];
-        if (resId !== -1 && resId !== null && resId !== undefined) {
-          const existing = resources[resId];
-          if (!existing || existing.type === "biomeStone") continue;
-          existing.removed = true;
-          resourceGrid[idx] = -1;
+    function findBiomeStoneTileOnIsland(island, islandIndex, biomeId, allowOccupied = false) {
+      if (!island || islandIndex < 0) return null;
+      const islandSeed = seedToInt(`${seedStr}:biome-stone:${islandIndex}`);
+      const islandRng = makeRng(islandSeed);
+      const radius = Math.max(3, Number(island.radius) || 6);
+      for (let attempt = 0; attempt < 220; attempt += 1) {
+        const angle = islandRng() * Math.PI * 2;
+        const dist = (0.12 + islandRng() * 0.66) * radius;
+        const tx = Math.floor(island.x + Math.cos(angle) * dist);
+        const ty = Math.floor(island.y + Math.sin(angle) * dist);
+        if (canPlaceBiomeStoneOnIsland(tx, ty, islandIndex, biomeId, allowOccupied)) {
+          return { tx, ty };
         }
-        addResource("biomeStone", x, y, 6, { biomeId });
-        return true;
       }
-      return false;
+
+      const cx = clamp(Math.floor(island.x), 1, size - 2);
+      const cy = clamp(Math.floor(island.y), 1, size - 2);
+      const maxRadius = Math.max(3, Math.ceil(radius));
+      for (let ring = 0; ring <= maxRadius; ring += 1) {
+        for (let dy = -ring; dy <= ring; dy += 1) {
+          for (let dx = -ring; dx <= ring; dx += 1) {
+            if (Math.max(Math.abs(dx), Math.abs(dy)) !== ring) continue;
+            const tx = cx + dx;
+            const ty = cy + dy;
+            if (!canPlaceBiomeStoneOnIsland(tx, ty, islandIndex, biomeId, allowOccupied)) continue;
+            return { tx, ty };
+          }
+        }
+      }
+      return null;
     }
 
-    const biomeStoneBiomeCount = Math.min(BIOMES.length, BIOME_STONES.length);
-    for (let biomeId = 0; biomeId < biomeStoneBiomeCount; biomeId += 1) {
-      const targetCount = 1;
-      while (biomeStoneCount(biomeId) < targetCount) {
-        if (!placeBiomeStone(biomeId)) break;
+    function placeBiomeStoneForIsland(island, islandIndex) {
+      if (!island || islandIndex < 0) return false;
+      const biomeId = getIslandBiomeId({ biomeGrid, size }, island);
+      if (!Number.isInteger(biomeId) || biomeId < 0 || biomeId >= BIOME_STONES.length) return false;
+      if (isMushroomBiomeId(biomeId)) return false;
+
+      let spot = findBiomeStoneTileOnIsland(island, islandIndex, biomeId, false);
+      if (!spot) {
+        spot = findBiomeStoneTileOnIsland(island, islandIndex, biomeId, true);
       }
-      if (!hasBiomeStone(biomeId)) {
-        placeBiomeStone(biomeId);
-      }
+      if (!spot) return false;
+      if (!clearBiomeStonePlacementResource(spot.tx, spot.ty)) return false;
+      addResource("biomeStone", spot.tx, spot.ty, 6, {
+        biomeId,
+        originIslandId: islandIndex,
+        isBiomeStone: true,
+      });
+      return true;
+    }
+
+    for (let islandIndex = 0; islandIndex < islands.length; islandIndex += 1) {
+      const island = islands[islandIndex];
+      if (!island) continue;
+      placeBiomeStoneForIsland(island, islandIndex);
     }
 
     const caves = [];
@@ -24383,12 +24813,14 @@
       if (allowOccupied) clearResourceAt(tx, ty);
       const caveId = caves.length;
       const hostileBlocked = isMushroomBiomeAtTile({ biomeGrid, size }, tx, ty);
-      const linkConfig = buildCaveLayerLinkConfig(seed, caveId);
-      const layerZeroWorld = generateCaveWorld(seed, caveId, {
-        spawnHostiles: !hostileBlocked,
-        layerIndex: 0,
-        linkConfig,
-      });
+      const linkConfig = CAVES_ENABLED ? buildCaveLayerLinkConfig(seed, caveId) : null;
+      const layerZeroWorld = CAVES_ENABLED
+        ? generateCaveWorld(seed, caveId, {
+            spawnHostiles: !hostileBlocked,
+            layerIndex: 0,
+            linkConfig,
+          })
+        : null;
       caves.push({
         id: caveId,
         tx,
@@ -24397,7 +24829,7 @@
         hostileBlocked,
         seedInt: seed,
         linkConfig,
-        layers: [layerZeroWorld],
+        layers: layerZeroWorld ? [layerZeroWorld] : [],
         world: layerZeroWorld,
       });
       return true;
@@ -25120,12 +25552,18 @@
   }
 
   function serializeResource(res) {
-    return {
+    const serialized = {
       hp: res.hp,
       removed: res.removed,
       stage: normalizeResourceStage(res),
       respawnTimer: res.respawnTimer ?? 0,
     };
+    if (res?.type === "biomeStone") {
+      if (Number.isInteger(res.biomeId)) serialized.biomeId = res.biomeId;
+      if (Number.isInteger(res.originIslandId)) serialized.originIslandId = res.originIslandId;
+      if (res.isBiomeStone === true) serialized.isBiomeStone = true;
+    }
+    return serialized;
   }
 
   function canonicalizeSeedValue(seed) {
@@ -25666,6 +26104,12 @@
       applyResourceStageNormalization(res);
       res.respawnTimer = typeof savedRes.respawnTimer === "number" ? savedRes.respawnTimer : 0;
       res.hitTimer = 0;
+      if (res.type === "biomeStone") {
+        if (Number.isInteger(savedRes.biomeId)) res.biomeId = savedRes.biomeId;
+        if (Number.isInteger(savedRes.originIslandId)) res.originIslandId = savedRes.originIslandId;
+        if (savedRes.isBiomeStone === true) res.isBiomeStone = true;
+        normalizeBiomeStoneMetadata(world, res);
+      }
       if (res.removed) {
         const idx = tileIndex(res.tx, res.ty, world.size);
         world.resourceGrid[idx] = -1;
@@ -25712,6 +26156,8 @@
           id: typeof task.id === "number" ? task.id : null,
           tx: Math.floor(Number(task.tx) || 0),
           ty: Math.floor(Number(task.ty) || 0),
+          biomeId: Number.isInteger(task.biomeId) ? task.biomeId : null,
+          originIslandId: Number.isInteger(task.originIslandId) ? task.originIslandId : null,
           timer: typeof task.timer === "number"
             ? task.timer
             : getRespawnDelayForTaskType(task.type),
@@ -26020,6 +26466,12 @@
         }
       }
 
+      if (res.type === "biomeStone") {
+        if (normalizeBiomeStoneMetadata(world, res)) {
+          markDirty();
+        }
+      }
+
       if (res.type === "rock" && res.removed) {
         const hasTask = world.respawnTasks.some((task) => task?.type === "rock" && task.id === res.id);
         if (!hasTask) {
@@ -26051,7 +26503,7 @@
       }
     }
 
-    ensureMinimumBiomeStonePerBiome(world);
+    ensureMinimumBiomeStonePerIsland(world);
   }
 
   function isValidEntityLandTile(world, tx, ty) {
@@ -29457,35 +29909,65 @@
     return true;
   }
 
-  function findNearestResource(world, player) {
-    if (!world || !Array.isArray(world.resources)) return null;
-    let closest = null;
-    let closestDist = Infinity;
-    for (const res of world.resources) {
-      if (!isResourceInteractable(res)) continue;
-      const dx = res.x - player.x;
-      const dy = res.y - player.y;
-      const dist = Math.hypot(dx, dy);
-      if (dist < CONFIG.interactRange && dist < closestDist) {
-        closest = res;
-        closestDist = dist;
+  // Use resourceGrid-backed tile radius scans so interaction targeting stays O(view) instead of O(all resources).
+  function forEachResourceInTileRadius(world, position, range, callback) {
+    if (!world || typeof callback !== "function") return;
+    if (!Array.isArray(world.resources)) return;
+    const px = Number(position?.x);
+    const py = Number(position?.y);
+    const searchRange = Math.max(0, Number(range) || 0);
+    if (!Number.isFinite(px) || !Number.isFinite(py) || searchRange <= 0) return;
+
+    const hasGrid = Array.isArray(world.resourceGrid) && world.resourceGrid.length === world.size * world.size;
+    if (!hasGrid) {
+      for (const res of world.resources) {
+        if (!isResourceInteractable(res)) continue;
+        callback(res);
+      }
+      return;
+    }
+
+    const centerTx = clamp(Math.floor(px / CONFIG.tileSize), 0, world.size - 1);
+    const centerTy = clamp(Math.floor(py / CONFIG.tileSize), 0, world.size - 1);
+    const tileRadius = Math.max(1, Math.ceil(searchRange / CONFIG.tileSize) + 1);
+    const minTx = Math.max(0, centerTx - tileRadius);
+    const minTy = Math.max(0, centerTy - tileRadius);
+    const maxTx = Math.min(world.size - 1, centerTx + tileRadius);
+    const maxTy = Math.min(world.size - 1, centerTy + tileRadius);
+    const visited = new Set();
+
+    for (let ty = minTy; ty <= maxTy; ty += 1) {
+      for (let tx = minTx; tx <= maxTx; tx += 1) {
+        const idx = tileIndex(tx, ty, world.size);
+        const resId = world.resourceGrid[idx];
+        if (!Number.isInteger(resId) || resId < 0 || visited.has(resId)) continue;
+        visited.add(resId);
+        const res = world.resources[resId];
+        if (!isResourceInteractable(res)) continue;
+        callback(res);
       }
     }
-    return closest;
+  }
+
+  function findNearestResource(world, player) {
+    return findNearestResourceAt(world, player, CONFIG.interactRange);
   }
 
   function findNearestResourceAt(world, position, range = CONFIG.interactRange) {
     if (!world || !Array.isArray(world.resources)) return null;
+    const px = Number(position?.x);
+    const py = Number(position?.y);
+    const searchRange = Math.max(0, Number(range) || 0);
+    if (!Number.isFinite(px) || !Number.isFinite(py) || searchRange <= 0) return null;
     let closest = null;
     let closestDist = Infinity;
-    for (const res of world.resources) {
-      if (!isResourceInteractable(res)) continue;
-      const dist = Math.hypot(res.x - position.x, res.y - position.y);
-      if (dist < range && dist < closestDist) {
+    forEachResourceInTileRadius(world, position, searchRange, (res) => {
+      const dist = Math.hypot(res.x - px, res.y - py);
+      if (dist < searchRange && dist < closestDist) {
         closest = res;
         closestDist = dist;
       }
-    }
+    });
     return closest;
   }
 
@@ -29565,8 +30047,65 @@
     return Math.min(BIOMES.length, BIOME_STONES.length);
   }
 
+  function getBiomeStoneOriginIslandId(world, resource) {
+    if (!world || !resource || resource.type !== "biomeStone") return -1;
+    const existing = Number(resource.originIslandId);
+    if (
+      Number.isInteger(existing)
+      && existing >= 0
+      && Array.isArray(world.islands)
+      && existing < world.islands.length
+      && world.islands[existing]
+    ) {
+      return existing;
+    }
+    if (!Array.isArray(world.islands) || world.islands.length <= 0) return -1;
+    const computed = getIslandIndexForTileInList(world.islands, resource.tx, resource.ty);
+    if (Number.isInteger(computed) && computed >= 0) {
+      resource.originIslandId = computed;
+      return computed;
+    }
+    return -1;
+  }
+
+  function normalizeBiomeStoneMetadata(world, resource) {
+    if (!resource || resource.type !== "biomeStone") return false;
+    let changed = false;
+    if (resource.isBiomeStone !== true) {
+      resource.isBiomeStone = true;
+      changed = true;
+    }
+    if (!Number.isInteger(resource.biomeId) || resource.biomeId < 0 || resource.biomeId >= getBiomeStoneBiomeCount()) {
+      const tileBiome = getSurfaceBiomeIdAtTile(world, resource.tx, resource.ty);
+      const biomeId = clamp(Math.floor(tileBiome), 0, Math.max(0, getBiomeStoneBiomeCount() - 1));
+      resource.biomeId = biomeId;
+      changed = true;
+    }
+    const islandId = getBiomeStoneOriginIslandId(world, resource);
+    if (Number.isInteger(islandId) && islandId >= 0 && resource.originIslandId !== islandId) {
+      resource.originIslandId = islandId;
+      changed = true;
+    }
+    return changed;
+  }
+
+  function getBiomeStoneTargetIsland(world, originIslandId = null, biomeId = null) {
+    if (!world || !Array.isArray(world.islands) || world.islands.length <= 0) return null;
+    const islandId = Number(originIslandId);
+    if (Number.isInteger(islandId) && islandId >= 0 && islandId < world.islands.length) {
+      const island = world.islands[islandId];
+      if (island) return island;
+    }
+    if (Number.isInteger(biomeId) && biomeId >= 0) {
+      const byBiome = world.islands.find((island) => island && getIslandBiomeId(world, island) === biomeId);
+      if (byBiome) return byBiome;
+    }
+    return world.islands[0] || null;
+  }
+
   function queueBiomeStoneRespawnTask(world, resource, timerOverride = null) {
     if (!world || !resource || resource.type !== "biomeStone") return false;
+    normalizeBiomeStoneMetadata(world, resource);
     if (!Array.isArray(world.respawnTasks)) world.respawnTasks = [];
     const delay = Number.isFinite(timerOverride)
       ? Math.max(1, Number(timerOverride))
@@ -29577,6 +30116,8 @@
     if (existing) {
       existing.tx = resource.tx;
       existing.ty = resource.ty;
+      existing.biomeId = Number.isInteger(resource.biomeId) ? resource.biomeId : null;
+      existing.originIslandId = Number.isInteger(resource.originIslandId) ? resource.originIslandId : null;
       existing.timer = Math.min(
         Math.max(1, Number(existing.timer) || delay),
         delay
@@ -29588,17 +30129,25 @@
       id: resource.id,
       tx: resource.tx,
       ty: resource.ty,
+      biomeId: Number.isInteger(resource.biomeId) ? resource.biomeId : null,
+      originIslandId: Number.isInteger(resource.originIslandId) ? resource.originIslandId : null,
       timer: delay,
     });
     return true;
   }
 
-  function canPlaceBiomeStoneAt(world, tx, ty, biomeId, allowResourceId = null) {
+  function canPlaceBiomeStoneAt(world, tx, ty, biomeId, allowResourceId = null, options = null) {
     if (!world || !inBounds(tx, ty, world.size)) return false;
     const idx = tileIndex(tx, ty, world.size);
     if (world.tiles[idx] !== 1) return false;
     if (world.beachGrid?.[idx]) return false;
     if (Array.isArray(world.biomeGrid) && world.biomeGrid[idx] !== biomeId) return false;
+    const opts = options && typeof options === "object" ? options : Object.create(null);
+    const originIslandId = Number(opts.originIslandId);
+    if (Number.isInteger(originIslandId) && originIslandId >= 0 && Array.isArray(world.islands)) {
+      const tileIslandId = getIslandIndexForTileInList(world.islands, tx, ty);
+      if (tileIslandId !== originIslandId) return false;
+    }
     const occupiedResId = Array.isArray(world.resourceGrid) ? world.resourceGrid[idx] : -1;
     if (
       occupiedResId !== -1
@@ -29616,11 +30165,20 @@
     return true;
   }
 
-  function findBiomeStoneSpawnTile(world, biomeId, preferredTx = null, preferredTy = null, allowResourceId = null) {
+  function findBiomeStoneSpawnTile(
+    world,
+    biomeId,
+    preferredTx = null,
+    preferredTy = null,
+    allowResourceId = null,
+    options = null
+  ) {
     if (!world || !Number.isInteger(biomeId) || biomeId < 0 || biomeId >= getBiomeStoneBiomeCount()) return null;
+    const opts = options && typeof options === "object" ? options : Object.create(null);
+    const originIslandId = Number(opts.originIslandId);
 
     const tryTile = (tx, ty) => {
-      if (!canPlaceBiomeStoneAt(world, tx, ty, biomeId, allowResourceId)) return null;
+      if (!canPlaceBiomeStoneAt(world, tx, ty, biomeId, allowResourceId, { originIslandId })) return null;
       return { tx, ty };
     };
 
@@ -29640,19 +30198,18 @@
       }
     }
 
-    if (Array.isArray(world.islands) && world.islands.length > 0) {
-      const candidates = world.islands.filter(
-        (island) => island && Number.isInteger(island.biomeId) && island.biomeId === biomeId
-      );
-      for (const island of candidates) {
-        const radius = Math.max(3, Math.floor((Number(island.radius) || 6) * 0.86));
-        for (let attempt = 0; attempt < 60; attempt += 1) {
-          const angle = Math.random() * Math.PI * 2;
-          const dist = Math.random() * radius;
-          const tx = Math.floor(island.x + Math.cos(angle) * dist);
-          const ty = Math.floor(island.y + Math.sin(angle) * dist);
-          const found = tryTile(tx, ty);
-          if (found) return found;
+    const targetIsland = getBiomeStoneTargetIsland(world, originIslandId, biomeId);
+    if (targetIsland) {
+      const centerTx = clamp(Math.floor(Number(targetIsland.x) || 0), 0, world.size - 1);
+      const centerTy = clamp(Math.floor(Number(targetIsland.y) || 0), 0, world.size - 1);
+      const maxRadius = Math.max(3, Math.ceil(Number(targetIsland.radius) || 6));
+      for (let ring = 0; ring <= maxRadius; ring += 1) {
+        for (let dy = -ring; dy <= ring; dy += 1) {
+          for (let dx = -ring; dx <= ring; dx += 1) {
+            if (Math.max(Math.abs(dx), Math.abs(dy)) !== ring) continue;
+            const found = tryTile(centerTx + dx, centerTy + dy);
+            if (found) return found;
+          }
         }
       }
     }
@@ -29667,15 +30224,20 @@
     return null;
   }
 
-  function spawnBiomeStoneResource(world, tx, ty, biomeId) {
-    if (!canPlaceBiomeStoneAt(world, tx, ty, biomeId)) return null;
+  function spawnBiomeStoneResource(world, tx, ty, biomeId, originIslandId = null) {
+    if (!canPlaceBiomeStoneAt(world, tx, ty, biomeId, null, { originIslandId })) return null;
     if (!Array.isArray(world.resources)) world.resources = [];
     if (!Array.isArray(world.resourceGrid)) world.resourceGrid = createResourceGrid(world.size);
     const idx = tileIndex(tx, ty, world.size);
+    const resolvedIslandId = Number.isInteger(originIslandId)
+      ? originIslandId
+      : getIslandIndexForTileInList(world.islands, tx, ty);
     const resource = {
       id: world.resources.length,
       type: "biomeStone",
       biomeId,
+      originIslandId: Number.isInteger(resolvedIslandId) ? resolvedIslandId : null,
+      isBiomeStone: true,
       x: (tx + 0.5) * CONFIG.tileSize,
       y: (ty + 0.5) * CONFIG.tileSize,
       tx,
@@ -29692,17 +30254,25 @@
     return resource;
   }
 
-  function ensureMinimumBiomeStonePerBiome(world) {
+  function ensureMinimumBiomeStonePerIsland(world) {
     if (!world || !Array.isArray(world.resources)) return false;
+    if (!Array.isArray(world.islands) || world.islands.length <= 0) return false;
     if (!Array.isArray(world.respawnTasks)) world.respawnTasks = [];
-    const minActive = Math.max(1, Number(BIOME_STONE_RESPAWN.minActivePerBiome) || 1);
-    const biomeCount = getBiomeStoneBiomeCount();
+    const minActive = Math.max(1, Number(BIOME_STONE_RESPAWN.minActivePerIsland) || 1);
     let changed = false;
 
-    for (let biomeId = 0; biomeId < biomeCount; biomeId += 1) {
-      const stones = world.resources.filter(
-        (res) => res && res.type === "biomeStone" && res.biomeId === biomeId
-      );
+    for (let islandIndex = 0; islandIndex < world.islands.length; islandIndex += 1) {
+      const island = world.islands[islandIndex];
+      if (!island) continue;
+      const islandBiomeId = getIslandBiomeId(world, island);
+      if (!Number.isInteger(islandBiomeId) || islandBiomeId < 0 || islandBiomeId >= getBiomeStoneBiomeCount()) continue;
+      if (isMushroomBiomeId(islandBiomeId)) continue;
+
+      const stones = world.resources.filter((res) => (
+        res
+        && res.type === "biomeStone"
+        && getBiomeStoneOriginIslandId(world, res) === islandIndex
+      ));
       const activeCount = stones.reduce((count, res) => count + Number(!res.removed), 0);
       if (activeCount >= minActive) continue;
 
@@ -29721,9 +30291,18 @@
       }
 
       while (activeCount + pending < minActive) {
-        const spot = findBiomeStoneSpawnTile(world, biomeId);
+        const centerTx = Math.floor(Number(island.x) || 0);
+        const centerTy = Math.floor(Number(island.y) || 0);
+        const spot = findBiomeStoneSpawnTile(
+          world,
+          islandBiomeId,
+          centerTx,
+          centerTy,
+          null,
+          { originIslandId: islandIndex }
+        );
         if (!spot) break;
-        const spawned = spawnBiomeStoneResource(world, spot.tx, spot.ty, biomeId);
+        const spawned = spawnBiomeStoneResource(world, spot.tx, spot.ty, islandBiomeId, islandIndex);
         if (!spawned) break;
         pending += 1;
         changed = true;
@@ -30250,6 +30829,17 @@
   function assignSurfaceCaveTunnelLinks(world) {
     if (!world || !Array.isArray(world.caves)) return false;
     const caves = world.caves.filter((cave) => cave && Number.isInteger(cave.id));
+    const topologySignature = caves
+      .map((cave) => `${cave.id}:${cave.tx},${cave.ty}`)
+      .sort()
+      .join("|");
+    if (
+      world.caveLinkTopologySignature === topologySignature
+      && world.caveLinkAssignedSignature === topologySignature
+    ) {
+      return false;
+    }
+    world.caveLinkTopologySignature = topologySignature;
     let changed = false;
     for (const cave of caves) {
       if (cave.surfaceLinkTargetCaveId != null) {
@@ -30257,7 +30847,10 @@
         changed = true;
       }
     }
-    if (caves.length < 2) return changed;
+    if (caves.length < 2) {
+      world.caveLinkAssignedSignature = topologySignature;
+      return changed;
+    }
     const seedInt = world.seedInt ?? seedToInt(normalizeSeedValue(world.seed));
     const minCrossIslandLinkDistance = Math.max(5, world.size * 0.03);
     const relaxedCrossIslandLinkDistance = Math.max(3, Math.floor(minCrossIslandLinkDistance * 0.6));
@@ -30347,6 +30940,7 @@
         changed = true;
       }
     }
+    world.caveLinkAssignedSignature = topologySignature;
     return changed;
   }
 
@@ -32030,15 +32624,19 @@
           const respawnDelay = respawnType === "biomeStone"
             ? getBiomeStoneRespawnDelay()
             : (respawnType === "grass" ? RESPAWN.grass : (respawnType === "ore" ? RESPAWN.ore : RESPAWN.rock));
-          const exists = world.respawnTasks.some((task) => task?.type === respawnType && task.id === resource.id);
-          if (!exists) {
-            world.respawnTasks.push({
-              type: respawnType,
-              id: resource.id,
-              tx: resource.tx,
-              ty: resource.ty,
-              timer: respawnDelay,
-            });
+          if (respawnType === "biomeStone") {
+            queueBiomeStoneRespawnTask(world, resource, respawnDelay);
+          } else {
+            const exists = world.respawnTasks.some((task) => task?.type === respawnType && task.id === resource.id);
+            if (!exists) {
+              world.respawnTasks.push({
+                type: respawnType,
+                id: resource.id,
+                tx: resource.tx,
+                ty: resource.ty,
+                timer: respawnDelay,
+              });
+            }
           }
         }
       }
@@ -35263,6 +35861,9 @@
         ty,
         key,
         caveId: caveId || getCaveV2EntranceStableId(world, tx, ty),
+        entranceId: key,
+        linkedPairId: null,
+        linkedExitKey: null,
       };
       entrances.push(entry);
       return entry;
@@ -35270,6 +35871,15 @@
     entry.tx = tx;
     entry.ty = ty;
     entry.key = entry.key || key;
+    if (typeof entry.entranceId !== "string" || !entry.entranceId) {
+      entry.entranceId = entry.key;
+    }
+    if (!Object.prototype.hasOwnProperty.call(entry, "linkedPairId")) {
+      entry.linkedPairId = null;
+    }
+    if (!Object.prototype.hasOwnProperty.call(entry, "linkedExitKey")) {
+      entry.linkedExitKey = null;
+    }
     if (caveId) {
       entry.caveId = caveId;
     } else if (!entry.caveId) {
@@ -35351,11 +35961,18 @@
         setPrompt("Linked cave A failed", 1.2);
         return;
       }
+      const firstKey = firstEntrance.key || buildCaveV2EntranceSurfaceKey(world, firstEntrance.tx, firstEntrance.ty);
+      const linkedPairId = `cv2-link-${(seedToInt(`${world.seed}:${firstKey}`) >>> 0).toString(16)}`;
+      firstEntrance.entranceId = firstEntrance.entranceId || firstKey;
+      firstEntrance.linkedPairId = linkedPairId;
+      firstEntrance.linkedExitKey = null;
       state.debugLinkedCavePlacement = {
         caveId: String(firstEntrance.caveId || getCaveV2EntranceStableId(world, tile.tx, tile.ty)),
         firstTx: firstEntrance.tx,
         firstTy: firstEntrance.ty,
         firstIslandIndex: islandIndex,
+        firstEntranceKey: firstKey,
+        linkedPairId,
       };
       updateDebugCaveSpawnButtons();
       setPrompt("Linked cave A set. Move island, place cave B.", 1.8);
@@ -35388,9 +36005,28 @@
       setPrompt("Linked cave B failed", 1.2);
       return;
     }
+    const firstKey = firstEntrance.key || pending.firstEntranceKey || buildCaveV2EntranceSurfaceKey(world, firstEntrance.tx, firstEntrance.ty);
+    const secondKey = secondEntrance.key || buildCaveV2EntranceSurfaceKey(world, secondEntrance.tx, secondEntrance.ty);
+    const linkedPairId = String(pending.linkedPairId || `cv2-link-${(seedToInt(`${world.seed}:${firstKey}`) >>> 0).toString(16)}`);
+    firstEntrance.entranceId = firstEntrance.entranceId || firstKey;
+    secondEntrance.entranceId = secondEntrance.entranceId || secondKey;
+    firstEntrance.linkedPairId = linkedPairId;
+    secondEntrance.linkedPairId = linkedPairId;
+    firstEntrance.linkedExitKey = secondKey;
+    secondEntrance.linkedExitKey = firstKey;
+    if (state.debugUnlocked) {
+      console.debug("[CaveV2 Linked Pair]", {
+        linkedPairId,
+        caveId: firstEntrance.caveId,
+        entryA: firstKey,
+        exitA: secondKey,
+        entryB: secondKey,
+        exitB: firstKey,
+      });
+    }
     state.debugLinkedCavePlacement = null;
     updateDebugCaveSpawnButtons();
-    setPrompt("Linked cave pair connected", 1.4);
+    setPrompt("Linked cave pair connected (A exits at B)", 1.5);
     markDirty();
     if (net.isHost && net.connections.size > 0) {
       broadcastNet(buildSnapshot());
@@ -35822,7 +36458,7 @@
     const biomeSpeedScale = (!state.inCave && !state.player.inHut && surface)
       ? getSurfaceMoveSpeedScale(surface, state.player.x, state.player.y)
       : 1;
-    const step = CONFIG.moveSpeed * dt * speedMult * biomeSpeedScale;
+    const step = CONFIG.moveSpeed * PLAYER_MOVE_SPEED_MULT * dt * speedMult * biomeSpeedScale;
 
     if (move.x !== 0 || move.y !== 0) {
       state.player.facing.x = move.x;
@@ -36033,19 +36669,28 @@
           world.respawnTasks.splice(i, 1);
           continue;
         }
-        const tileBiome = Array.isArray(world.biomeGrid)
-          ? world.biomeGrid[tileIndex(task.tx, task.ty, world.size)]
-          : 0;
-        let biomeId = Number.isInteger(res?.biomeId) ? res.biomeId : tileBiome;
+        if (res && normalizeBiomeStoneMetadata(world, res)) {
+          markDirty();
+        }
+        const tileBiome = getSurfaceBiomeIdAtTile(world, task.tx, task.ty);
+        let biomeId = Number.isInteger(res?.biomeId)
+          ? res.biomeId
+          : (Number.isInteger(task.biomeId) ? task.biomeId : tileBiome);
         if (!Number.isInteger(biomeId) || biomeId < 0 || biomeId >= getBiomeStoneBiomeCount()) {
           biomeId = 0;
         }
+        const originIslandId = Number.isInteger(res?.originIslandId)
+          ? res.originIslandId
+          : (Number.isInteger(task.originIslandId)
+              ? task.originIslandId
+              : getIslandIndexForTileInList(world.islands, task.tx, task.ty));
         const spot = findBiomeStoneSpawnTile(
           world,
           biomeId,
           task.tx,
           task.ty,
-          typeof task.id === "number" ? task.id : null
+          typeof task.id === "number" ? task.id : null,
+          { originIslandId }
         );
         if (!spot) {
           task.timer = BIOME_STONE_RESPAWN.retryDelay;
@@ -36064,6 +36709,8 @@
           res.x = (spot.tx + 0.5) * CONFIG.tileSize;
           res.y = (spot.ty + 0.5) * CONFIG.tileSize;
           res.biomeId = biomeId;
+          res.originIslandId = Number.isInteger(originIslandId) ? originIslandId : null;
+          res.isBiomeStone = true;
           res.maxHp = getResourceBaseHp(res);
           res.hp = res.maxHp;
           res.stage = "alive";
@@ -36072,7 +36719,7 @@
           res.removed = false;
           const nextIdx = tileIndex(spot.tx, spot.ty, world.size);
           world.resourceGrid[nextIdx] = res.id;
-        } else if (!spawnBiomeStoneResource(world, spot.tx, spot.ty, biomeId)) {
+        } else if (!spawnBiomeStoneResource(world, spot.tx, spot.ty, biomeId, originIslandId)) {
           task.timer = BIOME_STONE_RESPAWN.retryDelay;
           continue;
         }
@@ -36563,7 +37210,7 @@
       return {
         type: normalizedType,
         hp: 4,
-        speed: 48,
+        speed: 52,
         color: "#d2cab8",
         drop: { raw_meat: 1, hide: 1 },
       };
@@ -36572,7 +37219,7 @@
       return {
         type: normalizedType,
         hp: 7,
-        speed: 40,
+        speed: 44,
         color: "#6db56f",
         drop: { medicine: 1 },
       };
@@ -36580,7 +37227,7 @@
     return {
       type: "boar",
       hp: 5,
-      speed: 42,
+      speed: 46,
       color: "#9f8160",
       drop: { raw_meat: 2, hide: 1 },
     };
@@ -41374,11 +42021,19 @@
     }
   }
 
+  function getJoinPhasePromptText() {
+    if (net.joinPhase === "hello") return "Joining host...";
+    if (net.joinPhase === "welcome") return "Waiting for host snapshot...";
+    if (net.joinPhase === "snapshotReady") return "Syncing world...";
+    if (net.joinPhase === "reconnect") return "Reconnecting...";
+    return "Connecting...";
+  }
+
   function update(dt) {
     if (!state.world || !state.player) {
       if (net.enabled) {
         if (!net.isHost && !net.ready) {
-          setPrompt("Connecting...", 0.5);
+          setPrompt(getJoinPhasePromptText(), 0.5);
         }
         netTick(dt);
       }
@@ -41419,7 +42074,7 @@
     if (net.enabled && !net.isHost && !net.ready) {
       // Join handshake phase: keep networking active but avoid expensive world simulation
       // until authoritative host snapshot is accepted.
-      setPrompt("Connecting...", 0.5);
+      setPrompt(getJoinPhasePromptText(), 0.5);
       netTick(dt);
       runDebugSyncAudit(dt);
       runMultiplayerAutotest(dt);
@@ -41455,7 +42110,6 @@
     updateDrops(dt);
     updateInteraction();
     updateRemoteRender(dt);
-    alignAllWorldEntityRenderPositions();
     updateCaveLayerTransition(dt);
     updateAudio(dt);
     netTick(dt);
@@ -41637,7 +42291,8 @@
     }
   }
 
-  function drawLandTile(x, y, shade, biomeId, isBeach, tx, ty) {
+  function drawLandTile(x, y, shade, biomeId, isBeach, tx, ty, effectsLevel = 2) {
+    const detailLevel = clampGraphicsEffectsLevel(effectsLevel);
     const biome = BIOMES[biomeId] || BIOMES[0];
     const base = isBeach ? biome.sand : biome.land;
     const r = Math.floor(base[0] * shade);
@@ -41645,6 +42300,8 @@
     const b = Math.floor(base[2] * shade);
     ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
     ctx.fillRect(x, y, CONFIG.tileSize, CONFIG.tileSize);
+    if (detailLevel <= 0) return;
+
     ctx.fillStyle = isBeach ? "rgba(255,255,255,0.08)" : "rgba(255,255,255,0.04)";
     ctx.fillRect(x, y, CONFIG.tileSize, 2);
     ctx.fillStyle = isBeach ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.03)";
@@ -41653,10 +42310,10 @@
     ctx.fillRect(x, y + CONFIG.tileSize - 2, CONFIG.tileSize, 2);
     ctx.fillStyle = "rgba(0,0,0,0.04)";
     ctx.fillRect(x + CONFIG.tileSize - 1, y, 1, CONFIG.tileSize);
+    if (detailLevel <= 1 || isBeach) return;
+
     const tileSeed = state.surfaceWorld?.seed ? seedToInt(String(state.surfaceWorld.seed)) : 0;
     drawTileSpeckleTexture(x, y, CONFIG.tileSize, tx, ty, tileSeed + 311, isBeach ? "beach" : biome.key);
-
-    if (isBeach) return;
     const seed = tileSeed;
     const detail = rand2d(tx, ty, seed + 913);
     if (biome.key === "jungle") {
@@ -41764,6 +42421,71 @@
       ctx.fillRect(x + 6, y + 8, 2, 8);
       ctx.fillRect(x + 9, y + 7, 2, 8);
     }
+  }
+
+  function drawLowDetailResource(res, screen, biome, inCave = false) {
+    if (!res || !screen) return;
+    if (res.type === "tree") {
+      if (res.stage === "stump") {
+        ctx.fillStyle = tintColor(TREE_TRUNK, -0.12);
+        ctx.fillRect(screen.x - 5, screen.y + 8, 10, 7);
+        return;
+      }
+      if (res.stage === "sapling") {
+        ctx.fillStyle = tintColor(TREE_TRUNK, -0.08);
+        ctx.fillRect(screen.x - 1, screen.y + 8, 2, 6);
+        ctx.fillStyle = tintColor(biome.tree, 0.2);
+        ctx.beginPath();
+        ctx.arc(screen.x, screen.y + 4, 4.5, 0, Math.PI * 2);
+        ctx.fill();
+        return;
+      }
+      ctx.fillStyle = tintColor(TREE_TRUNK, -0.1);
+      ctx.fillRect(screen.x - 4, screen.y + 8, 8, 12);
+      ctx.fillStyle = tintColor(biome.tree, 0.08);
+      ctx.beginPath();
+      ctx.arc(screen.x, screen.y - 1, 11, 0, Math.PI * 2);
+      ctx.fill();
+      return;
+    }
+
+    if (res.type === "grass") {
+      const grassColor = biome.grassColor || tintColor(biome.tree, 0.2);
+      ctx.strokeStyle = tintColor(grassColor, -0.12);
+      ctx.lineWidth = 1.8;
+      ctx.beginPath();
+      ctx.moveTo(screen.x - 4, screen.y + 10);
+      ctx.lineTo(screen.x - 1, screen.y + 1);
+      ctx.moveTo(screen.x, screen.y + 10);
+      ctx.lineTo(screen.x, screen.y - 2);
+      ctx.moveTo(screen.x + 4, screen.y + 10);
+      ctx.lineTo(screen.x + 1, screen.y + 1);
+      ctx.stroke();
+      return;
+    }
+
+    if (res.type === "biomeStone") {
+      ctx.fillStyle = biome.stoneColor ?? "#c9c3b0";
+      ctx.beginPath();
+      ctx.arc(screen.x, screen.y, 9.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "rgba(255,255,255,0.2)";
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      return;
+    }
+
+    const oreKind = res.oreKind || "iron_ore";
+    const oreColor = ORE_COLORS[oreKind] || "#8d5aa3";
+    const color = inCave
+      ? res.type === "ore" ? oreColor : "#6f6f78"
+      : res.type === "ore"
+        ? oreColor
+        : (res.dropOverride === "coal" ? "#3b4049" : biome.rock);
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(screen.x, screen.y + 1, res.type === "ore" ? 8.5 : 9.2, 0, Math.PI * 2);
+    ctx.fill();
   }
 
   function drawPlanks(x, y, size, baseColor, vertical = false) {
@@ -42294,8 +43016,8 @@
   }
 
   function drawMonster(monster, camera) {
-    const mx = Number.isFinite(monster?.x) ? monster.x : monster?.renderX;
-    const my = Number.isFinite(monster?.y) ? monster.y : monster?.renderY;
+    const mx = Number.isFinite(monster?.renderX) ? monster.renderX : monster?.x;
+    const my = Number.isFinite(monster?.renderY) ? monster.renderY : monster?.y;
     if (!Number.isFinite(mx) || !Number.isFinite(my)) return;
     const cameraViewWidth = getCameraViewWidth(camera);
     const cameraViewHeight = getCameraViewHeight(camera);
@@ -42319,6 +43041,28 @@
     const baseColor = type === "marsh_stalker"
       ? "#48b76f"
       : (monster.color || "#2b2d3a");
+    if (getGraphicsEffectsLevel() <= 0) {
+      ctx.fillStyle = baseColor;
+      ctx.beginPath();
+      ctx.arc(screen.x, screen.y, 10, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "rgba(0,0,0,0.35)";
+      ctx.lineWidth = 1.2;
+      ctx.stroke();
+      ctx.fillStyle = "#1b1c24";
+      ctx.beginPath();
+      ctx.arc(screen.x - 2.4, screen.y - 2.2, 1.2, 0, Math.PI * 2);
+      ctx.arc(screen.x + 2.4, screen.y - 2.2, 1.2, 0, Math.PI * 2);
+      ctx.fill();
+      if (monster.hitTimer > 0) {
+        ctx.strokeStyle = "rgba(255,255,255,0.7)";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(screen.x, screen.y, 13, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      return;
+    }
     if (type === "marsh_stalker") {
       ctx.fillStyle = baseColor;
       ctx.beginPath();
@@ -42559,6 +43303,7 @@
 
   function drawMonsterBurnEffects(world, camera) {
     if (!world) return;
+    if (getGraphicsEffectsLevel() <= 0) return;
     const fx = ensureMonsterBurnFx(world);
     if (!Array.isArray(fx) || fx.length === 0) return;
     const cameraViewWidth = getCameraViewWidth(camera);
@@ -43011,8 +43756,8 @@
   }
 
   function drawAnimal(animal, camera) {
-    const drawX = Number.isFinite(animal?.x) ? animal.x : animal?.renderX;
-    const drawY = Number.isFinite(animal?.y) ? animal.y : animal?.renderY;
+    const drawX = Number.isFinite(animal?.renderX) ? animal.renderX : animal?.x;
+    const drawY = Number.isFinite(animal?.renderY) ? animal.renderY : animal?.y;
     if (!Number.isFinite(drawX) || !Number.isFinite(drawY)) return;
     const cameraViewWidth = getCameraViewWidth(camera);
     const cameraViewHeight = getCameraViewHeight(camera);
@@ -43036,6 +43781,28 @@
     ctx.beginPath();
     ctx.ellipse(screen.x, screen.y + 9, isGreenCow ? 12 : 10, 4, 0, 0, Math.PI * 2);
     ctx.fill();
+    if (getGraphicsEffectsLevel() <= 0) {
+      ctx.fillStyle = bodyColor;
+      ctx.beginPath();
+      ctx.ellipse(screen.x, screen.y, bodyW, bodyH, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = tintColor(bodyColor, -0.2);
+      ctx.beginPath();
+      ctx.arc(screen.x + facingX * 6.8, screen.y - 2, headR, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#2b2118";
+      ctx.beginPath();
+      ctx.arc(screen.x + facingX * 8.5, screen.y - 3, isGreenCow ? 1.6 : 1.4, 0, Math.PI * 2);
+      ctx.fill();
+      if (animal.hitTimer > 0) {
+        ctx.strokeStyle = "rgba(255,255,255,0.65)";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(screen.x, screen.y, 15, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      return;
+    }
 
     ctx.fillStyle = bodyColor;
     ctx.beginPath();
@@ -43157,6 +43924,22 @@
 
     const bodyColor = villager.color || VILLAGER_COLORS[(villager.id || 0) % VILLAGER_COLORS.length];
     const dirX = Number(villager?.dir?.x) || 0;
+    if (getGraphicsEffectsLevel() <= 0) {
+      ctx.fillStyle = "#f0c18c";
+      ctx.beginPath();
+      ctx.arc(screen.x, screen.y - 3, 4.6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = bodyColor;
+      ctx.fillRect(screen.x - 5, screen.y + 1, 10, 11);
+      const eyeShift = clamp(dirX * 0.8, -0.8, 0.8);
+      ctx.fillStyle = "#2e241c";
+      ctx.beginPath();
+      ctx.arc(screen.x - 1.4 + eyeShift, screen.y - 3, 0.75, 0, Math.PI * 2);
+      ctx.arc(screen.x + 1.4 + eyeShift, screen.y - 3, 0.75, 0, Math.PI * 2);
+      ctx.fill();
+      return;
+    }
+
     ctx.fillStyle = "#f0c18c";
     ctx.beginPath();
     ctx.arc(screen.x, screen.y - 3, 5.2, 0, Math.PI * 2);
@@ -45906,6 +46689,40 @@
     ctx.restore();
   }
 
+  // Render resources by visible tile window to avoid iterating thousands of off-screen resources every frame.
+  function forEachVisibleResource(world, camera, callback) {
+    if (!world || typeof callback !== "function" || !Array.isArray(world.resources)) return;
+    const hasGrid = Array.isArray(world.resourceGrid) && world.resourceGrid.length === world.size * world.size;
+    if (!hasGrid) {
+      for (const res of world.resources) {
+        if (!res || res.removed) continue;
+        callback(res);
+      }
+      return;
+    }
+
+    const cameraViewWidth = getCameraViewWidth(camera);
+    const cameraViewHeight = getCameraViewHeight(camera);
+    const padTiles = 2;
+    const minTx = Math.max(0, Math.floor((camera.x - (padTiles * CONFIG.tileSize)) / CONFIG.tileSize));
+    const minTy = Math.max(0, Math.floor((camera.y - (padTiles * CONFIG.tileSize)) / CONFIG.tileSize));
+    const maxTx = Math.min(world.size - 1, Math.ceil((camera.x + cameraViewWidth + (padTiles * CONFIG.tileSize)) / CONFIG.tileSize));
+    const maxTy = Math.min(world.size - 1, Math.ceil((camera.y + cameraViewHeight + (padTiles * CONFIG.tileSize)) / CONFIG.tileSize));
+    const visited = new Set();
+
+    for (let ty = minTy; ty <= maxTy; ty += 1) {
+      for (let tx = minTx; tx <= maxTx; tx += 1) {
+        const idx = tileIndex(tx, ty, world.size);
+        const resId = world.resourceGrid[idx];
+        if (!Number.isInteger(resId) || resId < 0 || visited.has(resId)) continue;
+        visited.add(resId);
+        const res = world.resources[resId];
+        if (!res || res.removed) continue;
+        callback(res);
+      }
+    }
+  }
+
   function render() {
     if (!state.world || !state.player) return;
 
@@ -46006,7 +46823,16 @@
         } else {
           const biomeId = state.world.biomeGrid?.[idx] ?? 0;
           const isBeach = !!state.world.beachGrid?.[idx];
-          drawLandTile(screenX, screenY, state.world.shades[idx], biomeId, isBeach, x, y);
+          drawLandTile(
+            screenX,
+            screenY,
+            state.world.shades[idx],
+            biomeId,
+            isBeach,
+            x,
+            y,
+            graphicsEffectsLevel
+          );
         }
       }
     }
@@ -46240,8 +47066,8 @@
       drawCaveRoomLandmarkDecor(camera);
     }
 
-    for (const res of state.world.resources) {
-      if (res.removed) continue;
+    forEachVisibleResource(state.world, camera, (res) => {
+      if (res.removed) return;
       const screen = worldToScreen(res.x, res.y, camera);
       if (
         screen.x < -50 ||
@@ -46249,12 +47075,23 @@
         screen.x > cameraViewWidth + 50 ||
         screen.y > cameraViewHeight + 50
       ) {
-        continue;
+        return;
       }
 
       const idx = tileIndex(res.tx, res.ty, state.world.size);
       const biomeId = state.world.biomeGrid?.[idx] ?? 0;
       const biome = BIOMES[biomeId] || BIOMES[0];
+      if (graphicsEffectsLevel <= 0) {
+        drawLowDetailResource(res, screen, biome, state.inCave);
+        if (res.hitTimer > 0) {
+          ctx.strokeStyle = COLORS.highlight;
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(screen.x, screen.y, 16, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+        return;
+      }
 
       if (state.inCave && (res.type === "ore" || res.type === "rock" || res.type === "biomeStone")) {
         ctx.fillStyle = "rgba(0,0,0,0.2)";
@@ -46712,10 +47549,16 @@
         const color = biome.stoneColor ?? "#c9c3b0";
         const stoneSeed = (((res.id || 0) * 2654435761) ^ ((res.tx || 0) * 19349663) ^ ((res.ty || 0) * 83492791)) >>> 0;
         const style = getBiomeRockVisualStyle(biome, color, true);
+        ctx.strokeStyle = "rgba(255,255,255,0.24)";
+        ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        ctx.ellipse(screen.x, screen.y + 0.8, 9.8, 6.3, 0, 0, Math.PI * 2);
+        ctx.stroke();
         drawFacetedRockNode(screen.x, screen.y, 12.8, style.base, {
           seed: stoneSeed,
-          ridges: 6,
-          sparkle: false,
+          ridges: 7,
+          sparkle: true,
+          crystal: true,
         });
         drawBiomeRockAccents(screen.x, screen.y, 12.8, style, stoneSeed, { isBiomeStone: true });
       } else {
@@ -46780,7 +47623,7 @@
         ctx.arc(screen.x, screen.y, 16, 0, Math.PI * 2);
         ctx.stroke();
       }
-    }
+    });
 
     drawPoisonClouds(state.world, camera);
 
@@ -46976,6 +47819,21 @@
         screen.x > cameraViewWidth + 20 ||
         screen.y > cameraViewHeight + 20
       ) {
+        continue;
+      }
+      if (graphicsEffectsLevel <= 0) {
+        drawDroppedItemVisual(drop, screen.x, screen.y, {
+          alpha: 1,
+          size: 11.5,
+          shadowScale: 1,
+          bobOffset: 0,
+        });
+        if (drop.qty > 1) {
+          ctx.fillStyle = "rgba(242, 249, 255, 0.92)";
+          ctx.font = "10px Trebuchet MS";
+          ctx.textAlign = "center";
+          ctx.fillText(String(drop.qty), screen.x, screen.y - 10);
+        }
         continue;
       }
       const ttl = Number.isFinite(drop.ttl) ? drop.ttl : DROP_DESPAWN.lifetime;

@@ -218,3 +218,20 @@ Original prompt: Fix CaveV2 so caves use Zelda-style screen-to-screen room trans
 - Menu buttons hard-fix: added document-level click delegate for main menu buttons in index.html so Solo/Host/Join work even if individual listeners fail; cache-buster -> v=20260228-21.
 
 - Menu bridge externalized: added src/menu-bridge.js and moved all start-menu click handling + fallback queue there to avoid CSP inline-script blocking. index.html now loads menu-bridge before main.js and removes inline onclicks. Cache-buster -> main.js?v=20260228-24.
+- Stability/perf/mp pass (2026-03-11): implemented core plan in `/src/main.js`.
+- Biome stones are now generated per-island (non-mushroom islands only), with deterministic island-seeded placement + fallback clearing, and include new internal metadata fields `originIslandId` + `isBiomeStone`.
+- Biome stone regen tuned to long windows (`1200..1800s`) and respawn tasks now carry/restore `biomeId` + `originIslandId` so stones return to their source island region.
+- Replaced `ensureMinimumBiomeStonePerBiome` behavior with per-island enforcement (`ensureMinimumBiomeStonePerIsland`) so each eligible island maintains at least one active/pending biome stone.
+- Load/join performance pass: removed legacy CaveV1 layer generation in `generateWorld` when `CAVES_ENABLED=false` (no `generateCaveWorld` cost on startup/join), and added cave metadata/signature caching in `ensureSurfaceCaves`/`assignSurfaceCaveTunnelLinks` to reduce repeated derived work.
+- Linked CaveV2 debug pair behavior fixed: linked entrances now store pair metadata (`linkedPairId`, `linkedExitKey`), active cave session tracks `linkedPairId`, `entryEntranceId`, `exitEntranceId`, and leaving a linked cave exits at the paired entrance instead of always returning to entry position.
+- Added linked-cave debug telemetry (`[CaveV2 Linked Pair]` and `[CaveV2 Linked Exit]`) to confirm A->B / B->A mapping at runtime.
+- MP autotest crash fix: removed undefined `CRAFTING_RECIPES` dependency; craft-cycle now builds recipe pool from `BUILD_RECIPES`/`UPGRADE_RECIPES` helpers and adds runtime invariant checks so missing craft symbols become warnings instead of runtime crashes.
+- Craft-cycle guard behavior: when no eligible recipe exists it now returns a non-crashing skipped result (`ok=true, skipped=true`) and records warning telemetry instead of hard-failing.
+- Multiplayer join hardening: added explicit net join state fields `joinPhase` + `snapshotAppliedAt` and client-ready gating now requires playable phase with applied snapshot; added host `joinProgress` heartbeat for pending peers and one automatic reconnect attempt for transient join loss/timeout.
+- Added phase-aware join prompts (`Joining host`, `Waiting for host snapshot`, `Syncing world`, `Reconnecting`) to make join progress visible.
+- Visual polish: biome stones now render with stronger premium faceted treatment (extra highlight ring + sparkle/crystal accents) while still using biome-matched palettes.
+- Compatibility note: bumped `WORLD_LAYOUT_VERSION` to `2026-03-layout-v4` because resource generation behavior changed (per-island biome stones).
+- Validation blocker: runtime browser/mp automation remains blocked in this shell (`node`/`npx` missing), so Playwright/develop-web-game runtime loop could not be executed yet.
+- Multiplayer join hydration optimization (2026-03-11 follow-up): `welcome` snapshots now include optional `surfaceStatic` payload (terrain/island static state) and clients build surface world from this payload via `buildSurfaceWorldFromStaticSnapshot` before applying dynamic snapshot state.
+- This avoids forced `generateWorld(seed)` on fresh client join when host provides static snapshot data, reducing join-time CPU spikes while keeping packet names backward-compatible (`surfaceStatic` is optional).
+- Serialization compatibility update: biome stone `resourceStates` now optionally persist `biomeId`, `originIslandId`, and `isBiomeStone`; load path consumes/backfills these fields without breaking older saves/snapshots.
