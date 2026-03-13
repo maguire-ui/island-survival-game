@@ -169,15 +169,15 @@
   const PLAYER_MOVE_SPEED_MULT = 1.12;
 
   const TOUCH_STICK_MAX_DIST = 40;
-  const MOBILE_RENDER_DPR_CAP = 1.0;
-  const DESKTOP_RENDER_DPR_CAP = 1.1;
-  const MOBILE_RENDER_MAX_PIXELS = 760000;
-  const DESKTOP_RENDER_MAX_PIXELS = 1180000;
+  const MOBILE_RENDER_DPR_CAP = 1.18;
+  const DESKTOP_RENDER_DPR_CAP = 1.35;
+  const MOBILE_RENDER_MAX_PIXELS = 1200000;
+  const DESKTOP_RENDER_MAX_PIXELS = 2600000;
   const GRAPHICS_PRESET_CONFIG = Object.freeze({
-    performance: Object.freeze({ renderScale: 0.44, effectsLevel: 0 }),
-    balanced: Object.freeze({ renderScale: 0.56, effectsLevel: 1 }),
-    quality: Object.freeze({ renderScale: 0.64, effectsLevel: 2 }),
-    ultra: Object.freeze({ renderScale: 0.72, effectsLevel: 2 }),
+    performance: Object.freeze({ renderScale: 0.62, effectsLevel: 1 }),
+    balanced: Object.freeze({ renderScale: 0.74, effectsLevel: 2 }),
+    quality: Object.freeze({ renderScale: 0.84, effectsLevel: 2 }),
+    ultra: Object.freeze({ renderScale: 0.94, effectsLevel: 2 }),
   });
   const AUTO_GRAPHICS_BASELINE = Object.freeze({
     preset: "quality",
@@ -2124,13 +2124,17 @@
   const FIXED_SIM_TIMESTEP_SECONDS = 1 / 60;
   const FIXED_SIM_MAX_FRAME_SECONDS = 0.12;
   const AUTO_PERF_GOVERNOR = Object.freeze({
-    lowFpsThreshold: 60,
-    criticalFpsThreshold: 54,
-    criticalGraceSeconds: 0.24,
-    lowFpsGraceSeconds: 0.34,
-    actionCooldownSeconds: 0.72,
-    minRenderScale: 0.42,
-    renderScaleStep: 0.06,
+    lowFpsThreshold: 50,
+    criticalFpsThreshold: 36,
+    criticalGraceSeconds: 1.2,
+    lowFpsGraceSeconds: 2.1,
+    actionCooldownSeconds: 2.4,
+    minRenderScale: 0.68,
+    renderScaleStep: 0.04,
+    recoveryFpsThreshold: 58,
+    recoveryGraceSeconds: 8,
+    recoveryStep: 0.02,
+    warmupSeconds: 8,
   });
   const interpolationState = {
     playerPrevX: null,
@@ -2364,6 +2368,7 @@
     debugBoatPlacePending: false,
     debugLinkedCavePlacement: null,
     debugIslandDrag: null,
+    autoPerfWarmupTimer: 0,
     debugSpeedMultiplier: SETTINGS_DEFAULTS.debugSpeedMultiplier,
     debugWorldSpeedMultiplier: SETTINGS_DEFAULTS.debugWorldSpeedMultiplier,
     debugFovMultiplier: SETTINGS_DEFAULTS.debugFovMultiplier,
@@ -2822,10 +2827,15 @@
 
   function getAdaptiveGraphicsProfileKeyForScale(renderScale = AUTO_GRAPHICS_BASELINE.renderScale) {
     const scale = clampRenderScale(renderScale);
-    if (scale <= 0.5) return "performance";
-    if (scale <= 0.58) return "balanced";
-    if (scale <= 0.68) return "quality";
+    if (scale <= 0.64) return "performance";
+    if (scale <= 0.74) return "balanced";
+    if (scale <= 0.86) return "quality";
     return "ultra";
+  }
+
+  function armAutoPerformanceWarmup(seconds = AUTO_PERF_GOVERNOR.warmupSeconds) {
+    const nextSeconds = Math.max(0, Number(seconds) || 0);
+    state.autoPerfWarmupTimer = Math.max(Number(state.autoPerfWarmupTimer) || 0, nextSeconds);
   }
 
   function applyAdaptiveGraphicsBaseline(options = {}) {
@@ -2841,6 +2851,7 @@
     updateGraphicsSettingsUI();
     if (syncCadence) syncNetworkCadenceTimers();
     if (resize) requestResize();
+    armAutoPerformanceWarmup();
     if (persist) saveUserSettings();
   }
 
@@ -2971,8 +2982,8 @@
 
   function getAdaptiveVisualDetailTier() {
     const scale = clampRenderScale(state?.renderScale ?? AUTO_GRAPHICS_BASELINE.renderScale);
-    if (scale <= 0.5) return 0;
-    if (scale <= 0.58) return 1;
+    if (scale <= 0.64) return 0;
+    if (scale <= 0.74) return 1;
     return 2;
   }
 
@@ -3980,8 +3991,13 @@
         }
       }
       if (cave.linkedPairId) {
+        const linkedRoomId = typeof cave.linkedSurfaceRoomId === "string" ? cave.linkedSurfaceRoomId : null;
         const linkedSurfaceSide = normalizeCaveV2Direction(cave.linkedSurfaceSide);
-        if (!linkedSurfaceSide || linkedSurfaceSide === entrySurfaceSide) {
+        if (!linkedRoomId || !cave.roomsById[linkedRoomId]) {
+          qaPushIssue(issues, `[caveV2:${caveId}] Linked surface room is missing/invalid`);
+        } else if (linkedRoomId === cave.entryRoomId) {
+          qaPushIssue(issues, `[caveV2:${caveId}] Linked surface room collapsed into entry room`);
+        } else if (!linkedSurfaceSide || linkedSurfaceSide === entrySurfaceSide) {
           qaPushIssue(issues, `[caveV2:${caveId}] Linked surface side is missing/invalid`);
         } else {
           const sideMap = buildCaveV2SurfaceExitBySideMap(cave);
@@ -3992,9 +4008,10 @@
           } else if (entryEntranceId === linkedEntranceId) {
             qaPushIssue(issues, `[caveV2:${caveId}] Linked cave maps both exits to same entrance`);
           }
-          if (entryRoom) {
-            const linkedDoor = getCaveV2ExitCenterTile(entryRoom, linkedSurfaceSide);
-            if (!linkedDoor || !isCaveV2FloorTile(entryRoom, linkedDoor.tx, linkedDoor.ty)) {
+          const linkedRoom = cave.roomsById[linkedRoomId];
+          if (linkedRoom) {
+            const linkedDoor = getCaveV2ExitCenterTile(linkedRoom, linkedSurfaceSide);
+            if (!linkedDoor || !isCaveV2FloorTile(linkedRoom, linkedDoor.tx, linkedDoor.ty)) {
               qaPushIssue(issues, `[caveV2:${caveId}] Linked surface doorway ${linkedSurfaceSide} is blocked`);
             }
           }
@@ -14006,7 +14023,7 @@
         net.joinRetryTimer = NET_CONFIG.joinReconnectBase;
         updateMpStatus("MP: Handshake");
       } else if (conn.open) {
-        conn.send({
+        sendConnPayload(conn, {
           type: "joinProgress",
           phase: "awaitHello",
           note: "Host connected. Waiting for hello.",
@@ -14100,10 +14117,65 @@
     });
   }
 
+  function sanitizeNetPayloadValue(value, seen = null, inArray = false) {
+    if (value === undefined) return inArray ? null : undefined;
+    if (value == null) return value;
+    try {
+      const visited = new WeakSet();
+      const json = JSON.stringify(value, (_key, entry) => {
+        if (entry === undefined) return undefined;
+        if (entry == null) return entry;
+        const entryType = typeof entry;
+        if (entryType === "number") return Number.isFinite(entry) ? entry : null;
+        if (entryType === "bigint") return entry.toString();
+        if (entryType === "function" || entryType === "symbol") return undefined;
+        if (entry instanceof Set) return Array.from(entry);
+        if (entry instanceof Map) return Array.from(entry.entries());
+        if (ArrayBuffer.isView(entry)) return Array.from(entry);
+        if (entry instanceof ArrayBuffer) return Array.from(new Uint8Array(entry));
+        if (entryType === "object") {
+          if (visited.has(entry)) return undefined;
+          visited.add(entry);
+        }
+        return entry;
+      });
+      return json == null ? undefined : JSON.parse(json);
+    } catch (err) {
+      console.warn("[net] Payload sanitization fallback", {
+        type: value?.type || "unknown",
+        error: err?.message || String(err),
+      });
+      return undefined;
+    }
+  }
+
+  function sendConnPayload(conn, payload) {
+    if (!conn?.open || payload == null) return false;
+    try {
+      const sanitized = sanitizeNetPayloadValue(payload);
+      if (sanitized === undefined) return false;
+      conn.send(sanitized);
+      return true;
+    } catch (err) {
+      net.lastSendFailure = {
+        type: payload?.type || "unknown",
+        peer: conn?.peer || null,
+        error: err?.message || String(err),
+        at: performance.now ? performance.now() : Date.now(),
+      };
+      console.warn("[net] Recoverable send failure", {
+        type: payload?.type || "unknown",
+        peer: conn?.peer || null,
+        error: err?.message || String(err),
+      });
+      return false;
+    }
+  }
+
   function sendHello() {
     if (!net.hostConn || !net.hostConn.open) return;
     net.joinPhase = "welcome";
-    net.hostConn.send({
+    sendConnPayload(net.hostConn, {
       type: "hello",
       name: net.localName,
       color: net.localColor,
@@ -14114,7 +14186,7 @@
   function sendToHost(payload) {
     if (net.hostConn && net.hostConn.open) {
       qaTrackCaveDisabledNetMessage("send", payload);
-      net.hostConn.send(payload);
+      sendConnPayload(net.hostConn, payload);
     }
   }
 
@@ -14123,7 +14195,7 @@
       if (peerId === exceptId) continue;
       if (conn.open) {
         qaTrackCaveDisabledNetMessage("send", payload);
-        conn.send(payload);
+        sendConnPayload(conn, payload);
       }
     }
   }
@@ -14134,7 +14206,7 @@
       if (!conn?.open) continue;
       if (!net.players.has(peerId)) continue;
       qaTrackCaveDisabledNetMessage("send", payload);
-      conn.send(payload);
+      sendConnPayload(conn, payload);
     }
   }
 
@@ -14143,7 +14215,7 @@
     for (const [peerId, conn] of net.connections.entries()) {
       if (!conn?.open) continue;
       if (net.players.has(peerId)) continue;
-      conn.send({
+      sendConnPayload(conn, {
         type: "joinProgress",
         phase: "awaitHello",
         note: note || "Host ready. Waiting for join handshake.",
@@ -14263,7 +14335,7 @@
         ...player,
         seq: Number.isFinite(player.netSeq) ? Math.max(0, Math.floor(player.netSeq)) : 0,
       };
-      conn.send({
+      sendConnPayload(conn, {
         type: "welcome",
         joinPhase: "snapshotReady",
         playerId: conn.peer,
@@ -15110,6 +15182,7 @@
       isNight: state.isNight,
       gameWon: state.gameWon,
       surfaceStatic: includeStaticWorld ? serializeSurfaceStaticSnapshot(surface) : null,
+      caveV2Entrances: CAVE_V2_ENABLED ? serializeRuntimeCaveV2Entrances(surface) : [],
       world: serializeWorldState(surface),
       caves: (CAVES_ENABLED || CAVE_V2_ENABLED) ? (surface.caves?.map((cave) => {
         const layers = CAVES_ENABLED ? serializeCaveLayers(cave) : [];
@@ -15963,6 +16036,7 @@
     }
     ensurePlayerProgress(state.player);
     ensureSurfaceCaves(world, snapshot.caves);
+    applyRuntimeCaveV2EntrancesFromSnapshot(world, snapshot.caveV2Entrances);
     if (!CAVES_ENABLED) {
       requestCaveDisableRecovery("snapshot-caves-disabled", { windowSeconds: 1.0 });
       runCaveDisableRecoveryTick(0);
@@ -16083,9 +16157,9 @@
 
   function handleResyncRequest(conn) {
     if (!net.isHost || !conn?.open) return;
-    conn.send(buildSnapshot());
+    sendConnPayload(conn, buildSnapshot());
     const motion = buildMotionUpdate();
-    if (motion) conn.send(motion);
+    if (motion) sendConnPayload(conn, motion);
   }
 
   function handleStaticSnapshotRequest(conn, message) {
@@ -16098,10 +16172,10 @@
       sendWelcome: true,
       broadcastJoin: true,
     });
-    conn.send(buildSnapshot({ includeStaticWorld: true }));
+    sendConnPayload(conn, buildSnapshot({ includeStaticWorld: true }));
     const motion = buildMotionUpdate();
-    if (motion) conn.send(motion);
-    conn.send({
+    if (motion) sendConnPayload(conn, motion);
+    sendConnPayload(conn, {
       type: "joinProgress",
       phase: "snapshotReady",
       note: "Authoritative world snapshot sent.",
@@ -16427,7 +16501,7 @@
     // Echo authoritative player state back to sender as well so the client can
     // reconcile immediately (prevents optimistic drift and hash mismatches).
     if (conn?.open) {
-      conn.send(authoritativeUpdate);
+      sendConnPayload(conn, authoritativeUpdate);
     }
     broadcastNet(authoritativeUpdate, conn.peer);
   }
@@ -16570,7 +16644,7 @@
   function handlePlaceRequest(conn, message) {
     const sendFailure = () => {
       if (conn?.open) {
-        conn.send({
+        sendConnPayload(conn, {
           type: "placeResult",
           requestId: message?.requestId,
           ok: false,
@@ -16625,7 +16699,7 @@
       markDirty();
     }
     if (conn?.open) {
-      conn.send({
+      sendConnPayload(conn, {
         type: "placeResult",
         requestId: message.requestId,
         ok: result.ok,
@@ -16652,7 +16726,7 @@
   function handleHousePlaceRequest(conn, message) {
     const sendFailure = () => {
       if (conn?.open) {
-        conn.send({
+        sendConnPayload(conn, {
           type: "housePlaceResult",
           requestId: message?.requestId,
           ok: false,
@@ -16687,7 +16761,7 @@
       return;
     }
     if (conn?.open) {
-      conn.send({
+      sendConnPayload(conn, {
         type: "housePlaceResult",
         requestId: message.requestId,
         ok,
@@ -16710,7 +16784,7 @@
   function handleHouseMoveRequest(conn, message) {
     const sendResult = (ok) => {
       if (conn?.open) {
-        conn.send({
+        sendConnPayload(conn, {
           type: "houseMoveResult",
           requestId: message?.requestId,
           ok: !!ok,
@@ -17186,7 +17260,7 @@
     const requestRevision = normalizeStorageRevisionValue(message.revision);
     if (requestRevision !== expectedRevision) {
       if (conn.open) {
-        conn.send({
+        sendConnPayload(conn, {
           type: "chestUpdate",
           authoritative: true,
           tx: structure.tx,
@@ -17320,7 +17394,7 @@
       ok: !!ok,
     };
     if (!ok && reason) payload.reason = reason;
-    conn.send(payload);
+    sendConnPayload(conn, payload);
   }
 
   function getDebugBoatPlaceReceipt(requestId) {
@@ -17435,7 +17509,7 @@
     if (action === "repair") {
       if (ship.repaired) {
         if (conn.open) {
-          conn.send({
+          sendConnPayload(conn, {
             type: "shipRepairCommit",
             ok: false,
             tx: structure.tx,
@@ -17452,7 +17526,7 @@
       const motion = buildMotionUpdate();
       if (motion) broadcastNet(motion);
       if (conn.open) {
-        conn.send({
+        sendConnPayload(conn, {
           type: "shipRepairCommit",
           ok: true,
           tx: structure.tx,
@@ -17509,7 +17583,7 @@
     const requestRevision = normalizeStorageRevisionValue(message.revision);
     if (requestRevision !== expectedRevision) {
       if (conn.open) {
-        conn.send({
+        sendConnPayload(conn, {
           type: "houseChestUpdate",
           authoritative: true,
           houseTx: house.tx,
@@ -17548,7 +17622,7 @@
 
   function sendBreakStructureResult(conn, requestId, ok, snapshot = null) {
     if (!conn?.open) return;
-    conn.send({
+    sendConnPayload(conn, {
       type: "breakStructureResult",
       requestId,
       ok: !!ok,
@@ -17666,7 +17740,7 @@
       if (player) {
         player.inHut = !!player.inHut;
         if (conn.open) {
-          conn.send({
+          sendConnPayload(conn, {
             type: "damage",
             hp: player.hp,
             maxHp: player.maxHp,
@@ -19193,6 +19267,56 @@
     const entrances = ensureCaveV2RuntimeEntrances(world);
     applyCaveV2RuntimeEntranceLinksFromSurfaceCaves(world, entrances);
     return entrances;
+  }
+
+  function serializeRuntimeCaveV2Entrances(world) {
+    const entrances = getRuntimeCaveV2Entrances(world);
+    if (!Array.isArray(entrances) || entrances.length <= 0) return [];
+    return entrances.map((entry) => ({
+      tx: Number.isInteger(entry?.tx) ? entry.tx : null,
+      ty: Number.isInteger(entry?.ty) ? entry.ty : null,
+      key: typeof entry?.key === "string" && entry.key.length > 0 ? entry.key : null,
+      caveId: typeof entry?.caveId === "string" && entry.caveId.length > 0 ? entry.caveId : null,
+      entranceId: typeof entry?.entranceId === "string" && entry.entranceId.length > 0 ? entry.entranceId : null,
+      linkedPairId: typeof entry?.linkedPairId === "string" && entry.linkedPairId.length > 0 ? entry.linkedPairId : null,
+      linkedExitKey: typeof entry?.linkedExitKey === "string" && entry.linkedExitKey.length > 0 ? entry.linkedExitKey : null,
+    })).filter((entry) => Number.isInteger(entry.tx) && Number.isInteger(entry.ty));
+  }
+
+  function applyRuntimeCaveV2EntrancesFromSnapshot(world, serializedEntrances) {
+    if (!world || typeof world !== "object") return;
+    if (!Array.isArray(serializedEntrances)) {
+      applyCaveV2RuntimeEntranceLinksFromSurfaceCaves(world, getRuntimeCaveV2Entrances(world));
+      return;
+    }
+    const nextEntrances = [];
+    for (const raw of serializedEntrances) {
+      if (!raw || !Number.isInteger(raw.tx) || !Number.isInteger(raw.ty)) continue;
+      const tx = clamp(raw.tx, 0, Math.max(0, world.size - 1));
+      const ty = clamp(raw.ty, 0, Math.max(0, world.size - 1));
+      const key = typeof raw.key === "string" && raw.key.length > 0
+        ? raw.key
+        : buildCaveV2EntranceSurfaceKey(world, tx, ty);
+      nextEntrances.push({
+        tx,
+        ty,
+        key,
+        caveId: typeof raw.caveId === "string" && raw.caveId.length > 0
+          ? raw.caveId
+          : getCaveV2EntranceStableId(world, tx, ty),
+        entranceId: typeof raw.entranceId === "string" && raw.entranceId.length > 0
+          ? raw.entranceId
+          : key,
+        linkedPairId: typeof raw.linkedPairId === "string" && raw.linkedPairId.length > 0
+          ? raw.linkedPairId
+          : null,
+        linkedExitKey: typeof raw.linkedExitKey === "string" && raw.linkedExitKey.length > 0
+          ? raw.linkedExitKey
+          : null,
+      });
+    }
+    world.runtimeCaveV2Entrances = nextEntrances;
+    applyCaveV2RuntimeEntranceLinksFromSurfaceCaves(world, world.runtimeCaveV2Entrances);
   }
 
   function getCaveV2EntranceRuntimeId(world, entrance) {
@@ -20775,16 +20899,105 @@
     return pool[seed % pool.length] || null;
   }
 
-  function getCaveV2EntryRoomSurfaceExitSides(cave, room = null) {
+  function buildCaveV2RoomDistanceMap(cave) {
+    if (!cave?.roomsById || !cave.entryRoomId || !cave.roomsById[cave.entryRoomId]) {
+      return Object.create(null);
+    }
+    const distance = Object.create(null);
+    const queue = [cave.entryRoomId];
+    distance[cave.entryRoomId] = 0;
+    for (let i = 0; i < queue.length; i += 1) {
+      const roomId = queue[i];
+      const room = cave.roomsById[roomId];
+      if (!room) continue;
+      for (const side of ["N", "S", "E", "W"]) {
+        const nextId = room.exits?.[side];
+        if (!nextId || distance[nextId] != null) continue;
+        distance[nextId] = distance[roomId] + 1;
+        queue.push(nextId);
+      }
+    }
+    return distance;
+  }
+
+  function chooseCaveV2LinkedSurfaceRoomId(cave) {
+    if (!cave?.roomsById || !cave.entryRoomId) return null;
+    const distance = buildCaveV2RoomDistanceMap(cave);
+    const candidates = Object.keys(cave.roomsById)
+      .filter((roomId) => roomId !== cave.entryRoomId && Number.isFinite(distance[roomId]));
+    if (candidates.length <= 0) return cave.entryRoomId;
+    const scored = candidates.map((roomId) => {
+      const room = cave.roomsById[roomId];
+      const exitCount = ["N", "S", "E", "W"].reduce((count, side) => count + (room?.exits?.[side] ? 1 : 0), 0);
+      const missingCount = 4 - exitCount;
+      return {
+        roomId,
+        depth: Math.max(0, Math.floor(Number(distance[roomId]) || 0)),
+        deadEnd: exitCount <= 1 ? 1 : 0,
+        missingCount,
+        tie: seedToInt(`${cave.caveId}:${cave.linkedPairId || "linked"}:${roomId}`) >>> 0,
+      };
+    }).sort((a, b) => (
+      b.depth - a.depth
+      || b.deadEnd - a.deadEnd
+      || b.missingCount - a.missingCount
+      || a.tie - b.tie
+      || a.roomId.localeCompare(b.roomId)
+    ));
+    const deepCandidate = scored.find((entry) => entry.depth >= 2);
+    return (deepCandidate || scored[0] || null)?.roomId || cave.entryRoomId;
+  }
+
+  function chooseCaveV2LinkedExitSideForRoom(room, avoidSide = null, pairId = "", caveId = "") {
+    if (!room) return null;
+    const normalizedAvoid = normalizeCaveV2Direction(avoidSide);
+    const missing = ["N", "S", "E", "W"].filter((side) => !room.exits?.[side]);
+    const preferredMissing = missing.filter((side) => side !== normalizedAvoid);
+    const preferredAny = ["N", "S", "E", "W"].filter((side) => side !== normalizedAvoid);
+    const pool = preferredMissing.length > 0
+      ? preferredMissing
+      : (preferredAny.length > 0 ? preferredAny : (missing.length > 0 ? missing : ["N", "S", "E", "W"]));
+    const seed = seedToInt(`${pairId || "pair"}:${caveId || "cave"}:${room.roomId || "room"}:linked-surface-side`) >>> 0;
+    return pool[seed % pool.length] || null;
+  }
+
+  function getCaveV2SurfaceExitBindingsForRoom(cave, roomOrRoomId = null, active = null) {
     if (!cave) return [];
-    const targetRoomId = room?.roomId || cave.entryRoomId;
-    if (targetRoomId !== cave.entryRoomId) return [];
-    const sides = [];
-    const entrySide = normalizeCaveV2Direction(cave.entrySurfaceSide) || "S";
-    if (entrySide) sides.push(entrySide);
-    const linkedSide = normalizeCaveV2Direction(cave.linkedSurfaceSide);
-    if (linkedSide && linkedSide !== entrySide) sides.push(linkedSide);
-    return sides;
+    const targetRoomId = typeof roomOrRoomId === "string"
+      ? roomOrRoomId
+      : (roomOrRoomId?.roomId || active?.roomId || cave.entryRoomId);
+    const bindings = [];
+    const entryRoomId = typeof active?.entryExitRoomId === "string" && active.entryExitRoomId
+      ? active.entryExitRoomId
+      : cave.entryRoomId;
+    const linkedRoomId = typeof active?.linkedExitRoomId === "string" && active.linkedExitRoomId
+      ? active.linkedExitRoomId
+      : (typeof cave.linkedSurfaceRoomId === "string" ? cave.linkedSurfaceRoomId : null);
+    const entrySide = normalizeCaveV2Direction(active?.entryExitSide) || normalizeCaveV2Direction(cave.entrySurfaceSide) || "S";
+    const linkedSide = normalizeCaveV2Direction(active?.linkedExitSide) || normalizeCaveV2Direction(cave.linkedSurfaceSide);
+    const entryEntranceId = typeof active?.entryEntranceId === "string" && active.entryEntranceId.length > 0
+      ? active.entryEntranceId
+      : (typeof cave.surfaceEntranceAId === "string" ? cave.surfaceEntranceAId : null);
+    const linkedEntranceId = typeof active?.exitEntranceId === "string" && active.exitEntranceId.length > 0
+      ? active.exitEntranceId
+      : (typeof cave.surfaceEntranceBId === "string" ? cave.surfaceEntranceBId : null);
+
+    if (targetRoomId === entryRoomId && entrySide) {
+      bindings.push({ side: entrySide, entranceId: entryEntranceId, kind: "entry" });
+    }
+    if (
+      linkedRoomId
+      && targetRoomId === linkedRoomId
+      && linkedSide
+      && !bindings.some((binding) => binding.side === linkedSide && binding.entranceId === linkedEntranceId)
+    ) {
+      bindings.push({ side: linkedSide, entranceId: linkedEntranceId, kind: "linked" });
+    }
+    return bindings;
+  }
+
+  function getCaveV2EntryRoomSurfaceExitSides(cave, room = null, active = null) {
+    return getCaveV2SurfaceExitBindingsForRoom(cave, room, active).map((binding) => binding.side);
   }
 
   function normalizeCaveV2SurfaceExitBySideMap(rawMap) {
@@ -20898,37 +21111,25 @@
     return null;
   }
 
-  function getCaveV2SessionSurfaceExitSides(cave, active = null) {
-    if (!cave) return [];
-    const sideMap = normalizeCaveV2SurfaceExitBySideMap(active?.surfaceExitBySide);
-    if (sideMap) {
-      return ["N", "S", "E", "W"].filter((side) => !!sideMap[side]);
-    }
-    const fromSession = [];
-    const activeEntry = normalizeCaveV2Direction(active?.entryExitSide);
-    const activeLinked = normalizeCaveV2Direction(active?.linkedExitSide);
-    if (activeEntry) fromSession.push(activeEntry);
-    if (activeLinked && activeLinked !== activeEntry) fromSession.push(activeLinked);
-    if (fromSession.length > 0) return fromSession;
-    return getCaveV2EntryRoomSurfaceExitSides(cave);
+  function getCaveV2SessionSurfaceExitSides(cave, active = null, roomId = null) {
+    return getCaveV2SurfaceExitBindingsForRoom(cave, roomId, active).map((binding) => binding.side);
   }
 
-  function getCaveV2PendingExitEntranceIdForSide(active, side) {
+  function getCaveV2PendingExitEntranceIdForSide(active, side, roomId = null) {
     if (!active) return null;
     const normalizedSide = normalizeCaveV2Direction(side);
     if (!normalizedSide) return null;
-    const sideMap = normalizeCaveV2SurfaceExitBySideMap(active.surfaceExitBySide);
-    if (sideMap && typeof sideMap[normalizedSide] === "string") {
-      return sideMap[normalizedSide];
-    }
+    const targetRoomId = typeof roomId === "string" && roomId.length > 0 ? roomId : null;
     const entrySide = normalizeCaveV2Direction(active.entryExitSide);
     const linkedSide = normalizeCaveV2Direction(active.linkedExitSide);
-    if (normalizedSide === entrySide) {
+    const entryRoomId = typeof active.entryExitRoomId === "string" ? active.entryExitRoomId : null;
+    const linkedRoomId = typeof active.linkedExitRoomId === "string" ? active.linkedExitRoomId : null;
+    if (normalizedSide === entrySide && (!targetRoomId || !entryRoomId || targetRoomId === entryRoomId)) {
       return typeof active.entryEntranceId === "string" && active.entryEntranceId.length > 0
         ? active.entryEntranceId
         : null;
     }
-    if (normalizedSide === linkedSide) {
+    if (normalizedSide === linkedSide && (!targetRoomId || !linkedRoomId || targetRoomId === linkedRoomId)) {
       if (typeof active.exitEntranceId === "string" && active.exitEntranceId.length > 0) {
         return active.exitEntranceId;
       }
@@ -20939,15 +21140,26 @@
     return null;
   }
 
-  function getCaveV2SurfaceExitPromptForSide(active, side) {
+  function getCaveV2SurfaceExitPromptForSide(active, side, roomId = null) {
     if (!active) return "Follow the lit passage to exit";
     const normalizedSide = normalizeCaveV2Direction(side);
+    const targetRoomId = typeof roomId === "string" && roomId.length > 0 ? roomId : null;
     const entrySide = normalizeCaveV2Direction(active.entryExitSide);
     const linkedSide = normalizeCaveV2Direction(active.linkedExitSide);
-    if (normalizedSide && normalizedSide === linkedSide) {
+    const entryRoomId = typeof active.entryExitRoomId === "string" ? active.entryExitRoomId : null;
+    const linkedRoomId = typeof active.linkedExitRoomId === "string" ? active.linkedExitRoomId : null;
+    if (
+      normalizedSide
+      && normalizedSide === linkedSide
+      && (!targetRoomId || !linkedRoomId || targetRoomId === linkedRoomId)
+    ) {
       return "Follow the bright passage to linked island";
     }
-    if (normalizedSide && normalizedSide === entrySide) {
+    if (
+      normalizedSide
+      && normalizedSide === entrySide
+      && (!targetRoomId || !entryRoomId || targetRoomId === entryRoomId)
+    ) {
       return "Follow the lit passage to return";
     }
     return "Follow the lit passage to exit";
@@ -20979,6 +21191,20 @@
     let mappedEntrySide = getCaveV2SurfaceExitSideForEntranceId(sideMap, entryId);
     let mappedLinkedSide = getCaveV2SurfaceExitSideForEntranceId(sideMap, linkedId);
     const hasLinkedSession = !!(pairId && entryId && linkedId && entryId !== linkedId);
+    const surfaceEntranceAId = typeof cave?.surfaceEntranceAId === "string" && cave.surfaceEntranceAId.length > 0
+      ? cave.surfaceEntranceAId
+      : null;
+    const surfaceEntranceBId = typeof cave?.surfaceEntranceBId === "string" && cave.surfaceEntranceBId.length > 0
+      ? cave.surfaceEntranceBId
+      : null;
+    const entryRoomId = typeof cave?.entryRoomId === "string" && cave.entryRoomId.length > 0
+      ? cave.entryRoomId
+      : "r0_0";
+    const linkedRoomId = (
+      typeof cave?.linkedSurfaceRoomId === "string"
+      && cave.linkedSurfaceRoomId.length > 0
+      && cave.linkedSurfaceRoomId !== entryRoomId
+    ) ? cave.linkedSurfaceRoomId : null;
     if (hasLinkedSession && entryId && linkedId && entryId !== linkedId) {
       const repairedMap = sideMap && typeof sideMap === "object"
         ? { ...sideMap }
@@ -21008,6 +21234,13 @@
         surfaceExitBySide: sideMap,
       };
     }
+    const entryUsesLinkedRoom = !!(
+      linkedRoomId
+      && entryId
+      && surfaceEntranceBId
+      && entryId === surfaceEntranceBId
+      && entryId !== surfaceEntranceAId
+    );
     const fallbackMappedLinkedSide = sideMap
       ? ["N", "S", "E", "W"].find((side) => (
         side !== (mappedEntrySide || entrySide)
@@ -21016,8 +21249,12 @@
       : null;
     if (!entryA || !entryB) {
       return {
-        entryExitSide: mappedEntrySide || entrySide,
-        linkedExitSide: mappedLinkedSide || fallbackMappedLinkedSide || linkedSide,
+        entryExitSide: mappedEntrySide || (entryUsesLinkedRoom ? linkedSide : entrySide),
+        linkedExitSide: mappedLinkedSide || fallbackMappedLinkedSide || (entryUsesLinkedRoom ? entrySide : linkedSide),
+        entryExitRoomId: entryUsesLinkedRoom && linkedRoomId ? linkedRoomId : entryRoomId,
+        linkedExitRoomId: linkedRoomId
+          ? (entryUsesLinkedRoom ? entryRoomId : linkedRoomId)
+          : null,
         linkedPortalId: pairId,
         surfaceExitBySide: sideMap,
       };
@@ -21026,6 +21263,8 @@
       return {
         entryExitSide: mappedEntrySide || entrySide,
         linkedExitSide: mappedLinkedSide || fallbackMappedLinkedSide || linkedSide,
+        entryExitRoomId: entryRoomId,
+        linkedExitRoomId: linkedRoomId,
         linkedPortalId: pairId,
         surfaceExitBySide: sideMap,
       };
@@ -21034,6 +21273,8 @@
       return {
         entryExitSide: mappedEntrySide || linkedSide,
         linkedExitSide: mappedLinkedSide || fallbackMappedLinkedSide || entrySide,
+        entryExitRoomId: linkedRoomId || entryRoomId,
+        linkedExitRoomId: linkedRoomId ? entryRoomId : null,
         linkedPortalId: pairId,
         surfaceExitBySide: sideMap,
       };
@@ -21044,6 +21285,10 @@
     return {
       entryExitSide: mappedEntrySide || fallbackEntrySide,
       linkedExitSide: mappedLinkedSide || fallbackMappedLinkedSide || fallbackLinkedSide,
+      entryExitRoomId: entryUsesLinkedRoom && linkedRoomId ? linkedRoomId : entryRoomId,
+      linkedExitRoomId: linkedRoomId
+        ? (entryUsesLinkedRoom ? entryRoomId : linkedRoomId)
+        : null,
       linkedPortalId: pairId,
       surfaceExitBySide: sideMap,
     };
@@ -21051,25 +21296,15 @@
 
   function generateCaveV2Rooms(cave) {
     const roomIds = Object.keys(cave.roomsById);
-    const distance = Object.create(null);
-    const queue = [cave.entryRoomId];
-    distance[cave.entryRoomId] = 0;
-    for (let i = 0; i < queue.length; i += 1) {
-      const roomId = queue[i];
-      const room = cave.roomsById[roomId];
-      if (!room) continue;
-      for (const side of ["N", "S", "E", "W"]) {
-        const nextId = room.exits?.[side];
-        if (!nextId || distance[nextId] != null) continue;
-        distance[nextId] = distance[roomId] + 1;
-        queue.push(nextId);
-      }
-    }
+    const distance = buildCaveV2RoomDistanceMap(cave);
     cave.entrySurfaceSide = chooseCaveV2SurfaceExitSideForEntryRoom(cave.roomsById[cave.entryRoomId]);
+    cave.linkedSurfaceRoomId = null;
     cave.linkedSurfaceSide = null;
     if (cave.linkedPairId && cave.linkedEntranceAId && cave.linkedEntranceBId) {
-      cave.linkedSurfaceSide = chooseCaveV2LinkedExitSideForEntryRoom(
-        cave.roomsById[cave.entryRoomId],
+      cave.linkedSurfaceRoomId = chooseCaveV2LinkedSurfaceRoomId(cave);
+      const linkedSurfaceRoom = cave.roomsById[cave.linkedSurfaceRoomId];
+      cave.linkedSurfaceSide = chooseCaveV2LinkedExitSideForRoom(
+        linkedSurfaceRoom,
         cave.entrySurfaceSide,
         cave.linkedPairId,
         cave.caveId
@@ -21079,10 +21314,8 @@
       const room = cave.roomsById[roomId];
       const rng = makeRng(seedToInt(`${cave.caveId}:${roomId}`));
       generateCaveV2RoomTiles(room, rng, cave);
-      if (roomId === cave.entryRoomId) {
-        for (const side of getCaveV2EntryRoomSurfaceExitSides(cave, room)) {
-          carveCaveV2SideCorridor(room, side);
-        }
+      for (const side of getCaveV2EntryRoomSurfaceExitSides(cave, room)) {
+        carveCaveV2SideCorridor(room, side);
       }
       ensureCaveV2RoomPassagesOpen(cave, room);
       populateCaveV2RoomEntities(cave, room, rng, distance[roomId] || 0);
@@ -21107,7 +21340,7 @@
     const linkedEntrances = linkedPairId && linkedExitKey
       ? [entryEntranceId, linkedExitKey].sort((a, b) => a.localeCompare(b))
       : [];
-    const graph = buildCaveV2RoomGraph(`${surfaceWorld?.seed || "island"}|${entrySurfaceKey}`);
+    const graph = buildCaveV2RoomGraph(`${surfaceWorld?.seed || "island"}|${caveId}`);
     const cave = {
       caveId,
       entrySurfaceKey,
@@ -21118,6 +21351,7 @@
       linkedPairId,
       linkedEntranceAId: linkedEntrances[0] || null,
       linkedEntranceBId: linkedEntrances[1] || null,
+      linkedSurfaceRoomId: null,
       linkedSurfaceSide: null,
       roomsById: graph.roomsById,
       entryRoomId: graph.entryRoomId,
@@ -21249,6 +21483,7 @@
         entrySurfaceTx: Math.floor(Number(cave?.entrySurfaceTx) || 0),
         entrySurfaceTy: Math.floor(Number(cave?.entrySurfaceTy) || 0),
         entrySurfaceSide: normalizeCaveV2Direction(cave?.entrySurfaceSide) || "S",
+        linkedSurfaceRoomId: typeof cave?.linkedSurfaceRoomId === "string" ? cave.linkedSurfaceRoomId : null,
         linkedSurfaceSide: normalizeCaveV2Direction(cave?.linkedSurfaceSide) || null,
         surfaceEntranceAId: typeof cave?.surfaceEntranceAId === "string" ? cave.surfaceEntranceAId : null,
         surfaceEntranceBId: typeof cave?.surfaceEntranceBId === "string" ? cave.surfaceEntranceBId : null,
@@ -21278,6 +21513,8 @@
             linkedPairId: typeof caveState.active.linkedPairId === "string" ? caveState.active.linkedPairId : null,
             entryEntranceId: typeof caveState.active.entryEntranceId === "string" ? caveState.active.entryEntranceId : null,
             exitEntranceId: typeof caveState.active.exitEntranceId === "string" ? caveState.active.exitEntranceId : null,
+            entryExitRoomId: typeof caveState.active.entryExitRoomId === "string" ? caveState.active.entryExitRoomId : null,
+            linkedExitRoomId: typeof caveState.active.linkedExitRoomId === "string" ? caveState.active.linkedExitRoomId : null,
             entryExitSide: normalizeCaveV2Direction(caveState.active.entryExitSide) || null,
             linkedExitSide: normalizeCaveV2Direction(caveState.active.linkedExitSide) || null,
             pendingExitEntranceId: typeof caveState.active.pendingExitEntranceId === "string"
@@ -21434,6 +21671,9 @@
         entrySurfaceTx: Math.floor(Number(caveSave?.entrySurfaceTx) || 0),
         entrySurfaceTy: Math.floor(Number(caveSave?.entrySurfaceTy) || 0),
         entrySurfaceSide: normalizeCaveV2Direction(caveSave?.entrySurfaceSide) || "S",
+        linkedSurfaceRoomId: typeof caveSave?.linkedSurfaceRoomId === "string" && roomsById[caveSave.linkedSurfaceRoomId]
+          ? caveSave.linkedSurfaceRoomId
+          : null,
         linkedSurfaceSide: normalizeCaveV2Direction(caveSave?.linkedSurfaceSide) || null,
         surfaceEntranceAId: typeof caveSave?.surfaceEntranceAId === "string" && caveSave.surfaceEntranceAId.length > 0
           ? caveSave.surfaceEntranceAId
@@ -21468,8 +21708,9 @@
         && cave.linkedEntranceAId
         && cave.linkedEntranceBId
       ) {
-        cave.linkedSurfaceSide = chooseCaveV2LinkedExitSideForEntryRoom(
-          cave.roomsById?.[cave.entryRoomId],
+        cave.linkedSurfaceRoomId = cave.linkedSurfaceRoomId || chooseCaveV2LinkedSurfaceRoomId(cave);
+        cave.linkedSurfaceSide = chooseCaveV2LinkedExitSideForRoom(
+          cave.roomsById?.[cave.linkedSurfaceRoomId],
           cave.entrySurfaceSide,
           cave.linkedPairId,
           cave.caveId
@@ -21486,9 +21727,13 @@
           cave.surfaceEntranceBId = restoredSideMap[linkedSide];
         }
       }
-      const entryRoom = roomsById[entryRoomId];
-      for (const side of getCaveV2EntryRoomSurfaceExitSides(cave, entryRoom)) {
-        carveCaveV2SideCorridor(entryRoom, side);
+      for (const roomId of [cave.entryRoomId, cave.linkedSurfaceRoomId]) {
+        if (!roomId || !roomsById[roomId]) continue;
+        const surfaceRoom = roomsById[roomId];
+        for (const side of getCaveV2EntryRoomSurfaceExitSides(cave, surfaceRoom)) {
+          carveCaveV2SideCorridor(surfaceRoom, side);
+        }
+        ensureCaveV2RoomPassagesOpen(cave, surfaceRoom);
       }
       caveState.cavesById[caveId] = cave;
     }
@@ -21507,7 +21752,13 @@
         x: clamp(Number(savedActive.x) || roomPx.w * 0.5, minPos, maxX),
         y: clamp(Number(savedActive.y) || roomPx.h * 0.5, minPos, maxY),
       },
-      cave.entrySurfaceSide || "S"
+      (
+        (typeof savedActive.entryExitRoomId === "string" && savedActive.entryExitRoomId === room.roomId)
+          ? normalizeCaveV2Direction(savedActive.entryExitSide)
+          : ((typeof savedActive.linkedExitRoomId === "string" && savedActive.linkedExitRoomId === room.roomId)
+            ? normalizeCaveV2Direction(savedActive.linkedExitSide)
+            : normalizeCaveV2Direction(cave.entrySurfaceSide))
+      ) || "S"
     );
     let restoredEntryEntranceId = typeof savedActive.entryEntranceId === "string" && savedActive.entryEntranceId.length > 0
       ? savedActive.entryEntranceId
@@ -21546,6 +21797,11 @@
         && typeof restoredSurfaceExitBySide[side] === "string"
       )) || null
       : null;
+    const restoredSurfaceExitMapping = resolveCaveV2LinkedSurfaceExitMapping(
+      cave,
+      restoredEntryEntranceId,
+      restoredExitEntranceId
+    );
     caveState.active = {
       caveId: cave.caveId,
       roomId: room.roomId,
@@ -21560,13 +21816,23 @@
       linkedPairId: typeof savedActive.linkedPairId === "string" ? savedActive.linkedPairId : null,
       entryEntranceId: restoredEntryEntranceId,
       exitEntranceId: restoredExitEntranceId,
+      entryExitRoomId: (
+        typeof savedActive.entryExitRoomId === "string"
+        && cave.roomsById[savedActive.entryExitRoomId]
+      ) ? savedActive.entryExitRoomId : (restoredSurfaceExitMapping.entryExitRoomId || cave.entryRoomId),
+      linkedExitRoomId: (
+        typeof savedActive.linkedExitRoomId === "string"
+        && cave.roomsById[savedActive.linkedExitRoomId]
+      ) ? savedActive.linkedExitRoomId : (restoredSurfaceExitMapping.linkedExitRoomId || null),
       entryExitSide: derivedEntryExitSide
         || normalizeCaveV2Direction(savedActive.entryExitSide)
+        || normalizeCaveV2Direction(restoredSurfaceExitMapping.entryExitSide)
         || normalizeCaveV2Direction(cave.entrySurfaceSide)
         || "S",
       linkedExitSide: derivedLinkedExitSide
         || normalizeCaveV2Direction(savedActive.linkedExitSide)
         || fallbackLinkedExitSide
+        || normalizeCaveV2Direction(restoredSurfaceExitMapping.linkedExitSide)
         || normalizeCaveV2Direction(cave.linkedSurfaceSide)
         || null,
       pendingExitEntranceId: typeof savedActive.pendingExitEntranceId === "string"
@@ -21612,11 +21878,12 @@
         cave.linkedPairId = linkedPairId;
         cave.linkedEntranceAId = pair[0] || cave.linkedEntranceAId || null;
         cave.linkedEntranceBId = pair[1] || cave.linkedEntranceBId || null;
+        cave.linkedSurfaceRoomId = cave.linkedSurfaceRoomId || chooseCaveV2LinkedSurfaceRoomId(cave);
         const normalizedEntrySide = normalizeCaveV2Direction(cave.entrySurfaceSide) || "S";
         const normalizedLinkedSide = normalizeCaveV2Direction(cave.linkedSurfaceSide);
         if (!normalizedLinkedSide || normalizedLinkedSide === normalizedEntrySide) {
-          cave.linkedSurfaceSide = chooseCaveV2LinkedExitSideForEntryRoom(
-            cave.roomsById?.[cave.entryRoomId],
+          cave.linkedSurfaceSide = chooseCaveV2LinkedExitSideForRoom(
+            cave.roomsById?.[cave.linkedSurfaceRoomId],
             cave.entrySurfaceSide,
             cave.linkedPairId,
             cave.caveId
@@ -21642,12 +21909,13 @@
         }
       }
       if (linkedPairId && linkedExitKey) {
-        const entryRoom = cave.roomsById?.[cave.entryRoomId];
-        if (entryRoom) {
-          for (const side of getCaveV2EntryRoomSurfaceExitSides(cave, entryRoom)) {
-            carveCaveV2SideCorridor(entryRoom, side);
+        for (const roomId of [cave.entryRoomId, cave.linkedSurfaceRoomId]) {
+          const surfaceRoom = cave.roomsById?.[roomId];
+          if (!surfaceRoom) continue;
+          for (const side of getCaveV2EntryRoomSurfaceExitSides(cave, surfaceRoom)) {
+            carveCaveV2SideCorridor(surfaceRoom, side);
           }
-          ensureCaveV2RoomPassagesOpen(cave, entryRoom);
+          ensureCaveV2RoomPassagesOpen(cave, surfaceRoom);
         }
       }
     }
@@ -21905,8 +22173,6 @@
     if (!CAVE_V2_ENABLED || !state.surfaceWorld || !state.player || !entrance) return false;
     const caveState = getCaveV2State();
     const cave = getOrCreateCaveV2(state.surfaceWorld, entrance);
-    const entryRoom = cave.roomsById[cave.entryRoomId];
-    if (!entryRoom) return false;
     const entryEntranceId = String(
       entrance.entranceId
       || entrance.key
@@ -21928,6 +22194,10 @@
       entryEntranceId,
       exitEntranceId
     );
+    const entryRoomId = surfaceExitMapping.entryExitRoomId || cave.entryRoomId;
+    const linkedExitRoomId = surfaceExitMapping.linkedExitRoomId || null;
+    const entryRoom = cave.roomsById[entryRoomId];
+    if (!entryRoom) return false;
     const entrySide = normalizeCaveV2Direction(surfaceExitMapping.entryExitSide)
       || normalizeCaveV2Direction(cave.entrySurfaceSide)
       || "S";
@@ -21972,7 +22242,7 @@
       if (state.debugUnlocked) {
         console.error("[CaveV2 Entry Spawn FAIL]", {
           caveId: cave.caveId,
-          roomId: cave.entryRoomId,
+          roomId: entryRoomId,
           entrySide,
           candidate: rawSpawn,
           final: spawn,
@@ -21998,10 +22268,10 @@
       || (surfaceExitBySide && surfaceExitMapping.linkedExitSide
         ? (surfaceExitBySide[surfaceExitMapping.linkedExitSide] || null)
         : null);
-    cave.activeRoomId = cave.entryRoomId;
+    cave.activeRoomId = entryRoomId;
     caveState.active = {
       caveId: cave.caveId,
-      roomId: cave.entryRoomId,
+      roomId: entryRoomId,
       x: spawn.x,
       y: spawn.y,
       returnSurfacePos: { x: state.player.x, y: state.player.y },
@@ -22011,6 +22281,8 @@
       linkedPairId: linkedPairId || cave.linkedPairId || null,
       entryEntranceId,
       exitEntranceId: resolvedExitEntranceId,
+      entryExitRoomId: entryRoomId,
+      linkedExitRoomId,
       entryExitSide: surfaceExitMapping.entryExitSide,
       linkedExitSide: surfaceExitMapping.linkedExitSide,
       pendingExitEntranceId: null,
@@ -22025,7 +22297,7 @@
     caveState.targetOreId = null;
     caveState.targetDropId = null;
     caveState.debugEntryAuditPending = true;
-    caveState.debugLastEntryAuditKey = `${cave.caveId}:${cave.entryRoomId}`;
+    caveState.debugLastEntryAuditKey = `${cave.caveId}:${entryRoomId}`;
     state.player.x = spawn.x;
     state.player.y = spawn.y;
     state.player.renderX = spawn.x;
@@ -22036,7 +22308,7 @@
     if (state.debugUnlocked) {
       console.debug("[CaveV2 Entry Spawn]", {
         caveId: cave.caveId,
-        roomId: cave.entryRoomId,
+        roomId: entryRoomId,
         entrySide,
         collisionPos: { x: state.player.x, y: state.player.y },
         renderPos: { x: state.player.renderX, y: state.player.renderY },
@@ -22046,6 +22318,8 @@
         linkedPairId,
         entryEntranceId,
         exitEntranceId: resolvedExitEntranceId,
+        entryExitRoomId: entryRoomId,
+        linkedExitRoomId,
         entryExitSide: surfaceExitMapping.entryExitSide,
         linkedExitSide: surfaceExitMapping.linkedExitSide,
         linkedPortalId: surfaceExitMapping.linkedPortalId,
@@ -22380,9 +22654,9 @@
     if (!room) return;
     const roomPx = getCaveV2RoomPixelSize(room);
     let nearSurfaceExit = null;
-    if (room.roomId === cave.entryRoomId) {
+    const surfaceSides = getCaveV2SessionSurfaceExitSides(cave, caveState.active, room.roomId);
+    if (surfaceSides.length > 0) {
       const depth = CAVE_V2_ROOM_CONFIG.boundaryTriggerDepthTiles * CONFIG.tileSize * 2;
-      const surfaceSides = getCaveV2SessionSurfaceExitSides(cave, caveState.active);
       for (const surfaceSide of surfaceSides) {
         const lane = isCaveV2PointInExitLane(room, surfaceSide, caveState.active.x, caveState.active.y);
         if (!lane) continue;
@@ -22398,7 +22672,7 @@
       }
     }
     if (nearSurfaceExit) {
-      setPrompt(getCaveV2SurfaceExitPromptForSide(caveState.active, nearSurfaceExit));
+      setPrompt(getCaveV2SurfaceExitPromptForSide(caveState.active, nearSurfaceExit, room.roomId));
       return;
     }
     const targetOre = getCaveV2ActiveOre(room, caveState);
@@ -22495,10 +22769,11 @@
     const tryY = clamp(nextY, minPos, maxY);
     if (isCaveV2PositionClear(room, caveState.active.x, tryY)) caveState.active.y = tryY;
     if (!isCaveV2PositionClear(room, caveState.active.x, caveState.active.y)) {
+      const fallbackSurfaceSide = getCaveV2SessionSurfaceExitSides(cave, caveState.active, room.roomId)[0] || null;
       const nudged = resolveCaveV2SpawnPosition(
         room,
         { x: caveState.active.x, y: caveState.active.y },
-        room.roomId === cave.entryRoomId ? (cave.entrySurfaceSide || "S") : null
+        fallbackSurfaceSide
       );
       if (nudged && Number.isFinite(nudged.x) && Number.isFinite(nudged.y)) {
         caveState.active.x = clamp(nudged.x, minPos, maxX);
@@ -22509,8 +22784,8 @@
     refreshCaveV2TransitionLock(caveState, room);
 
     if (!uiLock && caveState.transitionCooldown <= 0) {
-      if (room.roomId === cave.entryRoomId) {
-        const surfaceSides = getCaveV2SessionSurfaceExitSides(cave, caveState.active);
+      {
+        const surfaceSides = getCaveV2SessionSurfaceExitSides(cave, caveState.active, room.roomId);
         for (const surfaceSide of surfaceSides) {
           if (isCaveV2TransitionSideLocked(caveState, room, surfaceSide)) continue;
           if (!isCaveV2PointInExitLane(room, surfaceSide, caveState.active.x, caveState.active.y)) continue;
@@ -22526,7 +22801,8 @@
           else if (surfaceSide === "E") caveState.active.x = exitRoomPx.w - halfTile;
           caveState.active.pendingExitEntranceId = getCaveV2PendingExitEntranceIdForSide(
             caveState.active,
-            surfaceSide
+            surfaceSide,
+            room.roomId
           );
           syncCaveV2PlayerProxyPosition(caveState.active.x, caveState.active.y);
           setCaveV2TransitionLock(caveState, room.roomId, surfaceSide);
@@ -22722,10 +22998,10 @@
     const activeSession = isActive ? state.caveV2?.active : null;
     const linkedSurfaceSideForDraw = normalizeCaveV2Direction(activeSession?.linkedExitSide)
       || normalizeCaveV2Direction(cave?.linkedSurfaceSide);
-    const surfaceExitSides = (cave && room.roomId === cave.entryRoomId)
+    const surfaceExitSides = cave
       ? (
         isActive
-          ? getCaveV2SessionSurfaceExitSides(cave, activeSession)
+          ? getCaveV2SessionSurfaceExitSides(cave, activeSession, room.roomId)
           : getCaveV2EntryRoomSurfaceExitSides(cave, room)
       )
       : [];
@@ -22751,7 +23027,7 @@
     }
 
     // Entry room daylight spill / surface-exit guidance
-    if (cave && room.roomId === cave.entryRoomId) {
+    if (cave && surfaceExitSides.length > 0) {
       for (const side of surfaceExitSides) {
         const laneRect = getCaveV2ExitLaneRectPx(room, side);
         if (!laneRect) continue;
@@ -22800,7 +23076,7 @@
     }
 
     // Surface exit openings in entry room (return + linked, visually distinct).
-    if (cave && room.roomId === cave.entryRoomId) {
+    if (cave && surfaceExitSides.length > 0) {
       for (const side of surfaceExitSides) {
         const laneRect = getCaveV2ExitLaneRectPx(room, side);
         if (!laneRect) continue;
@@ -27249,6 +27525,7 @@
   function hideLoadingOverlay() {
     clearStartFlowWatchdog();
     setLoadingOverlayVisible(false);
+    armAutoPerformanceWarmup();
   }
 
   function runDeferredLoadingTask(options) {
@@ -31338,6 +31615,7 @@
   }
 
   function startNewGame(seedStr) {
+    applyAdaptiveGraphicsBaseline({ persist: false, resize: true, syncCadence: true });
     const normalizedSeed = normalizeSeedValue(seedStr);
     const world = generateWorld(normalizedSeed);
     normalizeSurfaceResources(world);
@@ -31454,6 +31732,7 @@
     updateObjectiveUI();
     updateAllSlotUI();
     refreshRuntimeCaveEntranceCache(world);
+    armAutoPerformanceWarmup(AUTO_PERF_GOVERNOR.warmupSeconds + 2);
     if (!CAVES_ENABLED) {
       requestCaveDisableRecovery("new-game", { windowSeconds: 0.8 });
       runCaveDisableRecoveryTick(0);
@@ -31461,6 +31740,7 @@
   }
 
   function loadOrCreateGame(preferredSeed = null) {
+    applyAdaptiveGraphicsBaseline({ persist: false, resize: true, syncCadence: true });
     const targetSeed = normalizeSeedValue(preferredSeed ?? getStoredActiveSeed() ?? "island-1");
     const savedRaw = loadGame(targetSeed);
     const saved = migrateSave(savedRaw);
@@ -31773,6 +32053,7 @@
         startWinSequence();
       }
       updateAllSlotUI();
+      armAutoPerformanceWarmup(AUTO_PERF_GOVERNOR.warmupSeconds + 2);
       if (!CAVES_ENABLED) {
         runCaveDisableRecoveryTick(0);
       }
@@ -34737,8 +35018,9 @@
   }
 
   function updateAllSlotUI() {
+    const inventoryData = Array.isArray(state.inventory) ? state.inventory : null;
     for (let i = 0; i < inventorySlots.length; i += 1) {
-      const slotData = state.inventory[i];
+      const slotData = inventoryData ? (inventoryData[i] ?? null) : null;
       const view = inventorySlots[i];
       const hotbar = hotbarSlots[i];
       const selected = selectedSlot && selectedSlot.scope === "inventory" && selectedSlot.index === i;
@@ -34747,12 +35029,19 @@
       if (hotbar) applySlotView(hotbar, slotData, selected, active);
     }
 
-    if (state.activeChest && state.activeChest.storage) {
+    const chestStorage = Array.isArray(state.activeChest?.storage) ? state.activeChest.storage : null;
+    if (chestStorage) {
       for (let i = 0; i < chestSlots.length; i += 1) {
-        const slotData = state.activeChest.storage[i];
+        const slotData = chestStorage[i] ?? null;
         const view = chestSlots[i];
         const selected = selectedSlot && selectedSlot.scope === "chest" && selectedSlot.index === i;
         applySlotView(view, slotData, selected, false);
+      }
+    } else {
+      for (let i = 0; i < chestSlots.length; i += 1) {
+        const view = chestSlots[i];
+        const selected = selectedSlot && selectedSlot.scope === "chest" && selectedSlot.index === i;
+        applySlotView(view, null, selected, false);
       }
     }
 
@@ -37013,124 +37302,86 @@
       buildList.appendChild(empty);
       return;
     }
-    const cursorKey = String(buildCategory || "navigation");
-    const cursor = getCompactRecipeCursor(buildRecipeCursorByCategory, cursorKey, recipes.length);
-    buildRecipeCursorByCategory[cursorKey] = cursor;
-    const selectedRecipe = recipes[cursor];
-    buildList.appendChild(
-      createCompactRecipeNavigator(
-        "Recipe",
-        cursor,
-        recipes.length,
-        () => {
-          const next = (cursor - 1 + recipes.length) % recipes.length;
-          buildRecipeCursorByCategory[cursorKey] = next;
-          renderBuildMenu();
-        },
-        () => {
-          const next = (cursor + 1) % recipes.length;
-          buildRecipeCursorByCategory[cursorKey] = next;
-          renderBuildMenu();
-        }
-      )
-    );
-    const recipe = selectedRecipe;
-    const upgradeRecipe = isUpgradeRecipe(recipe);
-    const card = document.createElement("div");
-    card.className = "recipe-card recipe-card-compact";
-    const header = document.createElement("div");
-    header.className = "recipe-card-header";
-    const icon = document.createElement("div");
-    icon.className = "recipe-icon";
-    applyItemVisual(icon, recipe.icon || recipe.id, true);
-    header.appendChild(icon);
-    const titleWrap = document.createElement("div");
-    titleWrap.className = "recipe-card-title-wrap";
-    const title = document.createElement("div");
-    title.className = "recipe-title";
-    title.textContent = recipe.name;
-    titleWrap.appendChild(title);
-    header.appendChild(titleWrap);
-    const cost = document.createElement("div");
-    cost.className = "recipe-cost";
-    if (recipe.cost && isInfiniteResourcesEnabled()) {
-      const free = document.createElement("span");
-      free.className = "recipe-flow-arrow";
-      free.textContent = "∞";
-      cost.appendChild(free);
-      appendRecipeFlow(cost, {}, getRecipeOutput(recipe), state.inventory);
-    } else {
-      appendRecipeFlow(cost, recipe.cost || {}, getRecipeOutput(recipe), state.inventory);
-    }
-    const button = document.createElement("button");
-    let disabled = false;
-    let lockReason = "";
-    if (upgradeRecipe) {
-      const unlockKey = recipe.unlock;
-      if (unlockKey && hasPlayerUnlock(state.player, unlockKey)) {
-        button.textContent = "Owned";
-        disabled = true;
-        lockReason = "Already unlocked";
-      } else if (!hasUpgradePrereqs(state.player, recipe)) {
-        button.textContent = "Locked";
-        disabled = true;
-        const prereqLabels = (recipe.requires || [])
-          .map((key) => UPGRADE_RECIPES.find((entry) => entry.unlock === key)?.name || key)
-          .join(", ");
-        lockReason = `Need: ${compactUiSentence(prereqLabels, 28)}`;
+    for (const recipe of recipes) {
+      const upgradeRecipe = isUpgradeRecipe(recipe);
+      const card = document.createElement("div");
+      card.className = "recipe-card";
+      const icon = document.createElement("div");
+      icon.className = "recipe-icon";
+      applyItemVisual(icon, recipe.icon || recipe.id, true);
+      const title = document.createElement("div");
+      title.className = "recipe-title";
+      title.textContent = recipe.name;
+      const desc = document.createElement("div");
+      desc.className = "recipe-desc";
+      desc.textContent = compactUiSentence(recipe.description || "", 44);
+      const cost = document.createElement("div");
+      cost.className = "recipe-cost";
+      if (recipe.cost && isInfiniteResourcesEnabled()) {
+        const free = document.createElement("span");
+        free.className = "recipe-flow-arrow";
+        free.textContent = "∞";
+        cost.appendChild(free);
+        appendRecipeFlow(cost, {}, getRecipeOutput(recipe), state.inventory);
       } else {
-        button.textContent = "Unlock";
+        appendRecipeFlow(cost, recipe.cost || {}, getRecipeOutput(recipe), state.inventory);
       }
-    } else {
-      button.textContent = "Craft";
-      if (recipe.id === "medium_house" && !state.structures.some((s) => !s.removed && (s.type === "small_house" || s.type === "hut"))) {
-        disabled = true;
-        lockReason = "Need: small house";
-      }
-      if (recipe.id === "large_house" && !state.structures.some((s) => !s.removed && (s.type === "medium_house" || s.type === "large_house"))) {
-        disabled = true;
-        lockReason = "Need: medium house";
-      }
-    }
-    if (!disabled && recipe.cost && !hasCost(state.inventory, recipe.cost)) {
-      disabled = true;
-      lockReason = "Need mats";
-    }
-    button.disabled = disabled;
-    if (disabled && lockReason && button.textContent !== "Owned") {
-      button.textContent = "Locked";
-    }
-    button.addEventListener("click", () => craftRecipe(recipe));
+      const button = document.createElement("button");
 
-    card.appendChild(header);
-    if (recipe.description) {
-      const detailToggle = document.createElement("button");
-      detailToggle.type = "button";
-      detailToggle.className = "recipe-detail-toggle";
-      detailToggle.textContent = buildRecipeDetailsExpanded ? "Hide" : "Details";
-      detailToggle.addEventListener("click", () => {
-        buildRecipeDetailsExpanded = !buildRecipeDetailsExpanded;
-        renderBuildMenu();
-      });
-      card.appendChild(detailToggle);
-      if (buildRecipeDetailsExpanded) {
-        const desc = document.createElement("div");
-        desc.className = "recipe-desc";
-        desc.textContent = compactUiSentence(recipe.description || "", 46);
-        card.appendChild(desc);
+      let disabled = false;
+      let lockReason = "";
+      if (upgradeRecipe) {
+        const unlockKey = recipe.unlock;
+        if (unlockKey && hasPlayerUnlock(state.player, unlockKey)) {
+          button.textContent = "Owned";
+          disabled = true;
+          lockReason = "Already unlocked";
+        } else if (!hasUpgradePrereqs(state.player, recipe)) {
+          button.textContent = "Locked";
+          disabled = true;
+          const prereqLabels = (recipe.requires || [])
+            .map((key) => UPGRADE_RECIPES.find((entry) => entry.unlock === key)?.name || key)
+            .join(", ");
+          lockReason = `Need: ${compactUiSentence(prereqLabels, 28)}`;
+        } else {
+          button.textContent = "Unlock";
+        }
+      } else {
+        button.textContent = "Craft";
+        if (recipe.id === "medium_house" && !state.structures.some((s) => !s.removed && (s.type === "small_house" || s.type === "hut"))) {
+          disabled = true;
+          lockReason = "Need: small house";
+        }
+        if (recipe.id === "large_house" && !state.structures.some((s) => !s.removed && (s.type === "medium_house" || s.type === "large_house"))) {
+          disabled = true;
+          lockReason = "Need: medium house";
+        }
       }
+
+      if (!disabled && recipe.cost && !hasCost(state.inventory, recipe.cost)) {
+        disabled = true;
+        lockReason = "Need mats";
+      }
+
+      button.disabled = disabled;
+      if (disabled && lockReason && button.textContent !== "Owned") {
+        button.textContent = "Locked";
+      }
+      button.addEventListener("click", () => craftRecipe(recipe));
+
+      card.appendChild(icon);
+      card.appendChild(title);
+      if (desc.textContent) card.appendChild(desc);
+      if (recipe.cost || Object.keys(getRecipeOutput(recipe)).length > 0) card.appendChild(cost);
+      if (disabled && lockReason) {
+        const lock = document.createElement("div");
+        lock.className = "recipe-lock";
+        lock.textContent = compactUiSentence(lockReason, 32);
+        card.appendChild(lock);
+      }
+      card.appendChild(button);
+      buildList.appendChild(card);
     }
-    if (recipe.cost || Object.keys(getRecipeOutput(recipe)).length > 0) {
-      card.appendChild(cost);
-    }
-    if (disabled && lockReason) {
-      const lock = document.createElement("div");
-      lock.className = "recipe-lock";
-      lock.textContent = compactUiSentence(lockReason, 32);
-      card.appendChild(lock);
-    }
-    card.appendChild(button);
-    buildList.appendChild(card);
   }
 
   function craftRecipe(recipe) {
@@ -37296,63 +37547,23 @@
     const recipes = STATION_RECIPES[type] || [];
     stationTitle.textContent = STRUCTURE_DEFS[type]?.name ?? "Station";
     stationOptions.innerHTML = "";
-    if (recipes.length > 0) {
-      const cursorKey = String(type || "station");
-      const cursor = getCompactRecipeCursor(stationRecipeCursorByType, cursorKey, recipes.length);
-      stationRecipeCursorByType[cursorKey] = cursor;
-      stationOptions.appendChild(
-        createCompactRecipeNavigator(
-          "Recipe",
-          cursor,
-          recipes.length,
-          () => {
-            const next = (cursor - 1 + recipes.length) % recipes.length;
-            stationRecipeCursorByType[cursorKey] = next;
-            renderStationMenu();
-          },
-          () => {
-            const next = (cursor + 1) % recipes.length;
-            stationRecipeCursorByType[cursorKey] = next;
-            renderStationMenu();
-          }
-        )
-      );
-      const recipe = recipes[cursor];
+
+    for (const recipe of recipes) {
       const card = document.createElement("div");
-      card.className = "recipe-card recipe-card-compact";
-      const header = document.createElement("div");
-      header.className = "recipe-card-header";
+      card.className = "recipe-card";
       const icon = document.createElement("div");
       icon.className = "recipe-icon";
       const firstOutput = Object.keys(recipe.output || {})[0];
       applyItemVisual(icon, firstOutput || "stone", true);
-      header.appendChild(icon);
-      const titleWrap = document.createElement("div");
-      titleWrap.className = "recipe-card-title-wrap";
       const title = document.createElement("div");
       title.className = "recipe-title";
       title.textContent = recipe.name;
-      titleWrap.appendChild(title);
-      header.appendChild(titleWrap);
-      card.appendChild(header);
-
-      if (recipe.description) {
-        const detailToggle = document.createElement("button");
-        detailToggle.type = "button";
-        detailToggle.className = "recipe-detail-toggle";
-        detailToggle.textContent = stationRecipeDetailsExpanded ? "Hide" : "Details";
-        detailToggle.addEventListener("click", () => {
-          stationRecipeDetailsExpanded = !stationRecipeDetailsExpanded;
-          renderStationMenu();
-        });
-        card.appendChild(detailToggle);
-        if (stationRecipeDetailsExpanded) {
-          const desc = document.createElement("div");
-          desc.className = "recipe-desc";
-          desc.textContent = compactUiSentence(recipe.description || "", 42);
-          card.appendChild(desc);
-        }
-      }
+      const desc = document.createElement("div");
+      desc.className = "recipe-desc";
+      desc.textContent = compactUiSentence(recipe.description || "", 40);
+      card.appendChild(icon);
+      card.appendChild(title);
+      if (desc.textContent) card.appendChild(desc);
 
       if (recipe.locked) {
         const cost = document.createElement("div");
@@ -40998,7 +41209,7 @@
     }, player.id);
     const conn = net.connections.get(player.id);
     if (conn?.open) {
-      conn.send({
+      sendConnPayload(conn, {
         type: "respawn",
         hp: player.hp,
         maxHp: player.maxHp,
@@ -41037,7 +41248,7 @@
         }
         if (monsterType) message.monsterType = monsterType;
         if (attackKind) message.attackKind = attackKind;
-        conn.send(message);
+        sendConnPayload(conn, message);
       }
       respawnRemotePlayer(player);
     } else if (conn?.open) {
@@ -41053,7 +41264,7 @@
       }
       if (monsterType) message.monsterType = monsterType;
       if (attackKind) message.attackKind = attackKind;
-      conn.send(message);
+      sendConnPayload(conn, message);
     }
   }
 
@@ -50420,6 +50631,7 @@
       smoothedFrameMs: FIXED_SIM_TIMESTEP_SECONDS * 1000,
       criticalLowFpsTimer: 0,
       lowFpsTimer: 0,
+      recoveryTimer: 0,
       cooldownTimer: 0,
     };
 
@@ -50459,8 +50671,10 @@
       if (document.hidden) return;
       if (!state.world || !state.player) return;
       if (mpAutotest.active) return;
+      if (state.loadingVisible) return;
       const rawMs = Math.max(0, Number(rawDeltaSeconds) || 0) * 1000;
       if (rawMs <= 0) return;
+      state.autoPerfWarmupTimer = Math.max(0, (Number(state.autoPerfWarmupTimer) || 0) - rawDeltaSeconds);
       autoPerf.smoothedFrameMs = lerp(
         autoPerf.smoothedFrameMs,
         rawMs,
@@ -50468,11 +50682,36 @@
       );
       const fps = 1000 / Math.max(1, autoPerf.smoothedFrameMs);
       autoPerf.cooldownTimer = Math.max(0, autoPerf.cooldownTimer - rawDeltaSeconds);
+      if (state.autoPerfWarmupTimer > 0) {
+        autoPerf.criticalLowFpsTimer = 0;
+        autoPerf.lowFpsTimer = 0;
+        autoPerf.recoveryTimer = 0;
+        return;
+      }
       if (fps >= AUTO_PERF_GOVERNOR.lowFpsThreshold) {
         autoPerf.criticalLowFpsTimer = 0;
         autoPerf.lowFpsTimer = 0;
+        if (state.renderScale + 0.001 < AUTO_GRAPHICS_BASELINE.renderScale) {
+          autoPerf.recoveryTimer += rawDeltaSeconds;
+          if (
+            fps >= AUTO_PERF_GOVERNOR.recoveryFpsThreshold
+            && autoPerf.recoveryTimer >= AUTO_PERF_GOVERNOR.recoveryGraceSeconds
+            && autoPerf.cooldownTimer <= 0
+          ) {
+            autoPerf.recoveryTimer = 0;
+            autoPerf.cooldownTimer = AUTO_PERF_GOVERNOR.actionCooldownSeconds;
+            const nextScale = Math.min(
+              AUTO_GRAPHICS_BASELINE.renderScale,
+              state.renderScale + AUTO_PERF_GOVERNOR.recoveryStep
+            );
+            setRenderScaleFromPercent(Math.round(nextScale * 100), false);
+          }
+        } else {
+          autoPerf.recoveryTimer = 0;
+        }
         return;
       }
+      autoPerf.recoveryTimer = 0;
       if (fps < AUTO_PERF_GOVERNOR.criticalFpsThreshold) {
         autoPerf.criticalLowFpsTimer += rawDeltaSeconds;
       } else {
@@ -50649,15 +50888,363 @@
     return styles.display !== "none" && styles.visibility !== "hidden" && styles.opacity !== "0";
   }
 
+  function buildQaInventorySummary(slots) {
+    if (!Array.isArray(slots)) {
+      return {
+        occupied: 0,
+        totalQty: 0,
+        fingerprint: "",
+      };
+    }
+    let occupied = 0;
+    let totalQty = 0;
+    for (let i = 0; i < slots.length; i += 1) {
+      const slot = slots[i];
+      if (!slot || !slot.id) continue;
+      const qty = Math.max(0, Math.floor(Number(slot.qty) || 0));
+      if (qty <= 0) continue;
+      occupied += 1;
+      totalQty += qty;
+    }
+    return {
+      occupied,
+      totalQty,
+      fingerprint: mpAutotestInventoryFingerprintFromSlots(slots),
+    };
+  }
+
+  function buildQaWorldSummary(world) {
+    return {
+      seed: String(world?.seed || state.surfaceWorld?.seed || ""),
+      size: Number(world?.size || 0),
+      caves: Array.isArray(world?.caves) ? world.caves.length : 0,
+      runtimeCaves: Array.isArray(world?.runtimeCaves) ? world.runtimeCaves.length : 0,
+      runtimeCaveV2Entrances: Array.isArray(world?.runtimeCaveV2Entrances) ? world.runtimeCaveV2Entrances.length : 0,
+      drops: Array.isArray(world?.drops) ? world.drops.length : 0,
+      monsters: Array.isArray(world?.monsters) ? world.monsters.length : 0,
+      animals: Array.isArray(world?.animals) ? world.animals.length : 0,
+      villagers: Array.isArray(world?.villagers) ? world.villagers.length : 0,
+      structures: Array.isArray(state.structures) ? state.structures.filter((entry) => entry && !entry.removed).length : 0,
+    };
+  }
+
+  function buildQaMpAutotestSummary() {
+    const logLines = Array.isArray(mpAutotest.logLines) ? mpAutotest.logLines : [];
+    return {
+      active: !!mpAutotest.active,
+      mode: String(mpAutotest.mode?.id || ""),
+      status: String(mpAutotest.runningStatus || "idle"),
+      step: Math.max(0, Math.floor(Number(mpAutotest.step) || 0)),
+      elapsed: Number((Number(mpAutotest.elapsed) || 0).toFixed(2)),
+      failReason: String(mpAutotest.failReason || ""),
+      hasFailureReport: !!(mpAutotest.failReport || "").trim(),
+      progressText: mpAutotestProgressText?.textContent || "",
+      logTail: logLines.slice(-8),
+    };
+  }
+
+  function buildQaCaveV2Summary() {
+    if (!CAVE_V2_ENABLED) return { enabled: false, active: null, caves: [] };
+    const caveState = getCaveV2State();
+    const caves = Object.values(caveState.cavesById || {}).map((cave) => {
+      const distance = buildCaveV2RoomDistanceMap(cave);
+      return {
+        caveId: String(cave?.caveId || ""),
+        entryRoomId: String(cave?.entryRoomId || ""),
+        linkedSurfaceRoomId: typeof cave?.linkedSurfaceRoomId === "string" ? cave.linkedSurfaceRoomId : null,
+        entrySurfaceSide: normalizeCaveV2Direction(cave?.entrySurfaceSide) || "S",
+        linkedSurfaceSide: normalizeCaveV2Direction(cave?.linkedSurfaceSide) || null,
+        surfaceEntranceAId: typeof cave?.surfaceEntranceAId === "string" ? cave.surfaceEntranceAId : null,
+        surfaceEntranceBId: typeof cave?.surfaceEntranceBId === "string" ? cave.surfaceEntranceBId : null,
+        linkedPairId: typeof cave?.linkedPairId === "string" ? cave.linkedPairId : null,
+        linkedSurfaceDepth: cave?.linkedSurfaceRoomId ? Math.max(0, Math.floor(Number(distance[cave.linkedSurfaceRoomId]) || 0)) : null,
+      };
+    }).sort((a, b) => a.caveId.localeCompare(b.caveId));
+    const active = caveState.active
+      ? {
+          caveId: String(caveState.active.caveId || ""),
+          roomId: String(caveState.active.roomId || ""),
+          entryEntranceId: typeof caveState.active.entryEntranceId === "string" ? caveState.active.entryEntranceId : null,
+          exitEntranceId: typeof caveState.active.exitEntranceId === "string" ? caveState.active.exitEntranceId : null,
+          entryExitRoomId: typeof caveState.active.entryExitRoomId === "string" ? caveState.active.entryExitRoomId : null,
+          linkedExitRoomId: typeof caveState.active.linkedExitRoomId === "string" ? caveState.active.linkedExitRoomId : null,
+          entryExitSide: normalizeCaveV2Direction(caveState.active.entryExitSide) || null,
+          linkedExitSide: normalizeCaveV2Direction(caveState.active.linkedExitSide) || null,
+          currentRoomSurfaceExitSides: (() => {
+            const activeCave = caveState.cavesById?.[caveState.active.caveId];
+            return activeCave ? getCaveV2SessionSurfaceExitSides(activeCave, caveState.active, caveState.active.roomId) : [];
+          })(),
+        }
+      : null;
+    return {
+      enabled: true,
+      active,
+      caves,
+    };
+  }
+
+  function buildQaCaveV2RoomPath(cave, startRoomId, targetRoomId) {
+    if (!cave || !cave.roomsById) return null;
+    const startId = typeof startRoomId === "string" ? startRoomId : "";
+    const targetId = typeof targetRoomId === "string" ? targetRoomId : "";
+    if (!startId || !targetId || !cave.roomsById[startId] || !cave.roomsById[targetId]) return null;
+    if (startId === targetId) return [];
+    const queue = [startId];
+    const prevRoomById = Object.create(null);
+    const prevSideById = Object.create(null);
+    prevRoomById[startId] = null;
+    while (queue.length > 0) {
+      const roomId = queue.shift();
+      const room = cave.roomsById[roomId];
+      if (!room) continue;
+      for (const side of ["N", "S", "E", "W"]) {
+        const nextRoomId = typeof room.exits?.[side] === "string" ? room.exits[side] : null;
+        if (!nextRoomId || !cave.roomsById[nextRoomId]) continue;
+        if (Object.prototype.hasOwnProperty.call(prevRoomById, nextRoomId)) continue;
+        prevRoomById[nextRoomId] = roomId;
+        prevSideById[nextRoomId] = side;
+        if (nextRoomId === targetId) {
+          queue.length = 0;
+          break;
+        }
+        queue.push(nextRoomId);
+      }
+    }
+    if (!Object.prototype.hasOwnProperty.call(prevRoomById, targetId)) return null;
+    const steps = [];
+    let cursor = targetId;
+    while (cursor !== startId) {
+      const fromRoomId = prevRoomById[cursor];
+      const side = prevSideById[cursor];
+      if (!fromRoomId || !side) return null;
+      steps.push({
+        fromRoomId,
+        side,
+        toRoomId: cursor,
+      });
+      cursor = fromRoomId;
+    }
+    steps.reverse();
+    return steps;
+  }
+
+  function driveQaActiveCaveV2ToSurfaceExit(exitKind = "linked") {
+    if (!CAVE_V2_ENABLED) return { ok: false, error: "caveV2-disabled" };
+    const caveState = getCaveV2State();
+    const active = caveState.active;
+    if (!active) return { ok: false, error: "no-active-cave" };
+    const cave = caveState.cavesById?.[active.caveId];
+    if (!cave) return { ok: false, error: "missing-cave" };
+    const wantsLinkedExit = exitKind !== "entry";
+    const targetRoomId = wantsLinkedExit ? active.linkedExitRoomId : active.entryExitRoomId;
+    const targetSide = normalizeCaveV2Direction(wantsLinkedExit ? active.linkedExitSide : active.entryExitSide);
+    if (typeof targetRoomId !== "string" || !targetRoomId) {
+      return { ok: false, error: "missing-target-room", exitKind };
+    }
+    if (!targetSide) {
+      return { ok: false, error: "missing-target-side", exitKind };
+    }
+    const path = buildQaCaveV2RoomPath(cave, active.roomId, targetRoomId);
+    if (!Array.isArray(path)) {
+      return {
+        ok: false,
+        error: "missing-room-path",
+        exitKind,
+        activeRoomId: active.roomId,
+        targetRoomId,
+      };
+    }
+    const transitionLog = [];
+    for (const step of path) {
+      const started = startCaveV2RoomTransition(step.side);
+      if (!started) {
+        return {
+          ok: false,
+          error: "transition-start-failed",
+          exitKind,
+          step,
+          activeRoomId: caveState.active?.roomId ?? null,
+        };
+      }
+      let guard = 0;
+      while (caveState.transitioning && guard < 240) {
+        updateCaveV2(1 / 60);
+        guard += 1;
+      }
+      if (caveState.transitioning) {
+        return {
+          ok: false,
+          error: "transition-timeout",
+          exitKind,
+          step,
+          guard,
+        };
+      }
+      transitionLog.push({
+        side: step.side,
+        roomId: caveState.active?.roomId ?? null,
+      });
+    }
+    const finalActive = caveState.active;
+    const room = finalActive ? cave.roomsById?.[finalActive.roomId] : null;
+    if (!finalActive || !room) {
+      return { ok: false, error: "missing-final-room", exitKind };
+    }
+    const lane = getCaveV2ExitCenterTile(room, targetSide);
+    if (!lane) {
+      return {
+        ok: false,
+        error: "missing-exit-lane",
+        exitKind,
+        roomId: room.roomId,
+        targetSide,
+      };
+    }
+    const tile = CONFIG.tileSize;
+    const halfTile = tile * 0.5;
+    const roomPx = getCaveV2RoomPixelSize(room);
+    const laneCenterPx = ((lane.laneMin + lane.laneMax + 1) * 0.5) * tile;
+    if (targetSide === "N") {
+      finalActive.x = laneCenterPx;
+      finalActive.y = halfTile;
+    } else if (targetSide === "S") {
+      finalActive.x = laneCenterPx;
+      finalActive.y = roomPx.h - halfTile;
+    } else if (targetSide === "W") {
+      finalActive.x = halfTile;
+      finalActive.y = laneCenterPx;
+    } else if (targetSide === "E") {
+      finalActive.x = roomPx.w - halfTile;
+      finalActive.y = laneCenterPx;
+    }
+    finalActive.pendingExitEntranceId = getCaveV2PendingExitEntranceIdForSide(finalActive, targetSide, room.roomId);
+    syncCaveV2PlayerProxyPosition(finalActive.x, finalActive.y);
+    const expectedEntranceId = typeof finalActive.pendingExitEntranceId === "string"
+      ? finalActive.pendingExitEntranceId
+      : null;
+    const left = leaveCaveV2();
+    if (!left) {
+      return {
+        ok: false,
+        error: "leave-failed",
+        exitKind,
+        expectedEntranceId,
+      };
+    }
+    const world = state.surfaceWorld || state.world;
+    const player = state.player || null;
+    const actualTile = player && Number.isFinite(player.x) && Number.isFinite(player.y)
+      ? {
+          tx: Math.floor(player.x / CONFIG.tileSize),
+          ty: Math.floor(player.y / CONFIG.tileSize),
+        }
+      : null;
+    const exits = world ? getRuntimeCaveV2Entrances(world) : [];
+    const expectedEntrance = expectedEntranceId
+      ? exits.find((entry) => entry && ((entry.entranceId || entry.key) === expectedEntranceId || entry.key === expectedEntranceId))
+      : null;
+    const expectedTile = expectedEntrance
+      ? { tx: expectedEntrance.tx, ty: expectedEntrance.ty }
+      : null;
+    return {
+      ok: true,
+      exitKind: wantsLinkedExit ? "linked" : "entry",
+      caveId: cave.caveId,
+      path,
+      transitionLog,
+      targetRoomId,
+      targetSide,
+      expectedEntranceId,
+      expectedTile,
+      actualTile,
+      islandIndex: actualTile && world ? getSurfaceIslandIndexForTile(world, actualTile.tx, actualTile.ty) : -1,
+      player: player
+        ? {
+            x: Math.round(player.x),
+            y: Math.round(player.y),
+            inCaveV2: !!caveState.active,
+          }
+        : null,
+      caveV2: buildQaCaveV2Summary(),
+    };
+  }
+
+  function spawnQaLinkedCavePair() {
+    if (!state.player || state.inCave || netIsClientReady()) return null;
+    const world = state.surfaceWorld || state.world;
+    if (!world || !Array.isArray(world.islands) || world.islands.length < 2 || !CAVE_V2_ENABLED) return null;
+    const firstTile = getDebugCaveSpawnTile(world);
+    if (!firstTile) return null;
+    const firstIslandIndex = getSurfaceIslandIndexForTile(world, firstTile.tx, firstTile.ty);
+    let secondTile = null;
+    let secondIslandIndex = -1;
+    const candidates = world.islands
+      .map((island, index) => ({ island, index }))
+      .filter(({ island, index }) => island && index !== firstIslandIndex)
+      .sort((a, b) => {
+        const ax = Number(a.island.x) || 0;
+        const ay = Number(a.island.y) || 0;
+        const bx = Number(b.island.x) || 0;
+        const by = Number(b.island.y) || 0;
+        const ad = Math.hypot(ax - firstTile.tx, ay - firstTile.ty);
+        const bd = Math.hypot(bx - firstTile.tx, by - firstTile.ty);
+        return ad - bd || a.index - b.index;
+      });
+    for (const candidate of candidates) {
+      const anchorTx = Math.round(Number(candidate.island.x) || 0);
+      const anchorTy = Math.round(Number(candidate.island.y) || 0);
+      const tile = findOpenSurfaceTileNear(world, anchorTx, anchorTy, 16);
+      if (!tile) continue;
+      const islandIndex = getSurfaceIslandIndexForTile(world, tile.tx, tile.ty);
+      if (islandIndex !== candidate.index) continue;
+      secondTile = tile;
+      secondIslandIndex = islandIndex;
+      break;
+    }
+    if (!secondTile || secondIslandIndex === firstIslandIndex) return null;
+    const firstEntrance = upsertRuntimeCaveV2Entrance(world, firstTile.tx, firstTile.ty, null);
+    if (!firstEntrance) return null;
+    const firstKey = firstEntrance.key || buildCaveV2EntranceSurfaceKey(world, firstEntrance.tx, firstEntrance.ty);
+    const linkedPairId = `cv2-link-${(seedToInt(`${world.seed}:${firstKey}`) >>> 0).toString(16)}`;
+    const secondEntrance = upsertRuntimeCaveV2Entrance(world, secondTile.tx, secondTile.ty, String(firstEntrance.caveId || getCaveV2EntranceStableId(world, firstTile.tx, firstTile.ty)));
+    if (!secondEntrance) return null;
+    const secondKey = secondEntrance.key || buildCaveV2EntranceSurfaceKey(world, secondEntrance.tx, secondEntrance.ty);
+    firstEntrance.entranceId = firstEntrance.entranceId || firstKey;
+    secondEntrance.entranceId = secondEntrance.entranceId || secondKey;
+    firstEntrance.linkedPairId = linkedPairId;
+    secondEntrance.linkedPairId = linkedPairId;
+    firstEntrance.linkedExitKey = secondKey;
+    secondEntrance.linkedExitKey = firstKey;
+    getOrCreateCaveV2(world, firstEntrance);
+    markDirty();
+    if (net.isHost && net.connections.size > 0) {
+      broadcastNet(buildSnapshot());
+    }
+    return {
+      caveId: String(firstEntrance.caveId || ""),
+      linkedPairId,
+      firstEntranceId: firstEntrance.entranceId,
+      secondEntranceId: secondEntrance.entranceId,
+      firstIslandIndex,
+      secondIslandIndex,
+      caveV2: buildQaCaveV2Summary(),
+    };
+  }
+
   function buildRenderGameTextPayload() {
     const mode = !startScreen || startScreen.classList.contains("hidden")
       ? (state.loadingVisible ? "loading" : "game")
       : "menu";
+    const activeWorld = state.world || state.surfaceWorld || null;
     return {
       note: "origin=top-left,x+=right,y+=down",
       mode,
       menuView: currentStartMenuView,
       loadingVisible: !!state.loadingVisible,
+      loading: {
+        title: String(state.loadingTitle || ""),
+        stage: String(state.loadingStage || ""),
+      },
       fps: {
         visible: !!(state.debugUnlocked && state.debugShowFps),
         smoothed: Number((Number(debugFpsMeter.smoothed) || 0).toFixed(1)),
@@ -50674,6 +51261,18 @@
           overlays: Number((qaRuntime.frameBuckets.overlays || 0).toFixed(2)),
         },
       },
+      multiplayer: {
+        enabled: !!net.enabled,
+        isHost: !!net.isHost,
+        ready: !!net.ready,
+        joinPhase: String(net.joinPhase || ""),
+        roomId: String(net.roomId || ""),
+        playerId: String(net.playerId || ""),
+        remotePlayers: net.players instanceof Map ? net.players.size : 0,
+        statusText: mpStatus?.textContent || "",
+        roomText: roomDisplay?.textContent || "",
+      },
+      world: buildQaWorldSummary(activeWorld),
       player: state.player
         ? {
             x: Math.round(state.player.x),
@@ -50682,6 +51281,15 @@
             inCave: !!state.inCave,
           }
         : null,
+      inventory: buildQaInventorySummary(state.inventory),
+      save: {
+        dirty: !!state.dirty,
+        timer: Number((Number(state.saveTimer) || 0).toFixed(2)),
+        statusText: saveStatus?.textContent || "",
+        statusState: saveStatus?.dataset?.state || "",
+      },
+      caveV2: buildQaCaveV2Summary(),
+      mpAutotest: buildQaMpAutotestSummary(),
       panels: {
         settings: { visible: isUiElementVisible(settingsPanel), rect: getUiRectSnapshot(settingsPanel) },
         debug: { visible: isUiElementVisible(debugPanel), rect: getUiRectSnapshot(debugPanel) },
@@ -50698,6 +51306,53 @@
     window.__isgDiagnostics = {
       getSnapshot: () => buildRenderGameTextPayload(),
       getFrameBuckets: () => ({ ...qaRuntime.frameBuckets }),
+      getMpAutotestSummary: () => buildQaMpAutotestSummary(),
+      getCaveV2Summary: () => buildQaCaveV2Summary(),
+      hasCaveV2EntranceId: (entranceId) => {
+        const world = state.surfaceWorld || state.world;
+        const id = typeof entranceId === "string" ? entranceId : "";
+        if (!world || !id) return false;
+        return getRuntimeCaveV2Entrances(world).some((entry) => (
+          entry && ((entry.entranceId || entry.key) === id || entry.key === id)
+        ));
+      },
+      saveGameNow: () => {
+        saveGame();
+        return buildRenderGameTextPayload();
+      },
+      loadSeed: (seed = null) => {
+        loadOrCreateGame(seed);
+        updateAllSlotUI();
+        return buildRenderGameTextPayload();
+      },
+      startMpAutotest: (mode = "quick", options = null) => {
+        const opts = options && typeof options === "object" ? options : {};
+        if (mpAutotestClientsInput && Number.isFinite(Number(opts.clients))) {
+          mpAutotestClientsInput.value = String(clamp(Math.floor(Number(opts.clients) || 1), 1, 3));
+        }
+        if (mpAutotestSeedInput && typeof opts.seed === "string") {
+          mpAutotestSeedInput.value = opts.seed;
+        }
+        startMultiplayerAutotest(mode === "stress" ? "stress" : "quick");
+        return buildQaMpAutotestSummary();
+      },
+      spawnQaLinkedCavePair: () => spawnQaLinkedCavePair(),
+      travelActiveCaveV2ToSurfaceExit: (exitKind = "linked") => driveQaActiveCaveV2ToSurfaceExit(exitKind),
+      enterCaveV2ByEntranceId: (entranceId) => {
+        const world = state.surfaceWorld || state.world;
+        const id = typeof entranceId === "string" ? entranceId : "";
+        if (!world || !id) return null;
+        const entrance = getRuntimeCaveV2Entrances(world).find((entry) => (
+          entry && ((entry.entranceId || entry.key) === id || entry.key === id)
+        ));
+        if (!entrance) return null;
+        enterCaveV2(entrance);
+        return buildQaCaveV2Summary();
+      },
+      leaveCaveV2Now: () => {
+        leaveCaveV2();
+        return buildQaCaveV2Summary();
+      },
       getUiRectSnapshot,
       requestResize,
     };

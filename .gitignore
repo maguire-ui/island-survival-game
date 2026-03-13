@@ -1,1 +1,11 @@
 .DS_Store
+
+# Local QA/runtime artifacts
+qa/.venv/
+qa/.pip-cache/
+qa/.pycache/
+qa/browsers/
+qa/artifacts/
+qa/reports/latest-summary.json
+qa/reports/latest-summary.md
+qa/reports/failure-history.md
