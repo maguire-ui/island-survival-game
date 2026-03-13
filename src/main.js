@@ -854,7 +854,7 @@
   const CAVES_ENABLED = false;
   const CAVE_V2_ENABLED = true;
   const CAVE_V2_MOB_POPULATE_VERSION = 3;
-  const CAVE_V2_PASSAGE_REPAIR_VERSION = 5;
+  const CAVE_V2_PASSAGE_REPAIR_VERSION = 6;
   const CAVE_V2_ORE_PLACEMENT_VERSION = 3;
   const CAVE_V2_ROOM_CONFIG = Object.freeze({
     roomCountMin: 8,
@@ -4834,7 +4834,8 @@
       const entrySurfaceSide = normalizeCaveV2Direction(cave.entrySurfaceSide) || "S";
       if (entryRoom) {
         const entryDoor = getCaveV2ExitCenterTile(entryRoom, entrySurfaceSide);
-        if (!entryDoor || !isCaveV2FloorTile(entryRoom, entryDoor.tx, entryDoor.ty)) {
+        const entryDoorway = getCaveV2DoorwayState(entryRoom, entrySurfaceSide);
+        if (!entryDoor || !isCaveV2FloorTile(entryRoom, entryDoor.tx, entryDoor.ty) || !entryDoorway?.usable) {
           qaPushIssue(issues, `[caveV2:${caveId}] Entry surface doorway ${entrySurfaceSide} is blocked`);
         }
         const rawSpawn = getCaveV2EntrySpawnPosition(entryRoom, entrySurfaceSide);
@@ -4864,7 +4865,8 @@
           const linkedRoom = cave.roomsById[linkedRoomId];
           if (linkedRoom) {
             const linkedDoor = getCaveV2ExitCenterTile(linkedRoom, linkedSurfaceSide);
-            if (!linkedDoor || !isCaveV2FloorTile(linkedRoom, linkedDoor.tx, linkedDoor.ty)) {
+            const linkedDoorway = getCaveV2DoorwayState(linkedRoom, linkedSurfaceSide);
+            if (!linkedDoor || !isCaveV2FloorTile(linkedRoom, linkedDoor.tx, linkedDoor.ty) || !linkedDoorway?.usable) {
               qaPushIssue(issues, `[caveV2:${caveId}] Linked surface doorway ${linkedSurfaceSide} is blocked`);
             }
           }
@@ -4894,6 +4896,7 @@
         }
         for (const side of ["N", "S", "E", "W"]) {
           const nextId = room.exits[side];
+          const doorway = getCaveV2DoorwayState(room, side);
           if (!nextId) continue;
           edgeCount += 1;
           const exitInfo = getCaveV2ExitCenterTile(room, side);
@@ -4912,6 +4915,13 @@
           }
           if (!isCaveV2FloorTile(room, exitInfo.tx, exitInfo.ty)) {
             qaPushIssue(issues, `[caveV2:${caveId}:${roomId}] Exit ${side} doorway tile is not floor`);
+            break;
+          }
+          if (!doorway?.usable) {
+            qaPushIssue(
+              issues,
+              `[caveV2:${caveId}:${roomId}] Exit ${side} has no usable carved doorway (${doorway?.reason || "missing"})`
+            );
             break;
           }
           const laneRect = getCaveV2ExitLaneRectPx(room, side);
@@ -4937,6 +4947,33 @@
           }
           if (!visited.has(nextId)) queue.push(nextId);
         }
+        const surfaceExitSides = new Set(getCaveV2EntryRoomSurfaceExitSides(cave, room));
+        for (const side of ["N", "S", "E", "W"]) {
+          const doorway = getCaveV2DoorwayState(room, side);
+          const expectsDoorway = !!room.exits?.[side] || surfaceExitSides.has(side);
+          if (expectsDoorway) {
+            if (!doorway?.usable) {
+              qaPushIssue(
+                issues,
+                `[caveV2:${caveId}:${roomId}] Expected doorway ${side} is not usable (${doorway?.reason || "missing"})`
+              );
+              break;
+            }
+            if (!doorway.markerTile || !isCaveV2FloorTile(room, doorway.markerTile.tx, doorway.markerTile.ty)) {
+              qaPushIssue(issues, `[caveV2:${caveId}:${roomId}] Expected doorway ${side} has no valid floor marker tile`);
+              break;
+            }
+            const centerAnchor = { tx: Math.floor(room.sizeW * 0.5), ty: Math.floor(room.sizeH * 0.5) };
+            if (!findCaveV2TilePath(room, centerAnchor, doorway.markerTile)) {
+              qaPushIssue(issues, `[caveV2:${caveId}:${roomId}] Expected doorway ${side} is not reachable from room center`);
+              break;
+            }
+          } else if (doorway?.hasAnyOpenEdge) {
+            qaPushIssue(issues, `[caveV2:${caveId}:${roomId}] Closed side ${side} has a fake edge opening`);
+            break;
+          }
+        }
+        if (issues.length > 0) break;
         if (room.generated) {
           const expectedTileCount = room.sizeW * room.sizeH;
           if (!Array.isArray(room.tiles) || room.tiles.length !== expectedTileCount) {
@@ -20272,6 +20309,181 @@
     return null;
   }
 
+  function getCaveV2DoorwayTileAtDepth(room, side, laneCoord, depth = 0) {
+    const normalized = normalizeCaveV2Direction(side);
+    if (!room || !normalized || !Number.isInteger(laneCoord)) return null;
+    const offset = Math.max(0, Math.floor(Number(depth) || 0));
+    if (normalized === "N") return { tx: laneCoord, ty: offset };
+    if (normalized === "S") return { tx: laneCoord, ty: room.sizeH - 1 - offset };
+    if (normalized === "W") return { tx: offset, ty: laneCoord };
+    if (normalized === "E") return { tx: room.sizeW - 1 - offset, ty: laneCoord };
+    return null;
+  }
+
+  function buildCaveV2DoorwayLaneCoordinateOrder(laneMin, laneMax) {
+    const min = Math.floor(Math.min(laneMin, laneMax));
+    const max = Math.floor(Math.max(laneMin, laneMax));
+    if (!Number.isInteger(min) || !Number.isInteger(max) || min > max) return [];
+    const center = Math.floor((min + max) * 0.5);
+    const order = [];
+    for (let offset = 0; center - offset >= min || center + offset <= max; offset += 1) {
+      const left = center - offset;
+      const right = center + offset;
+      if (left >= min && left <= max) order.push(left);
+      if (offset > 0 && right >= min && right <= max) order.push(right);
+    }
+    return order;
+  }
+
+  function getCaveV2DoorwayState(room, side) {
+    const normalized = normalizeCaveV2Direction(side);
+    if (!room || !normalized) return null;
+    const edge = getCaveV2ExitCenterTile(room, normalized);
+    if (!edge) return null;
+    const laneCoords = [];
+    const laneSamples = [];
+    let openLaneMin = null;
+    let openLaneMax = null;
+    let edgeFloorCount = 0;
+    let runwayLaneCount = 0;
+    const requiredRunwayDepth = 3;
+    for (let laneCoord = edge.laneMin; laneCoord <= edge.laneMax; laneCoord += 1) {
+      laneCoords.push(laneCoord);
+      let contiguousFloorDepth = 0;
+      for (let depth = 0; depth < requiredRunwayDepth + 1; depth += 1) {
+        const tile = getCaveV2DoorwayTileAtDepth(room, normalized, laneCoord, depth);
+        if (!tile || !isCaveV2FloorTile(room, tile.tx, tile.ty)) break;
+        contiguousFloorDepth += 1;
+      }
+      if (contiguousFloorDepth > 0) edgeFloorCount += 1;
+      const hasRunway = contiguousFloorDepth >= requiredRunwayDepth;
+      if (hasRunway) {
+        runwayLaneCount += 1;
+        if (openLaneMin == null || laneCoord < openLaneMin) openLaneMin = laneCoord;
+        if (openLaneMax == null || laneCoord > openLaneMax) openLaneMax = laneCoord;
+      }
+      laneSamples.push({ laneCoord, contiguousFloorDepth, hasRunway });
+    }
+    const sampleByLaneCoord = new Map(laneSamples.map((sample) => [sample.laneCoord, sample]));
+    const orderedCoords = buildCaveV2DoorwayLaneCoordinateOrder(edge.laneMin, edge.laneMax);
+    let markerTile = null;
+    for (const laneCoord of orderedCoords) {
+      const sample = sampleByLaneCoord.get(laneCoord);
+      if (!sample || !sample.hasRunway) continue;
+      for (const depth of [1, 2, 3]) {
+        if (sample.contiguousFloorDepth <= depth) continue;
+        const tile = getCaveV2DoorwayTileAtDepth(room, normalized, laneCoord, depth);
+        if (!tile || !isCaveV2FloorTile(room, tile.tx, tile.ty)) continue;
+        const px = (tile.tx + 0.5) * CONFIG.tileSize;
+        const py = (tile.ty + 0.5) * CONFIG.tileSize;
+        if (!isCaveV2PositionClear(room, px, py, CONFIG.tileSize * 0.24)) continue;
+        markerTile = {
+          tx: tile.tx,
+          ty: tile.ty,
+          x: px,
+          y: py,
+          laneCoord,
+          depth,
+        };
+        break;
+      }
+      if (markerTile) break;
+    }
+    let reason = null;
+    if (runwayLaneCount <= 0) reason = "blocked-doorway";
+    else if (!markerTile) reason = "no-clear-doorway-floor";
+    return {
+      side: normalized,
+      laneMin: edge.laneMin,
+      laneMax: edge.laneMax,
+      openLaneMin,
+      openLaneMax,
+      edgeFloorCount,
+      runwayLaneCount,
+      hasAnyOpenEdge: edgeFloorCount > 0,
+      markerTile,
+      usable: runwayLaneCount > 0 && !!markerTile,
+      reason,
+    };
+  }
+
+  function getCaveV2UsableDoorwayRectPx(room, side) {
+    const doorway = getCaveV2DoorwayState(room, side);
+    if (!doorway || !doorway.usable) return null;
+    const tile = CONFIG.tileSize;
+    const roomPx = getCaveV2RoomPixelSize(room);
+    const laneMin = doorway.openLaneMin;
+    const laneMax = doorway.openLaneMax;
+    if (!Number.isInteger(laneMin) || !Number.isInteger(laneMax) || laneMax < laneMin) return null;
+    if (doorway.side === "N") {
+      return {
+        x: laneMin * tile,
+        y: 0,
+        w: (laneMax - laneMin + 1) * tile,
+        h: tile,
+      };
+    }
+    if (doorway.side === "S") {
+      return {
+        x: laneMin * tile,
+        y: roomPx.h - tile,
+        w: (laneMax - laneMin + 1) * tile,
+        h: tile,
+      };
+    }
+    if (doorway.side === "W") {
+      return {
+        x: 0,
+        y: laneMin * tile,
+        w: tile,
+        h: (laneMax - laneMin + 1) * tile,
+      };
+    }
+    if (doorway.side === "E") {
+      return {
+        x: roomPx.w - tile,
+        y: laneMin * tile,
+        w: tile,
+        h: (laneMax - laneMin + 1) * tile,
+      };
+    }
+    return null;
+  }
+
+  function setCaveV2RectTiles(room, x0, y0, x1, y1, value = 0) {
+    const minX = clamp(Math.min(x0, x1), 0, room.sizeW - 1);
+    const maxX = clamp(Math.max(x0, x1), 0, room.sizeW - 1);
+    const minY = clamp(Math.min(y0, y1), 0, room.sizeH - 1);
+    const maxY = clamp(Math.max(y0, y1), 0, room.sizeH - 1);
+    const tileValue = value ? 1 : 0;
+    for (let y = minY; y <= maxY; y += 1) {
+      for (let x = minX; x <= maxX; x += 1) {
+        room.tiles[caveV2RoomTileIndex(x, y, room)] = tileValue;
+      }
+    }
+  }
+
+  function sealCaveV2ClosedDoorwayBand(room, side) {
+    const normalized = normalizeCaveV2Direction(side);
+    const edge = getCaveV2ExitCenterTile(room, normalized);
+    if (!room || !normalized || !edge) return;
+    const minLane = clamp(edge.laneMin - 1, 0, room.sizeW - 1);
+    const maxLane = clamp(edge.laneMax + 1, 0, room.sizeW - 1);
+    if (normalized === "N") {
+      setCaveV2RectTiles(room, minLane, 0, maxLane, 2, 0);
+    } else if (normalized === "S") {
+      setCaveV2RectTiles(room, minLane, room.sizeH - 3, maxLane, room.sizeH - 1, 0);
+    } else if (normalized === "W") {
+      const minY = clamp(edge.laneMin - 1, 0, room.sizeH - 1);
+      const maxY = clamp(edge.laneMax + 1, 0, room.sizeH - 1);
+      setCaveV2RectTiles(room, 0, minY, 2, maxY, 0);
+    } else if (normalized === "E") {
+      const minY = clamp(edge.laneMin - 1, 0, room.sizeH - 1);
+      const maxY = clamp(edge.laneMax + 1, 0, room.sizeH - 1);
+      setCaveV2RectTiles(room, room.sizeW - 3, minY, room.sizeW - 1, maxY, 0);
+    }
+  }
+
   function carveCaveV2Rect(room, x0, y0, x1, y1) {
     const minX = clamp(Math.min(x0, x1), 0, room.sizeW - 1);
     const maxX = clamp(Math.max(x0, x1), 0, room.sizeW - 1);
@@ -20650,6 +20862,17 @@
     }
     for (const side of getCaveV2EntryRoomSurfaceExitSides(cave, room)) {
       carveCaveV2GuaranteedExitRunway(room, side, 2, 2);
+    }
+    const expectedOpenSides = new Set();
+    for (const side of ["N", "S", "E", "W"]) {
+      if (room.exits?.[side]) expectedOpenSides.add(side);
+    }
+    for (const side of getCaveV2EntryRoomSurfaceExitSides(cave, room)) {
+      expectedOpenSides.add(side);
+    }
+    for (const side of ["N", "S", "E", "W"]) {
+      if (expectedOpenSides.has(side)) continue;
+      sealCaveV2ClosedDoorwayBand(room, side);
     }
     room.caveV2PassageRepairVersion = CAVE_V2_PASSAGE_REPAIR_VERSION;
     return true;
@@ -22790,7 +23013,13 @@
   function getCaveV2EntrySpawnPosition(room, side = "S") {
     const roomPx = getCaveV2RoomPixelSize(room);
     const inset = CAVE_V2_ROOM_CONFIG.spawnInsetTiles * CONFIG.tileSize;
-    const lane = getCaveV2ExitCenterTile(room, normalizeCaveV2Direction(side) || "S");
+    const doorway = getCaveV2DoorwayState(room, normalizeCaveV2Direction(side) || "S");
+    const lane = doorway?.markerTile
+      ? {
+          tx: doorway.markerTile.tx,
+          ty: doorway.markerTile.ty,
+        }
+      : getCaveV2ExitCenterTile(room, normalizeCaveV2Direction(side) || "S");
     const fallbackCenterX = roomPx.w * 0.5;
     const fallbackCenterY = roomPx.h * 0.5;
     const centerX = lane ? ((lane.tx + 0.5) * CONFIG.tileSize) : fallbackCenterX;
@@ -23467,6 +23696,10 @@
     if (!nextRoomId) return false;
     const nextRoom = cave.roomsById[nextRoomId];
     if (!nextRoom) return false;
+    if (!getCaveV2DoorwayState(room, dir)?.usable) return false;
+    ensureCaveV2RoomPassagesOpen(cave, nextRoom);
+    const opposite = getCaveV2OppositeSide(dir);
+    if (!opposite || !getCaveV2DoorwayState(nextRoom, opposite)?.usable) return false;
     const vec = getCaveV2DirVec(dir);
     const roomPx = getCaveV2RoomPixelSize(room);
     const boundaryPos = { x: caveState.active.x, y: caveState.active.y };
@@ -23514,6 +23747,7 @@
     if (surfaceSides.length > 0) {
       const depth = CAVE_V2_ROOM_CONFIG.boundaryTriggerDepthTiles * CONFIG.tileSize * 2;
       for (const surfaceSide of surfaceSides) {
+        if (!getCaveV2DoorwayState(room, surfaceSide)?.usable) continue;
         const lane = isCaveV2PointInExitLane(room, surfaceSide, caveState.active.x, caveState.active.y);
         if (!lane) continue;
         let near = false;
@@ -23643,6 +23877,7 @@
       {
         const surfaceSides = getCaveV2SessionSurfaceExitSides(cave, caveState.active, room.roomId);
         for (const surfaceSide of surfaceSides) {
+          if (!getCaveV2DoorwayState(room, surfaceSide)?.usable) continue;
           if (isCaveV2TransitionSideLocked(caveState, room, surfaceSide)) continue;
           if (!isCaveV2PointInExitLane(room, surfaceSide, caveState.active.x, caveState.active.y)) continue;
           if (!isPlayerAtCaveV2Boundary(room, surfaceSide, caveState.active.x, caveState.active.y)) continue;
@@ -23671,6 +23906,7 @@
       }
       for (const side of ["N", "S", "E", "W"]) {
         if (!room.exits?.[side]) continue;
+        if (!getCaveV2DoorwayState(room, side)?.usable) continue;
         if (isCaveV2TransitionSideLocked(caveState, room, side)) continue;
         if (!isCaveV2PointInExitLane(room, side, caveState.active.x, caveState.active.y)) continue;
         if (!isPlayerAtCaveV2Boundary(room, side, caveState.active.x, caveState.active.y)) continue;
@@ -23850,7 +24086,7 @@
       }
     }
 
-    // Darken normal inter-room passages so entry-room surface exits stand out clearly.
+    // Only frame doorways that are genuinely carved and usable.
     const activeSession = isActive ? state.caveV2?.active : null;
     const linkedSurfaceSideForDraw = normalizeCaveV2Direction(activeSession?.linkedExitSide)
       || normalizeCaveV2Direction(cave?.linkedSurfaceSide);
@@ -23861,33 +24097,79 @@
           : getCaveV2EntryRoomSurfaceExitSides(cave, room)
       )
       : [];
-    for (const side of ["N", "S", "E", "W"]) {
-      if (!room.exits?.[side]) continue;
-      if (surfaceExitSides.includes(side)) continue;
-      const laneRect = getCaveV2ExitLaneRectPx(room, side);
-      if (!laneRect) continue;
+    const doorwayStateCache = new Map();
+    const getDoorwayStateForDraw = (side) => {
+      const normalized = normalizeCaveV2Direction(side);
+      if (!normalized) return null;
+      if (!doorwayStateCache.has(normalized)) {
+        doorwayStateCache.set(normalized, getCaveV2DoorwayState(room, normalized));
+      }
+      return doorwayStateCache.get(normalized) || null;
+    };
+    const drawDoorwayFrame = (side, options = null) => {
+      const doorway = getDoorwayStateForDraw(side);
+      const laneRect = getCaveV2UsableDoorwayRectPx(room, side);
+      if (!doorway?.usable || !laneRect) return;
+      const opts = options || {};
       const lx = drawX + laneRect.x;
       const ly = drawY + laneRect.y;
       const lw = laneRect.w;
       const lh = laneRect.h;
-      const fadeDepth = Math.max(44, Math.min(86, Math.floor((side === "N" || side === "S" ? roomPx.h : roomPx.w) * 0.28)));
-      const grad = (side === "N" || side === "S")
-        ? ctx.createLinearGradient(0, side === "N" ? ly : (ly + lh), 0, side === "N" ? (ly + fadeDepth) : (ly + lh - fadeDepth))
-        : ctx.createLinearGradient(side === "W" ? lx : (lx + lw), 0, side === "W" ? (lx + fadeDepth) : (lx + lw - fadeDepth), 0);
-      grad.addColorStop(0, "rgba(0,0,0,0.28)");
-      grad.addColorStop(0.45, "rgba(0,0,0,0.14)");
-      grad.addColorStop(1, "rgba(0,0,0,0)");
-      ctx.fillStyle = grad;
-      ctx.fillRect(lx, ly, lw, lh);
-
+      const isSurface = !!opts.surface;
+      const isLinked = !!opts.linked;
+      const innerDepth = Math.min(
+        Math.max(12, Math.floor((side === "N" || side === "S" ? roomPx.h : roomPx.w) * 0.1)),
+        30
+      );
+      const wash = isSurface
+        ? (isLinked
+          ? ["rgba(178, 228, 255, 0.12)", "rgba(138, 206, 246, 0.04)", "rgba(122, 196, 238, 0)"]
+          : ["rgba(255, 226, 164, 0.12)", "rgba(255, 214, 145, 0.04)", "rgba(255, 205, 136, 0)"])
+        : ["rgba(255, 240, 214, 0.05)", "rgba(214, 186, 156, 0.02)", "rgba(214, 186, 156, 0)"];
+      if (side === "N" || side === "S") {
+        const edgeY = side === "N" ? ly : (ly + lh);
+        const innerY = side === "N" ? (ly + innerDepth) : (ly + lh - innerDepth);
+        const grad = ctx.createLinearGradient(0, edgeY, 0, innerY);
+        grad.addColorStop(0, wash[0]);
+        grad.addColorStop(0.5, wash[1]);
+        grad.addColorStop(1, wash[2]);
+        ctx.fillStyle = grad;
+        ctx.fillRect(lx, Math.min(edgeY, innerY), lw, Math.abs(innerY - edgeY));
+        ctx.fillStyle = "rgba(0,0,0,0.12)";
+        ctx.fillRect(lx, side === "N" ? ly : (ly + lh - 1), lw, 1);
+        ctx.fillStyle = "rgba(255,255,255,0.06)";
+        ctx.fillRect(lx, ly, 1, lh);
+        ctx.fillRect(lx + lw - 1, ly, 1, lh);
+      } else {
+        const edgeX = side === "W" ? lx : (lx + lw);
+        const innerX = side === "W" ? (lx + innerDepth) : (lx + lw - innerDepth);
+        const grad = ctx.createLinearGradient(edgeX, 0, innerX, 0);
+        grad.addColorStop(0, wash[0]);
+        grad.addColorStop(0.5, wash[1]);
+        grad.addColorStop(1, wash[2]);
+        ctx.fillStyle = grad;
+        ctx.fillRect(Math.min(edgeX, innerX), ly, Math.abs(innerX - edgeX), lh);
+        ctx.fillStyle = "rgba(0,0,0,0.12)";
+        ctx.fillRect(side === "W" ? lx : (lx + lw - 1), ly, 1, lh);
+        ctx.fillStyle = "rgba(255,255,255,0.06)";
+        ctx.fillRect(lx, ly, lw, 1);
+        ctx.fillRect(lx, ly + lh - 1, lw, 1);
+      }
+    };
+    for (const side of ["N", "S", "E", "W"]) {
+      if (!room.exits?.[side]) continue;
+      if (surfaceExitSides.includes(side)) continue;
+      drawDoorwayFrame(side, { surface: false });
     }
 
     // Entry room daylight spill / surface-exit guidance
     if (cave && surfaceExitSides.length > 0) {
       for (const side of surfaceExitSides) {
-        const laneRect = getCaveV2ExitLaneRectPx(room, side);
-        if (!laneRect) continue;
+        const doorway = getDoorwayStateForDraw(side);
+        const laneRect = getCaveV2UsableDoorwayRectPx(room, side);
+        if (!doorway?.usable || !laneRect) continue;
         const isLinkedSide = normalizeCaveV2Direction(side) === linkedSurfaceSideForDraw;
+        drawDoorwayFrame(side, { surface: true, linked: isLinkedSide });
         const lx = drawX + laneRect.x;
         const ly = drawY + laneRect.y;
         const lw = laneRect.w;
@@ -23934,8 +24216,9 @@
     // Surface exit openings in entry room (return + linked, visually distinct).
     if (cave && surfaceExitSides.length > 0) {
       for (const side of surfaceExitSides) {
-        const laneRect = getCaveV2ExitLaneRectPx(room, side);
-        if (!laneRect) continue;
+        const doorway = getDoorwayStateForDraw(side);
+        const laneRect = getCaveV2UsableDoorwayRectPx(room, side);
+        if (!doorway?.usable || !laneRect) continue;
         const isLinkedSide = normalizeCaveV2Direction(side) === linkedSurfaceSideForDraw;
         const lx = drawX + laneRect.x;
         const ly = drawY + laneRect.y;
@@ -51937,6 +52220,25 @@
   function buildQaCaveV2Summary() {
     if (!CAVE_V2_ENABLED) return { enabled: false, active: null, caves: [] };
     const caveState = getCaveV2State();
+    const buildDoorwaySnapshot = (room, expectedSurfaceSides = []) => {
+      const surfaceSet = new Set(expectedSurfaceSides || []);
+      return ["N", "S", "E", "W"].map((side) => {
+        const doorway = getCaveV2DoorwayState(room, side);
+        return {
+          side,
+          expectedRoomExit: !!room?.exits?.[side],
+          expectedSurfaceExit: surfaceSet.has(side),
+          usable: !!doorway?.usable,
+          hasAnyOpenEdge: !!doorway?.hasAnyOpenEdge,
+          openLaneMin: Number.isInteger(doorway?.openLaneMin) ? doorway.openLaneMin : null,
+          openLaneMax: Number.isInteger(doorway?.openLaneMax) ? doorway.openLaneMax : null,
+          markerTile: doorway?.markerTile
+            ? { tx: doorway.markerTile.tx, ty: doorway.markerTile.ty, depth: doorway.markerTile.depth }
+            : null,
+          reason: doorway?.reason || null,
+        };
+      });
+    };
     const caves = Object.values(caveState.cavesById || {}).map((cave) => {
       const distance = buildCaveV2RoomDistanceMap(cave);
       return {
@@ -51965,11 +52267,77 @@
             const activeCave = caveState.cavesById?.[caveState.active.caveId];
             return activeCave ? getCaveV2SessionSurfaceExitSides(activeCave, caveState.active, caveState.active.roomId) : [];
           })(),
+          doorways: (() => {
+            const activeCave = caveState.cavesById?.[caveState.active.caveId];
+            const activeRoom = activeCave?.roomsById?.[caveState.active.roomId];
+            const surfaceSides = activeCave
+              ? getCaveV2SessionSurfaceExitSides(activeCave, caveState.active, caveState.active.roomId)
+              : [];
+            return activeRoom ? buildDoorwaySnapshot(activeRoom, surfaceSides) : [];
+          })(),
         }
       : null;
     return {
       enabled: true,
       active,
+      caves,
+    };
+  }
+
+  function buildQaCaveV2DoorwayAudit() {
+    if (!CAVE_V2_ENABLED) return { enabled: false, issues: [], caves: [] };
+    const caveState = getCaveV2State();
+    const issues = [];
+    const caves = [];
+    for (const cave of Object.values(caveState.cavesById || {})) {
+      if (!cave || !cave.roomsById) continue;
+      const caveSummary = {
+        caveId: String(cave.caveId || ""),
+        rooms: [],
+      };
+      for (const room of Object.values(cave.roomsById || {})) {
+        if (!room) continue;
+        const surfaceSides = new Set(getCaveV2EntryRoomSurfaceExitSides(cave, room));
+        const roomSummary = {
+          roomId: String(room.roomId || ""),
+          sides: [],
+        };
+        for (const side of ["N", "S", "E", "W"]) {
+          const doorway = getCaveV2DoorwayState(room, side);
+          const expectsDoorway = !!room.exits?.[side] || surfaceSides.has(side);
+          const centerAnchor = { tx: Math.floor(room.sizeW * 0.5), ty: Math.floor(room.sizeH * 0.5) };
+          const reachable = !!(
+            doorway?.markerTile
+            && findCaveV2TilePath(room, centerAnchor, doorway.markerTile)
+          );
+          roomSummary.sides.push({
+            side,
+            expectsDoorway,
+            usable: !!doorway?.usable,
+            hasAnyOpenEdge: !!doorway?.hasAnyOpenEdge,
+            reachable,
+            markerTile: doorway?.markerTile
+              ? { tx: doorway.markerTile.tx, ty: doorway.markerTile.ty, depth: doorway.markerTile.depth }
+              : null,
+            reason: doorway?.reason || null,
+          });
+          if (expectsDoorway && !doorway?.usable) {
+            issues.push(`${cave.caveId}:${room.roomId}:${side}:expected-doorway-not-usable:${doorway?.reason || "missing"}`);
+          }
+          if (expectsDoorway && doorway?.usable && !reachable) {
+            issues.push(`${cave.caveId}:${room.roomId}:${side}:doorway-not-reachable`);
+          }
+          if (!expectsDoorway && doorway?.hasAnyOpenEdge) {
+            issues.push(`${cave.caveId}:${room.roomId}:${side}:fake-edge-opening`);
+          }
+        }
+        caveSummary.rooms.push(roomSummary);
+      }
+      caves.push(caveSummary);
+    }
+    return {
+      enabled: true,
+      issues,
       caves,
     };
   }
@@ -52081,11 +52449,11 @@
     if (!finalActive || !room) {
       return { ok: false, error: "missing-final-room", exitKind };
     }
-    const lane = getCaveV2ExitCenterTile(room, targetSide);
-    if (!lane) {
+    const doorway = getCaveV2DoorwayState(room, targetSide);
+    if (!doorway?.usable || !doorway.markerTile) {
       return {
         ok: false,
-        error: "missing-exit-lane",
+        error: "missing-usable-exit-doorway",
         exitKind,
         roomId: room.roomId,
         targetSide,
@@ -52094,7 +52462,7 @@
     const tile = CONFIG.tileSize;
     const halfTile = tile * 0.5;
     const roomPx = getCaveV2RoomPixelSize(room);
-    const laneCenterPx = ((lane.laneMin + lane.laneMax + 1) * 0.5) * tile;
+    const laneCenterPx = (doorway.markerTile.laneCoord + 0.5) * tile;
     if (targetSide === "N") {
       finalActive.x = laneCenterPx;
       finalActive.y = halfTile;
@@ -52358,6 +52726,7 @@
       },
       getMpAutotestSummary: () => buildQaMpAutotestSummary(),
       getCaveV2Summary: () => buildQaCaveV2Summary(),
+      getCaveV2DoorwayAudit: () => buildQaCaveV2DoorwayAudit(),
       hasCaveV2EntranceId: (entranceId) => {
         const world = state.surfaceWorld || state.world;
         const id = typeof entranceId === "string" ? entranceId : "";
