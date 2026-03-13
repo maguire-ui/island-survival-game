@@ -376,7 +376,9 @@ html, body {
 
 .panel {
   position: absolute;
-  right: 20px;
+  left: 50%;
+  right: auto;
+  transform: translateX(-50%);
   bottom: 90px;
   width: 280px;
   max-height: min(72vh, calc(var(--app-vh) - 120px));
@@ -604,27 +606,34 @@ html, body {
 }
 
 #buildMenu {
-  left: 20px;
+  left: 50%;
   right: auto;
+  transform: translateX(-50%);
   bottom: 90px;
   width: 300px;
 }
 
 #stationMenu {
-  right: 20px;
+  left: 50%;
+  right: auto;
+  transform: translateX(-50%);
   top: 60px;
   bottom: auto;
   width: 300px;
 }
 
 #chestPanel {
-  right: 20px;
+  left: 50%;
+  right: auto;
+  transform: translateX(-50%);
   bottom: 260px;
   width: 300px;
 }
 
 #shipRepairPanel {
-  right: 20px;
+  left: 50%;
+  right: auto;
+  transform: translateX(-50%);
   bottom: 260px;
   width: 320px;
 }
@@ -645,10 +654,11 @@ html, body {
 }
 
 #debugPanel {
-  left: 20px;
+  left: 50%;
   top: 96px;
   bottom: auto;
   right: auto;
+  transform: translateX(-50%);
   width: 280px;
   max-height: calc(var(--app-vh) - 140px);
   overflow-y: auto;
@@ -747,7 +757,9 @@ html, body {
 }
 
 #settingsPanel {
-  right: 20px;
+  left: 50%;
+  right: auto;
+  transform: translateX(-50%);
   top: 60px;
   bottom: auto;
   width: 332px;

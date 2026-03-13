@@ -169,15 +169,15 @@
   const PLAYER_MOVE_SPEED_MULT = 1.12;
 
   const TOUCH_STICK_MAX_DIST = 40;
-  const MOBILE_RENDER_DPR_CAP = 1.35;
-  const DESKTOP_RENDER_DPR_CAP = 1.55;
-  const MOBILE_RENDER_MAX_PIXELS = 1200000;
-  const DESKTOP_RENDER_MAX_PIXELS = 2100000;
+  const MOBILE_RENDER_DPR_CAP = 1.2;
+  const DESKTOP_RENDER_DPR_CAP = 1.35;
+  const MOBILE_RENDER_MAX_PIXELS = 950000;
+  const DESKTOP_RENDER_MAX_PIXELS = 1500000;
   const GRAPHICS_PRESET_CONFIG = Object.freeze({
-    performance: Object.freeze({ renderScale: 0.46, effectsLevel: 0 }),
-    balanced: Object.freeze({ renderScale: 0.62, effectsLevel: 0 }),
-    quality: Object.freeze({ renderScale: 0.78, effectsLevel: 1 }),
-    ultra: Object.freeze({ renderScale: 0.9, effectsLevel: 2 }),
+    performance: Object.freeze({ renderScale: 0.42, effectsLevel: 0 }),
+    balanced: Object.freeze({ renderScale: 0.56, effectsLevel: 0 }),
+    quality: Object.freeze({ renderScale: 0.66, effectsLevel: 1 }),
+    ultra: Object.freeze({ renderScale: 0.74, effectsLevel: 2 }),
   });
   const GRAPHICS_RUNTIME_PROFILE_CONFIG = Object.freeze({
     performance: Object.freeze({
@@ -2119,11 +2119,13 @@
   const FIXED_SIM_TIMESTEP_SECONDS = 1 / 60;
   const FIXED_SIM_MAX_FRAME_SECONDS = 0.12;
   const AUTO_PERF_GOVERNOR = Object.freeze({
-    lowFpsThreshold: 55,
-    lowFpsGraceSeconds: 0.9,
-    actionCooldownSeconds: 2.6,
-    minRenderScale: 0.35,
-    renderScaleStep: 0.08,
+    lowFpsThreshold: 58,
+    criticalFpsThreshold: 38,
+    criticalGraceSeconds: 0.35,
+    lowFpsGraceSeconds: 0.55,
+    actionCooldownSeconds: 1.05,
+    minRenderScale: 0.28,
+    renderScaleStep: 0.14,
   });
   const interpolationState = {
     playerPrevX: null,
@@ -50386,6 +50388,7 @@
     resetWorldSystemCadence();
     const autoPerf = {
       smoothedFrameMs: FIXED_SIM_TIMESTEP_SECONDS * 1000,
+      criticalLowFpsTimer: 0,
       lowFpsTimer: 0,
       cooldownTimer: 0,
     };
@@ -50436,7 +50439,35 @@
       const fps = 1000 / Math.max(1, autoPerf.smoothedFrameMs);
       autoPerf.cooldownTimer = Math.max(0, autoPerf.cooldownTimer - rawDeltaSeconds);
       if (fps >= AUTO_PERF_GOVERNOR.lowFpsThreshold) {
+        autoPerf.criticalLowFpsTimer = 0;
         autoPerf.lowFpsTimer = 0;
+        return;
+      }
+      if (fps < AUTO_PERF_GOVERNOR.criticalFpsThreshold) {
+        autoPerf.criticalLowFpsTimer += rawDeltaSeconds;
+      } else {
+        autoPerf.criticalLowFpsTimer = 0;
+      }
+      if (
+        autoPerf.criticalLowFpsTimer >= AUTO_PERF_GOVERNOR.criticalGraceSeconds
+        && autoPerf.cooldownTimer <= 0
+      ) {
+        autoPerf.criticalLowFpsTimer = 0;
+        autoPerf.lowFpsTimer = 0;
+        autoPerf.cooldownTimer = AUTO_PERF_GOVERNOR.actionCooldownSeconds;
+        if (normalizeGraphicsPreset(state.graphicsPreset) !== "performance") {
+          setGraphicsPreset("performance", false);
+          setPrompt("Auto-optimization: switched to Performance preset", 1.5);
+          return;
+        }
+        if (state.renderScale > AUTO_PERF_GOVERNOR.minRenderScale + 0.001) {
+          const nextScale = Math.max(
+            AUTO_PERF_GOVERNOR.minRenderScale,
+            state.renderScale - (AUTO_PERF_GOVERNOR.renderScaleStep * 1.25)
+          );
+          setRenderScaleFromPercent(Math.round(nextScale * 100), false);
+          setPrompt("Auto-optimization: lowered render scale", 1.4);
+        }
         return;
       }
       autoPerf.lowFpsTimer += rawDeltaSeconds;
