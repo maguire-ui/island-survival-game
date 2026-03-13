@@ -8,7 +8,7 @@
   />
   <title>Island Survival Game</title>
   <link rel="icon" href="data:," />
-  <link rel="stylesheet" href="styles.css?v=20260312-6" />
+  <link rel="stylesheet" href="styles.css?v=20260312-7" />
 </head>
 <body>
   <canvas id="game"></canvas>
@@ -65,21 +65,7 @@
               <span id="menuSfxVolumeValue">65%</span>
             </label>
             <input id="menuSfxVolume" class="settings-slider start-settings-slider" type="range" min="0" max="100" step="1" value="65" />
-            <label class="start-option-row" for="menuGraphicsPreset">
-              <span>Graphics</span>
-            </label>
-            <select id="menuGraphicsPreset" class="settings-select start-settings-select">
-              <option value="performance">Performance</option>
-              <option value="balanced" selected>Balanced</option>
-              <option value="quality">Quality</option>
-              <option value="ultra">Ultra</option>
-              <option value="custom">Custom</option>
-            </select>
-            <label class="start-option-row" for="menuRenderScale">
-              <span>Render Scale</span>
-              <span id="menuRenderScaleValue">100%</span>
-            </label>
-            <input id="menuRenderScale" class="settings-slider start-settings-slider" type="range" min="55" max="120" step="5" value="100" />
+            <div class="panel-hint">Graphics stay on the optimized high-detail mode automatically.</div>
           </div>
           <button id="menuResetWorldBtn" class="start-menu-utility-btn" type="button">Reset Seed</button>
           <button id="menuBackFromOptionsBtn" class="start-menu-back-btn" type="button">Back</button>
@@ -315,21 +301,7 @@
           <span id="sfxVolumeValue">65%</span>
         </div>
         <input id="sfxVolume" class="settings-slider" type="range" min="0" max="100" step="1" value="65" />
-        <div class="settings-row">
-          <span>Graphics</span>
-        </div>
-        <select id="graphicsPreset" class="settings-select">
-          <option value="performance">Performance</option>
-          <option value="balanced" selected>Balanced</option>
-          <option value="quality">Quality</option>
-          <option value="ultra">Ultra</option>
-          <option value="custom">Custom</option>
-        </select>
-        <div class="settings-row">
-          <span>Render Scale</span>
-          <span id="renderScaleValue">100%</span>
-        </div>
-        <input id="renderScale" class="settings-slider" type="range" min="40" max="120" step="5" value="100" />
+        <div class="panel-hint">Graphics stay on the optimized high-detail mode automatically.</div>
         <button id="resetWorldBtn" class="action-btn danger-btn">Reset</button>
         <button id="unlockDebugBtn" class="action-btn secondary-btn">Unlock Debug</button>
         <div id="debugUnlockStatus" class="panel-hint">Debug locked</div>
@@ -404,6 +376,6 @@
     })();
   </script>
   <script src="https://unpkg.com/peerjs@1.5.5/dist/peerjs.min.js"></script>
-  <script src="src/main.js?v=20260312-8"></script>
+  <script src="src/main.js?v=20260312-10"></script>
 </body>
 </html>

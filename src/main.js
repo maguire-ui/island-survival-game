@@ -169,22 +169,27 @@
   const PLAYER_MOVE_SPEED_MULT = 1.12;
 
   const TOUCH_STICK_MAX_DIST = 40;
-  const MOBILE_RENDER_DPR_CAP = 1.2;
-  const DESKTOP_RENDER_DPR_CAP = 1.35;
-  const MOBILE_RENDER_MAX_PIXELS = 950000;
-  const DESKTOP_RENDER_MAX_PIXELS = 1500000;
+  const MOBILE_RENDER_DPR_CAP = 1.0;
+  const DESKTOP_RENDER_DPR_CAP = 1.1;
+  const MOBILE_RENDER_MAX_PIXELS = 760000;
+  const DESKTOP_RENDER_MAX_PIXELS = 1180000;
   const GRAPHICS_PRESET_CONFIG = Object.freeze({
-    performance: Object.freeze({ renderScale: 0.42, effectsLevel: 0 }),
-    balanced: Object.freeze({ renderScale: 0.56, effectsLevel: 0 }),
-    quality: Object.freeze({ renderScale: 0.66, effectsLevel: 1 }),
-    ultra: Object.freeze({ renderScale: 0.74, effectsLevel: 2 }),
+    performance: Object.freeze({ renderScale: 0.44, effectsLevel: 0 }),
+    balanced: Object.freeze({ renderScale: 0.56, effectsLevel: 1 }),
+    quality: Object.freeze({ renderScale: 0.64, effectsLevel: 2 }),
+    ultra: Object.freeze({ renderScale: 0.72, effectsLevel: 2 }),
+  });
+  const AUTO_GRAPHICS_BASELINE = Object.freeze({
+    preset: "quality",
+    renderScale: GRAPHICS_PRESET_CONFIG.quality.renderScale,
+    effectsLevel: 2,
   });
   const GRAPHICS_RUNTIME_PROFILE_CONFIG = Object.freeze({
     performance: Object.freeze({
       worldStepMax: 0.06,
-      ambientFishSpawnChance: 0.18,
-      ambientFishMaxFactor: 0.18,
-      oceanDecorStride: 4,
+      ambientFishSpawnChance: 0.1,
+      ambientFishMaxFactor: 0.1,
+      oceanDecorStride: 6,
       snapshotInterval: 0.42,
       motionInterval: 0.05,
       playerSendInterval: 0.055,
@@ -199,9 +204,9 @@
     }),
     balanced: Object.freeze({
       worldStepMax: 0.055,
-      ambientFishSpawnChance: 0.35,
-      ambientFishMaxFactor: 0.45,
-      oceanDecorStride: 2,
+      ambientFishSpawnChance: 0.18,
+      ambientFishMaxFactor: 0.2,
+      oceanDecorStride: 4,
       snapshotInterval: 0.34,
       motionInterval: 0.036,
       playerSendInterval: 0.038,
@@ -216,9 +221,9 @@
     }),
     quality: Object.freeze({
       worldStepMax: 0.055,
-      ambientFishSpawnChance: 0.24,
-      ambientFishMaxFactor: 0.24,
-      oceanDecorStride: 4,
+      ambientFishSpawnChance: 0.22,
+      ambientFishMaxFactor: 0.22,
+      oceanDecorStride: 3,
       snapshotInterval: 0.34,
       motionInterval: 0.036,
       playerSendInterval: 0.038,
@@ -233,9 +238,9 @@
     }),
     ultra: Object.freeze({
       worldStepMax: 0.055,
-      ambientFishSpawnChance: 0.34,
-      ambientFishMaxFactor: 0.34,
-      oceanDecorStride: 3,
+      ambientFishSpawnChance: 0.28,
+      ambientFishMaxFactor: 0.28,
+      oceanDecorStride: 2,
       snapshotInterval: 0.32,
       motionInterval: 0.034,
       playerSendInterval: 0.036,
@@ -2070,9 +2075,9 @@
     playerName: "",
     musicVolume: 0.72,
     sfxVolume: 0.62,
-    graphicsPreset: "balanced",
-    renderScale: GRAPHICS_PRESET_CONFIG.balanced.renderScale,
-    graphicsEffectsLevel: GRAPHICS_PRESET_CONFIG.balanced.effectsLevel,
+    graphicsPreset: AUTO_GRAPHICS_BASELINE.preset,
+    renderScale: AUTO_GRAPHICS_BASELINE.renderScale,
+    graphicsEffectsLevel: AUTO_GRAPHICS_BASELINE.effectsLevel,
     debugUnlocked: false,
     debugInfiniteResources: false,
     debugInfiniteHealth: false,
@@ -2119,13 +2124,13 @@
   const FIXED_SIM_TIMESTEP_SECONDS = 1 / 60;
   const FIXED_SIM_MAX_FRAME_SECONDS = 0.12;
   const AUTO_PERF_GOVERNOR = Object.freeze({
-    lowFpsThreshold: 58,
-    criticalFpsThreshold: 38,
-    criticalGraceSeconds: 0.35,
-    lowFpsGraceSeconds: 0.55,
-    actionCooldownSeconds: 1.05,
-    minRenderScale: 0.28,
-    renderScaleStep: 0.14,
+    lowFpsThreshold: 60,
+    criticalFpsThreshold: 54,
+    criticalGraceSeconds: 0.24,
+    lowFpsGraceSeconds: 0.34,
+    actionCooldownSeconds: 0.72,
+    minRenderScale: 0.42,
+    renderScaleStep: 0.06,
   });
   const interpolationState = {
     playerPrevX: null,
@@ -2203,6 +2208,15 @@
     caveV2LastRoomSummary: "",
     startMenuBindAttemptCount: 0,
     menuApiBridgeInstallCount: 0,
+    frameBuckets: {
+      total: 0,
+      backdrop: 0,
+      terrain: 0,
+      world: 0,
+      entities: 0,
+      overlays: 0,
+    },
+    frameBucketSamples: 0,
   };
 
   const mpAutotest = {
@@ -2806,14 +2820,32 @@
     return GRAPHICS_PRESET_CONFIG[normalized] || null;
   }
 
-  function getRuntimeGraphicsProfileKey() {
-    const preset = normalizeGraphicsPreset(state.graphicsPreset);
-    if (preset !== "custom") return preset;
-    const fx = clampGraphicsEffectsLevel(state.graphicsEffectsLevel);
-    if (fx <= 0) return "performance";
-    if (fx === 1) return "balanced";
-    if (fx === 2) return "quality";
+  function getAdaptiveGraphicsProfileKeyForScale(renderScale = AUTO_GRAPHICS_BASELINE.renderScale) {
+    const scale = clampRenderScale(renderScale);
+    if (scale <= 0.5) return "performance";
+    if (scale <= 0.58) return "balanced";
+    if (scale <= 0.68) return "quality";
     return "ultra";
+  }
+
+  function applyAdaptiveGraphicsBaseline(options = {}) {
+    const {
+      persist = false,
+      resize = true,
+      syncCadence = true,
+    } = options;
+    state.graphicsPreset = AUTO_GRAPHICS_BASELINE.preset;
+    state.renderScale = clampRenderScale(AUTO_GRAPHICS_BASELINE.renderScale);
+    state.graphicsEffectsLevel = clampGraphicsEffectsLevel(AUTO_GRAPHICS_BASELINE.effectsLevel);
+    resetWorldSystemCadence();
+    updateGraphicsSettingsUI();
+    if (syncCadence) syncNetworkCadenceTimers();
+    if (resize) requestResize();
+    if (persist) saveUserSettings();
+  }
+
+  function getRuntimeGraphicsProfileKey() {
+    return getAdaptiveGraphicsProfileKeyForScale(state?.renderScale ?? AUTO_GRAPHICS_BASELINE.renderScale);
   }
 
   function getRuntimeGraphicsProfile() {
@@ -2888,7 +2920,11 @@
 
   function getRuntimeOceanDecorStride() {
     const profile = getRuntimeGraphicsProfile();
-    return clamp(Math.floor(Number(profile.oceanDecorStride) || 1), 1, 4);
+    const baseStride = clamp(Math.floor(Number(profile.oceanDecorStride) || 1), 1, 6);
+    const scale = clampRenderScale(state?.renderScale ?? AUTO_GRAPHICS_BASELINE.renderScale);
+    if (scale <= 0.48) return Math.min(6, baseStride + 2);
+    if (scale <= 0.56) return Math.min(6, baseStride + 1);
+    return baseStride;
   }
 
   function getNetworkCadenceConfig() {
@@ -2933,22 +2969,32 @@
     );
   }
 
-  function nearlyEqual(a, b, epsilon = 0.001) {
-    return Math.abs((Number(a) || 0) - (Number(b) || 0)) <= epsilon;
+  function getAdaptiveVisualDetailTier() {
+    const scale = clampRenderScale(state?.renderScale ?? AUTO_GRAPHICS_BASELINE.renderScale);
+    if (scale <= 0.5) return 0;
+    if (scale <= 0.58) return 1;
+    return 2;
   }
 
-  function syncGraphicsPresetWithCurrentValues() {
-    let matchedPreset = "custom";
-    for (const [presetId, preset] of Object.entries(GRAPHICS_PRESET_CONFIG)) {
-      if (
-        nearlyEqual(state.renderScale, preset.renderScale)
-        && state.graphicsEffectsLevel === preset.effectsLevel
-      ) {
-        matchedPreset = presetId;
-        break;
-      }
+  function shouldUseLowDetailResourceVisuals() {
+    return getAdaptiveVisualDetailTier() <= 0;
+  }
+
+  function shouldDrawFineSurfaceTileTexture() {
+    return getAdaptiveVisualDetailTier() >= 2;
+  }
+
+  function recordQaFrameBuckets(total, buckets) {
+    if (!buckets || typeof buckets !== "object") return;
+    const nextTotal = Math.max(0, Number(total) || 0);
+    const smoothing = qaRuntime.frameBucketSamples > 0 ? 0.16 : 1;
+    const keys = ["backdrop", "terrain", "world", "entities", "overlays"];
+    qaRuntime.frameBuckets.total = lerp(qaRuntime.frameBuckets.total || 0, nextTotal, smoothing);
+    for (const key of keys) {
+      const nextValue = Math.max(0, Number(buckets[key]) || 0);
+      qaRuntime.frameBuckets[key] = lerp(qaRuntime.frameBuckets[key] || 0, nextValue, smoothing);
     }
-    state.graphicsPreset = matchedPreset;
+    qaRuntime.frameBucketSamples += 1;
   }
 
   function clampDebugSpeedMultiplier(value) {
@@ -2973,9 +3019,9 @@
     const payload = {
       musicVolume: clampVolume(state.musicVolume, SETTINGS_DEFAULTS.musicVolume),
       sfxVolume: clampVolume(state.sfxVolume, SETTINGS_DEFAULTS.sfxVolume),
-      graphicsPreset: normalizeGraphicsPreset(state.graphicsPreset),
-      renderScale: clampRenderScale(state.renderScale),
-      graphicsEffectsLevel: clampGraphicsEffectsLevel(state.graphicsEffectsLevel),
+      graphicsPreset: AUTO_GRAPHICS_BASELINE.preset,
+      renderScale: AUTO_GRAPHICS_BASELINE.renderScale,
+      graphicsEffectsLevel: AUTO_GRAPHICS_BASELINE.effectsLevel,
       debugUnlocked: !!state.debugUnlocked,
       debugInfiniteResources: !!state.debugInfiniteResources,
       debugInfiniteHealth: !!state.debugInfiniteHealth,
@@ -3002,18 +3048,7 @@
         const data = JSON.parse(raw);
         state.musicVolume = clampVolume(data.musicVolume, SETTINGS_DEFAULTS.musicVolume);
         state.sfxVolume = clampVolume(data.sfxVolume, SETTINGS_DEFAULTS.sfxVolume);
-        state.renderScale = clampRenderScale(data.renderScale);
-        state.graphicsEffectsLevel = clampGraphicsEffectsLevel(data.graphicsEffectsLevel);
-        state.graphicsPreset = normalizeGraphicsPreset(data.graphicsPreset);
-        if (state.graphicsPreset !== "custom") {
-          const preset = getGraphicsPresetConfig(state.graphicsPreset);
-          if (preset) {
-            state.renderScale = clampRenderScale(preset.renderScale);
-            state.graphicsEffectsLevel = clampGraphicsEffectsLevel(preset.effectsLevel);
-          }
-        } else {
-          syncGraphicsPresetWithCurrentValues();
-        }
+        applyAdaptiveGraphicsBaseline({ persist: false, resize: false, syncCadence: false });
         // Debug access is session-based: always start locked on every load/join.
         state.debugUnlocked = false;
         // Always start sessions with infinite debug cheats off; users can toggle them per run.
@@ -3028,9 +3063,7 @@
       state.playerName = SETTINGS_DEFAULTS.playerName;
       state.musicVolume = SETTINGS_DEFAULTS.musicVolume;
       state.sfxVolume = SETTINGS_DEFAULTS.sfxVolume;
-      state.graphicsPreset = SETTINGS_DEFAULTS.graphicsPreset;
-      state.renderScale = SETTINGS_DEFAULTS.renderScale;
-      state.graphicsEffectsLevel = SETTINGS_DEFAULTS.graphicsEffectsLevel;
+      applyAdaptiveGraphicsBaseline({ persist: false, resize: false, syncCadence: false });
       state.debugUnlocked = false;
       state.debugInfiniteResources = SETTINGS_DEFAULTS.debugInfiniteResources;
       state.debugInfiniteHealth = SETTINGS_DEFAULTS.debugInfiniteHealth;
@@ -3073,50 +3106,18 @@
   }
 
   function updateGraphicsSettingsUI() {
-    const renderPercent = Math.round(clampRenderScale(state.renderScale) * 100);
-    const preset = normalizeGraphicsPreset(state.graphicsPreset);
-    if (graphicsPresetInput) {
-      graphicsPresetInput.value = preset;
-    }
-    if (menuGraphicsPresetInput) {
-      menuGraphicsPresetInput.value = preset;
-    }
-    if (renderScaleInput) {
-      renderScaleInput.value = String(renderPercent);
-    }
-    if (menuRenderScaleInput) {
-      menuRenderScaleInput.value = String(renderPercent);
-    }
-    if (renderScaleValue) {
-      renderScaleValue.textContent = `${renderPercent}%`;
-    }
-    if (menuRenderScaleValue) {
-      menuRenderScaleValue.textContent = `${renderPercent}%`;
-    }
+    // Graphics are auto-managed to favor high-detail visuals while adapting internal resolution.
   }
 
-  function setGraphicsPreset(presetId, persist = true) {
-    const preset = normalizeGraphicsPreset(presetId);
-    state.graphicsPreset = preset;
-    if (preset !== "custom") {
-      const cfg = getGraphicsPresetConfig(preset);
-      if (cfg) {
-        state.renderScale = clampRenderScale(cfg.renderScale);
-        state.graphicsEffectsLevel = clampGraphicsEffectsLevel(cfg.effectsLevel);
-      }
-    } else {
-      syncGraphicsPresetWithCurrentValues();
-    }
-    resetWorldSystemCadence();
-    updateGraphicsSettingsUI();
-    syncNetworkCadenceTimers();
-    requestResize();
-    if (persist) saveUserSettings();
+  function setGraphicsPreset(_presetId, persist = true) {
+    applyAdaptiveGraphicsBaseline({ persist });
   }
 
   function setRenderScaleFromPercent(percent, persist = true) {
-    state.renderScale = clampRenderScale((Number(percent) || 100) / 100);
-    syncGraphicsPresetWithCurrentValues();
+    const nextScale = clampRenderScale((Number(percent) || 100) / 100);
+    state.renderScale = nextScale;
+    state.graphicsPreset = getAdaptiveGraphicsProfileKeyForScale(nextScale);
+    state.graphicsEffectsLevel = AUTO_GRAPHICS_BASELINE.effectsLevel;
     updateGraphicsSettingsUI();
     syncNetworkCadenceTimers();
     requestResize();
@@ -44621,6 +44622,7 @@
     ctx.fillStyle = "rgba(0,0,0,0.04)";
     ctx.fillRect(x + CONFIG.tileSize - 1, y, 1, CONFIG.tileSize);
     if (detailLevel <= 1 || isBeach) return;
+    if (!shouldDrawFineSurfaceTileTexture()) return;
 
     const tileSeed = state.surfaceWorld?.seed ? seedToInt(String(state.surfaceWorld.seed)) : 0;
     drawTileSpeckleTexture(x, y, CONFIG.tileSize, tx, ty, tileSeed + 311, isBeach ? "beach" : biome.key);
@@ -45814,6 +45816,7 @@
   function drawOceanBackdrop(camera, nowSeconds = 0, effectsLevel = 1) {
     const quality = clampGraphicsEffectsLevel(effectsLevel);
     if (quality <= 0) return;
+    const detailTier = getAdaptiveVisualDetailTier();
     const width = getCameraViewWidth(camera);
     const height = getCameraViewHeight(camera);
     if (width <= 0 || height <= 0) return;
@@ -45840,7 +45843,11 @@
     ctx.fillStyle = deepWater;
     ctx.fillRect(0, 0, width, height);
 
-    const currentBands = Math.max(2, Math.ceil((width / 360) * (quality >= 3 ? 1.12 : quality >= 2 ? 0.92 : 0.52)));
+    const bandScale = detailTier <= 0 ? 0.52 : detailTier === 1 ? 0.74 : 1;
+    const currentBands = Math.max(
+      2,
+      Math.ceil((width / 360) * (quality >= 3 ? 1.12 : quality >= 2 ? 0.92 : 0.52) * bandScale)
+    );
     for (let i = 0; i < currentBands; i += 1) {
       const lane = (i + 1) / (currentBands + 1);
       const y = height * lane + Math.sin(nowSeconds * 0.52 + i * 1.7) * 14;
@@ -45997,6 +46004,7 @@
 
   function drawAmbientFish(camera, effectsLevel = 2) {
     if (clampGraphicsEffectsLevel(effectsLevel) < 2) return;
+    if (getAdaptiveVisualDetailTier() <= 0) return;
     if (!Array.isArray(state.ambientFish) || state.ambientFish.length === 0) return;
     const cameraViewWidth = getCameraViewWidth(camera);
     const cameraViewHeight = getCameraViewHeight(camera);
@@ -49106,6 +49114,18 @@
     ctx.clearRect(0, 0, viewWidth, viewHeight);
 
     const camera = getCamera();
+    const captureFrameBuckets = !!(state.debugUnlocked || state.debugShowFps);
+    const frameStart = captureFrameBuckets ? performance.now() : 0;
+    const frameBuckets = captureFrameBuckets
+      ? { backdrop: 0, terrain: 0, world: 0, entities: 0, overlays: 0 }
+      : null;
+    let bucketMark = frameStart;
+    const commitFrameBucket = (key) => {
+      if (!captureFrameBuckets || !frameBuckets || !key) return;
+      const now = performance.now();
+      frameBuckets[key] += Math.max(0, now - bucketMark);
+      bucketMark = now;
+    };
     const cameraScale = Number.isFinite(camera?.scale) ? camera.scale : 1;
     const cameraViewWidth = getCameraViewWidth(camera);
     const cameraViewHeight = getCameraViewHeight(camera);
@@ -49117,6 +49137,8 @@
         }
       : null;
     const graphicsEffectsLevel = getGraphicsEffectsLevel();
+    const useLowDetailResourceVisuals = graphicsEffectsLevel <= 0 || shouldUseLowDetailResourceVisuals();
+    const useSimplifiedDropVisuals = graphicsEffectsLevel <= 0 || getAdaptiveVisualDetailTier() <= 0;
     const oceanDecorStride = getRuntimeOceanDecorStride();
     const oceanNowSeconds = performance.now() * 0.001;
     ctx.setTransform(dpr * cameraScale, 0, 0, dpr * cameraScale, 0, 0);
@@ -49129,6 +49151,7 @@
       drawOceanBackdrop(camera, oceanNowSeconds, graphicsEffectsLevel);
       drawAmbientFish(camera, graphicsEffectsLevel);
     }
+    commitFrameBucket("backdrop");
 
     const startX = Math.max(0, Math.floor(camera.x / CONFIG.tileSize) - 1);
     const startY = Math.max(0, Math.floor(camera.y / CONFIG.tileSize) - 1);
@@ -49207,6 +49230,7 @@
         }
       }
     }
+    commitFrameBucket("terrain");
 
     if (!state.inCave) {
       for (const structure of state.structures) {
@@ -49452,7 +49476,7 @@
       const idx = tileIndex(res.tx, res.ty, state.world.size);
       const biomeId = state.world.biomeGrid?.[idx] ?? 0;
       const biome = BIOMES[biomeId] || BIOMES[0];
-      if (graphicsEffectsLevel <= 0) {
+      if (useLowDetailResourceVisuals) {
         drawLowDetailResource(res, screen, biome, state.inCave);
         if (res.hitTimer > 0) {
           ctx.strokeStyle = COLORS.highlight;
@@ -49997,6 +50021,7 @@
     });
 
     drawPoisonClouds(state.world, camera);
+    commitFrameBucket("world");
 
     if (!state.inCave) {
       for (const animal of state.world.animals || []) {
@@ -50192,7 +50217,7 @@
       ) {
         continue;
       }
-      if (graphicsEffectsLevel <= 0) {
+      if (useSimplifiedDropVisuals) {
         drawDroppedItemVisual(drop, screen.x, screen.y, {
           alpha: 1,
           size: 11.5,
@@ -50367,6 +50392,7 @@
 
     drawBeaconBeam(camera);
     drawRescueSequence(camera);
+    commitFrameBucket("entities");
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     drawGuidanceMapOverlay();
@@ -50375,6 +50401,10 @@
     drawDebugFpsOverlay();
     drawSleepTransitionOverlay();
     drawCaveLayerTransitionOverlay();
+    commitFrameBucket("overlays");
+    if (captureFrameBuckets) {
+      recordQaFrameBuckets(Math.max(0, performance.now() - frameStart), frameBuckets);
+    }
   }
 
   function gameLoop() {
@@ -50455,18 +50485,13 @@
         autoPerf.criticalLowFpsTimer = 0;
         autoPerf.lowFpsTimer = 0;
         autoPerf.cooldownTimer = AUTO_PERF_GOVERNOR.actionCooldownSeconds;
-        if (normalizeGraphicsPreset(state.graphicsPreset) !== "performance") {
-          setGraphicsPreset("performance", false);
-          setPrompt("Auto-optimization: switched to Performance preset", 1.5);
-          return;
-        }
         if (state.renderScale > AUTO_PERF_GOVERNOR.minRenderScale + 0.001) {
           const nextScale = Math.max(
             AUTO_PERF_GOVERNOR.minRenderScale,
             state.renderScale - (AUTO_PERF_GOVERNOR.renderScaleStep * 1.25)
           );
           setRenderScaleFromPercent(Math.round(nextScale * 100), false);
-          setPrompt("Auto-optimization: lowered render scale", 1.4);
+          setPrompt("Auto-optimization: tuned resolution for smooth play", 1.4);
         }
         return;
       }
@@ -50481,12 +50506,7 @@
           state.renderScale - AUTO_PERF_GOVERNOR.renderScaleStep
         );
         setRenderScaleFromPercent(Math.round(nextScale * 100), false);
-        setPrompt("Auto-optimization: lowered render scale", 1.4);
-        return;
-      }
-      if (normalizeGraphicsPreset(state.graphicsPreset) !== "performance") {
-        setGraphicsPreset("performance", false);
-        setPrompt("Auto-optimization: switched to Performance preset", 1.5);
+        setPrompt("Auto-optimization: tuned resolution for smooth play", 1.4);
       }
     };
 
@@ -50581,7 +50601,7 @@
     if (estimatedPixels > maxPixels && width > 0 && height > 0) {
       nextDpr = Math.sqrt(maxPixels / (width * height));
     }
-    return clamp(nextDpr, 0.5, nativeDpr);
+    return clamp(nextDpr, 0.42, nativeDpr);
   }
 
   function applyViewportCssVars(width, height) {
@@ -50609,6 +50629,78 @@
       resizeRaf = 0;
       resize();
     });
+  }
+
+  function getUiRectSnapshot(el) {
+    if (!el || typeof el.getBoundingClientRect !== "function") return null;
+    const rect = el.getBoundingClientRect();
+    return {
+      x: Math.round(rect.left),
+      y: Math.round(rect.top),
+      width: Math.round(rect.width),
+      height: Math.round(rect.height),
+    };
+  }
+
+  function isUiElementVisible(el) {
+    if (!el || el.classList?.contains("hidden")) return false;
+    if (typeof window.getComputedStyle !== "function") return true;
+    const styles = window.getComputedStyle(el);
+    return styles.display !== "none" && styles.visibility !== "hidden" && styles.opacity !== "0";
+  }
+
+  function buildRenderGameTextPayload() {
+    const mode = !startScreen || startScreen.classList.contains("hidden")
+      ? (state.loadingVisible ? "loading" : "game")
+      : "menu";
+    return {
+      note: "origin=top-left,x+=right,y+=down",
+      mode,
+      menuView: currentStartMenuView,
+      loadingVisible: !!state.loadingVisible,
+      fps: {
+        visible: !!(state.debugUnlocked && state.debugShowFps),
+        smoothed: Number((Number(debugFpsMeter.smoothed) || 0).toFixed(1)),
+        frameMs: Number((Number(debugFpsMeter.frameMs) || 0).toFixed(2)),
+        renderScale: Number((Number(state.renderScale) || 0).toFixed(3)),
+        dpr: Number((Number(dpr) || 0).toFixed(3)),
+        runtimeProfile: getRuntimeGraphicsProfileKey(),
+        buckets: {
+          total: Number((qaRuntime.frameBuckets.total || 0).toFixed(2)),
+          backdrop: Number((qaRuntime.frameBuckets.backdrop || 0).toFixed(2)),
+          terrain: Number((qaRuntime.frameBuckets.terrain || 0).toFixed(2)),
+          world: Number((qaRuntime.frameBuckets.world || 0).toFixed(2)),
+          entities: Number((qaRuntime.frameBuckets.entities || 0).toFixed(2)),
+          overlays: Number((qaRuntime.frameBuckets.overlays || 0).toFixed(2)),
+        },
+      },
+      player: state.player
+        ? {
+            x: Math.round(state.player.x),
+            y: Math.round(state.player.y),
+            hp: Math.round(state.player.hp),
+            inCave: !!state.inCave,
+          }
+        : null,
+      panels: {
+        settings: { visible: isUiElementVisible(settingsPanel), rect: getUiRectSnapshot(settingsPanel) },
+        debug: { visible: isUiElementVisible(debugPanel), rect: getUiRectSnapshot(debugPanel) },
+        station: { visible: isUiElementVisible(stationMenu), rect: getUiRectSnapshot(stationMenu) },
+        build: { visible: isUiElementVisible(buildMenu), rect: getUiRectSnapshot(buildMenu) },
+        chest: { visible: isUiElementVisible(chestPanel), rect: getUiRectSnapshot(chestPanel) },
+        shipRepair: { visible: isUiElementVisible(shipRepairPanel), rect: getUiRectSnapshot(shipRepairPanel) },
+      },
+    };
+  }
+
+  function installQaDiagnosticsBridge() {
+    window.render_game_to_text = () => JSON.stringify(buildRenderGameTextPayload());
+    window.__isgDiagnostics = {
+      getSnapshot: () => buildRenderGameTextPayload(),
+      getFrameBuckets: () => ({ ...qaRuntime.frameBuckets }),
+      getUiRectSnapshot,
+      requestResize,
+    };
   }
 
   function isTouchPointerType(pointerType) {
@@ -51186,30 +51278,6 @@
         setSfxVolumeFromPercent(menuSfxVolumeInput.value);
       });
     }
-    if (graphicsPresetInput) {
-      graphicsPresetInput.addEventListener("change", () => {
-        ensureAudioContext();
-        setGraphicsPreset(graphicsPresetInput.value);
-      });
-    }
-    if (menuGraphicsPresetInput) {
-      menuGraphicsPresetInput.addEventListener("change", () => {
-        ensureAudioContext();
-        setGraphicsPreset(menuGraphicsPresetInput.value);
-      });
-    }
-    if (renderScaleInput) {
-      renderScaleInput.addEventListener("input", () => {
-        ensureAudioContext();
-        setRenderScaleFromPercent(renderScaleInput.value);
-      });
-    }
-    if (menuRenderScaleInput) {
-      menuRenderScaleInput.addEventListener("input", () => {
-        ensureAudioContext();
-        setRenderScaleFromPercent(menuRenderScaleInput.value);
-      });
-    }
     const commitPlayerNameFromInput = (inputEl) => {
       if (!inputEl) return;
       const next = sanitizePlayerName(inputEl.value, "");
@@ -51316,6 +51384,7 @@
 
   // Install a global menu bridge and bind controls before heavy init so menu
   // actions remain usable even if later startup logic throws.
+  installQaDiagnosticsBridge();
   installStartMenuApiBridge();
   window.__gameMainLoaded = true;
   bindStartMenuListeners();

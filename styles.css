@@ -614,12 +614,13 @@ html, body {
 }
 
 #stationMenu {
-  left: 50%;
-  right: auto;
-  transform: translateX(-50%);
-  top: 60px;
+  right: 16px;
+  left: auto;
+  transform: translateY(-50%);
+  top: calc(50% + 12px);
   bottom: auto;
   width: 300px;
+  max-height: min(72vh, calc(var(--app-vh) - 136px));
 }
 
 #chestPanel {
@@ -654,11 +655,11 @@ html, body {
 }
 
 #debugPanel {
-  left: 50%;
-  top: 96px;
+  right: 16px;
+  left: auto;
+  top: calc(96px + env(safe-area-inset-top));
   bottom: auto;
-  right: auto;
-  transform: translateX(-50%);
+  transform: none;
   width: 280px;
   max-height: calc(var(--app-vh) - 140px);
   overflow-y: auto;
@@ -757,10 +758,10 @@ html, body {
 }
 
 #settingsPanel {
-  left: 50%;
-  right: auto;
-  transform: translateX(-50%);
-  top: 60px;
+  right: 16px;
+  left: auto;
+  transform: none;
+  top: calc(58px + env(safe-area-inset-top));
   bottom: auto;
   width: 332px;
   max-height: calc(var(--app-vh) - 120px);

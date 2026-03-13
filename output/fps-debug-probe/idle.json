@@ -1,0 +1,84 @@
+{
+  "note": "origin=top-left,x+=right,y+=down",
+  "mode": "game",
+  "menuView": "main",
+  "loadingVisible": false,
+  "fps": {
+    "visible": true,
+    "smoothed": 120,
+    "frameMs": 8.4,
+    "renderScale": 0.57,
+    "dpr": 0.57,
+    "runtimeProfile": "balanced",
+    "buckets": {
+      "total": 0.66,
+      "backdrop": 0.04,
+      "terrain": 0.35,
+      "world": 0.17,
+      "entities": 0.07,
+      "overlays": 0.02
+    }
+  },
+  "player": {
+    "x": 7696,
+    "y": 7984,
+    "hp": 100,
+    "inCave": false
+  },
+  "panels": {
+    "settings": {
+      "visible": false,
+      "rect": {
+        "x": 0,
+        "y": 0,
+        "width": 0,
+        "height": 0
+      }
+    },
+    "debug": {
+      "visible": true,
+      "rect": {
+        "x": 1044,
+        "y": 96,
+        "width": 306,
+        "height": 654
+      }
+    },
+    "station": {
+      "visible": false,
+      "rect": {
+        "x": 0,
+        "y": 0,
+        "width": 0,
+        "height": 0
+      }
+    },
+    "build": {
+      "visible": true,
+      "rect": {
+        "x": 520,
+        "y": 232,
+        "width": 326,
+        "height": 446
+      }
+    },
+    "chest": {
+      "visible": false,
+      "rect": {
+        "x": 0,
+        "y": 0,
+        "width": 0,
+        "height": 0
+      }
+    },
+    "shipRepair": {
+      "visible": false,
+      "rect": {
+        "x": 0,
+        "y": 0,
+        "width": 0,
+        "height": 0
+      }
+    }
+  }
+}

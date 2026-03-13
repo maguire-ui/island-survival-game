@@ -1,0 +1,32 @@
+{
+  "idleFps": 120,
+  "walkingFps": 120.2,
+  "settingsPanel": {
+    "visible": true,
+    "rect": {
+      "x": 992,
+      "y": 58,
+      "width": 358,
+      "height": 454
+    }
+  },
+  "debugPanel": {
+    "visible": true,
+    "rect": {
+      "x": 1044,
+      "y": 96,
+      "width": 306,
+      "height": 654
+    }
+  },
+  "initialSettingsPanel": {
+    "visible": true,
+    "rect": {
+      "x": 992,
+      "y": 58,
+      "width": 358,
+      "height": 454
+    }
+  },
+  "consoleErrors": []
+}
