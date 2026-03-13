@@ -364,3 +364,9 @@ Validation (2026-03-12):
   - Retina idle: `update.ai.animals 2.357 -> 0.441 ms total update`, `activeDpr 1.134 -> 1.75`, `averageRenderMs 1.455 -> 1.617`, `averageFps 60 -> 60`.
   - Desktop/Retina walk and menu-spam both stayed at `60` smoothed / `60` average FPS after the higher-fidelity render path.
   - Retina post-soak reported one external long frame (`233.4 ms`) while `longestWorkFrameMs` stayed only `4.3 ms`, so the engine stayed inexpensive even though the browser scheduling average dipped to `59.13 FPS`; live smoothed FPS returned to `60`.
+
+- Render-state diagnostics pass (2026-03-13): added debug-only render diagnostics panel + stall capture/copy report, tracked resize/DPR/render-scale churn in `src/main.js`, and added `qa/scripts/render_state_probe.py` for desktop/retina/mobile live-state probes.
+- Measured root cause of blur: mobile backbuffer was capped at DPR 1.18 on a DPR 3 viewport (`nativeResolutionRatio=0.393`), retina was capped at DPR 1.75 on a DPR 2 viewport (`nativeResolutionRatio=0.875`).
+- Targeted fix: removed `visualViewport` scroll-driven resize requests, made `resize()` a no-op when CSS/backbuffer/DPR are unchanged, and raised render budgets to `MOBILE_RENDER_DPR_CAP=2.25`, `MOBILE_RENDER_MAX_PIXELS=2200000`, `DESKTOP_RENDER_DPR_CAP=2.0`, `DESKTOP_RENDER_MAX_PIXELS=6000000`.
+- Verified with `qa/scripts/render_state_probe.py`: mobile improved from active DPR 1.18 -> 2.25 and native-resolution ratio 0.393 -> 0.750 at 60 FPS; retina improved from active DPR 1.75 -> 2.0 and native-resolution ratio 0.875 -> 1.000 at 60 FPS.
+- Extra 4K sanity check: active DPR 0.851, native-resolution ratio 0.85, avg FPS 59.78. Large 4K displays remain slightly below native by design to stay near 60 FPS.

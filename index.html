@@ -8,7 +8,7 @@
   />
   <title>Island Survival Game</title>
   <link rel="icon" href="data:," />
-  <link rel="stylesheet" href="styles.css?v=20260313-5" />
+  <link rel="stylesheet" href="styles.css?v=20260313-6" />
 </head>
 <body>
   <canvas id="game"></canvas>
@@ -202,6 +202,9 @@
       <button id="infiniteHealthBtn" class="action-btn">Infinite Health: Off</button>
       <button id="debugWorldMapBtn" class="action-btn">World Mini-Map: Off</button>
       <button id="debugFpsBtn" class="action-btn">Show FPS: Off</button>
+      <div class="panel-section-title">Render Diagnostics</div>
+      <pre id="debugRenderStats" class="debug-diagnostics-log">Render diagnostics idle.</pre>
+      <button id="copyRenderDiagnosticsBtn" class="action-btn secondary-btn" type="button">Copy Render Report</button>
       <div class="settings-row">
         <span>Player Speed</span>
         <span id="debugSpeedValue">1.0x</span>
@@ -376,6 +379,6 @@
     })();
   </script>
   <script src="https://unpkg.com/peerjs@1.5.5/dist/peerjs.min.js"></script>
-  <script src="src/main.js?v=20260313-6"></script>
+  <script src="src/main.js?v=20260313-7"></script>
 </body>
 </html>

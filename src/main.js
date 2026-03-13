@@ -113,6 +113,8 @@
   let infiniteHealthBtn = document.getElementById("infiniteHealthBtn");
   const debugWorldMapBtn = document.getElementById("debugWorldMapBtn");
   const debugFpsBtn = document.getElementById("debugFpsBtn");
+  const debugRenderStatsEl = document.getElementById("debugRenderStats");
+  const copyRenderDiagnosticsBtn = document.getElementById("copyRenderDiagnosticsBtn");
   const debugRepairableShipBtn = document.getElementById("debugRepairableShipBtn");
   const continentalShiftBtn = document.getElementById("continentalShiftBtn");
   const mpAutotestQuickBtn = document.getElementById("mpAutotestQuickBtn");
@@ -169,10 +171,10 @@
   const PLAYER_MOVE_SPEED_MULT = 1.12;
 
   const TOUCH_STICK_MAX_DIST = 40;
-  const MOBILE_RENDER_DPR_CAP = 1.18;
-  const DESKTOP_RENDER_DPR_CAP = 1.75;
-  const MOBILE_RENDER_MAX_PIXELS = 1200000;
-  const DESKTOP_RENDER_MAX_PIXELS = 4600000;
+  const MOBILE_RENDER_DPR_CAP = 2.25;
+  const DESKTOP_RENDER_DPR_CAP = 2.0;
+  const MOBILE_RENDER_MAX_PIXELS = 2200000;
+  const DESKTOP_RENDER_MAX_PIXELS = 6000000;
   const GRAPHICS_PRESET_CONFIG = Object.freeze({
     performance: Object.freeze({ renderScale: 0.68, effectsLevel: 1 }),
     balanced: Object.freeze({ renderScale: 0.82, effectsLevel: 2 }),
@@ -2156,7 +2158,17 @@
   };
   const DEV_PERF_PROFILER_CONFIG = Object.freeze({
     maxSlowSections: 10,
-    consoleLogIntervalMs: 4000,
+    consoleLogIntervalMs: 0,
+  });
+  const RENDER_DIAGNOSTICS_CONFIG = Object.freeze({
+    panelUpdateIntervalMs: 220,
+    lowFpsThreshold: 20,
+    lowFpsCaptureSeconds: 2,
+    repeatedResizeWindowMs: 2000,
+    repeatedResizeWarnCount: 4,
+    startupMutationGraceMs: 3000,
+    nativeResolutionWarnRatio: 0.85,
+    maxSlowSubsystems: 6,
   });
   const runtimeTracker = {
     timeouts: new Set(),
@@ -2164,6 +2176,7 @@
     animationFrames: new Set(),
     listenersByTarget: Object.create(null),
     listenersByType: Object.create(null),
+    consoleByType: Object.create(null),
     activeListenerCount: 0,
     installed: false,
   };
@@ -2181,6 +2194,52 @@
     sectionStats: Object.create(null),
     counts: null,
     lastConsoleLogAt: 0,
+  };
+  const renderDiagnostics = {
+    startupAt: performance.now(),
+    lastPanelUpdateAt: 0,
+    lastScene: "menu",
+    lastAutosaveAt: 0,
+    lastAutosaveDurationMs: 0,
+    lastDpr: Math.max(1, Number(window.devicePixelRatio) || 1),
+    lastRenderScale: AUTO_GRAPHICS_BASELINE.renderScale,
+    lowFpsDuration: 0,
+    lastLowFpsWarnAt: 0,
+    lastStallCapture: null,
+    lastCopiedReportText: "",
+    resizeRequests: [],
+    resizeEvents: [],
+    scaleChanges: [],
+    frame: {
+      resizedThisFrame: false,
+      resizeRequestedThisFrame: false,
+      resizeNoopThisFrame: false,
+      dprRecalculatedThisFrame: false,
+      renderScaleChangedThisFrame: false,
+      activeScene: "menu",
+      resizeReason: "",
+      dprReason: "",
+      renderScaleReason: "",
+      warnings: [],
+      detectors: Object.create(null),
+    },
+    totals: {
+      resizeRequests: 0,
+      resizeCalls: 0,
+      resizeNoops: 0,
+      dprRecalculations: 0,
+      renderScaleChanges: 0,
+      consoleLogs: 0,
+      terrainCacheBuilds: 0,
+      caveRegenerations: 0,
+      gradientCreations: 0,
+      offscreenCanvasCreations: 0,
+      aiFullScans: 0,
+      pathfindingCalls: 0,
+      worldEntranceRebuilds: 0,
+      saveSerializations: 0,
+      uiLayoutRebuilds: 0,
+    },
   };
 
   function getRuntimeTrackerTargetLabel(target) {
@@ -2314,6 +2373,437 @@
       bumpListenerCount(runtimeTracker.listenersByTarget, targetLabel, -1);
       bumpListenerCount(runtimeTracker.listenersByType, String(type), -1);
     };
+
+    const consoleMethods = ["log", "info", "warn", "error", "debug"];
+    for (const method of consoleMethods) {
+      const nativeMethod = typeof console[method] === "function"
+        ? console[method].bind(console)
+        : null;
+      if (!nativeMethod) continue;
+      console[method] = (...args) => {
+        runtimeTracker.consoleByType[method] = (runtimeTracker.consoleByType[method] || 0) + 1;
+        renderDiagnostics.totals.consoleLogs += 1;
+        if (renderDiagnostics.frame?.detectors) {
+          renderDiagnostics.frame.detectors.consoleLogs = (renderDiagnostics.frame.detectors.consoleLogs || 0) + 1;
+        }
+        return nativeMethod(...args);
+      };
+    }
+
+    if (typeof CanvasRenderingContext2D !== "undefined") {
+      const proto = CanvasRenderingContext2D.prototype;
+      if (proto) {
+        const nativeLinearGradient = proto.createLinearGradient;
+        const nativeRadialGradient = proto.createRadialGradient;
+        if (typeof nativeLinearGradient === "function") {
+          proto.createLinearGradient = function patchedCreateLinearGradient(...args) {
+            renderDiagnostics.totals.gradientCreations += 1;
+            if (renderDiagnostics.frame?.detectors) {
+              renderDiagnostics.frame.detectors.gradientCreations = (renderDiagnostics.frame.detectors.gradientCreations || 0) + 1;
+            }
+            return nativeLinearGradient.apply(this, args);
+          };
+        }
+        if (typeof nativeRadialGradient === "function") {
+          proto.createRadialGradient = function patchedCreateRadialGradient(...args) {
+            renderDiagnostics.totals.gradientCreations += 1;
+            if (renderDiagnostics.frame?.detectors) {
+              renderDiagnostics.frame.detectors.gradientCreations = (renderDiagnostics.frame.detectors.gradientCreations || 0) + 1;
+            }
+            return nativeRadialGradient.apply(this, args);
+          };
+        }
+      }
+    }
+
+    if (typeof document?.createElement === "function") {
+      const nativeCreateElement = document.createElement.bind(document);
+      document.createElement = (tagName, options) => {
+        const element = nativeCreateElement(tagName, options);
+        const tag = typeof tagName === "string" ? tagName.toLowerCase() : "";
+        if (tag === "canvas" || tag === "img") {
+          renderDiagnostics.totals.offscreenCanvasCreations += 1;
+          if (renderDiagnostics.frame?.detectors) {
+            renderDiagnostics.frame.detectors.offscreenCanvasCreations = (renderDiagnostics.frame.detectors.offscreenCanvasCreations || 0) + 1;
+          }
+        }
+        return element;
+      };
+    }
+  }
+
+  function getActiveSceneLabel() {
+    if (state.loadingVisible) return "loading";
+    if (startScreen && !startScreen.classList.contains("hidden")) return "menu";
+    if (state.inCave) return "cave";
+    if (state.world || state.surfaceWorld) return "surface";
+    return "menu";
+  }
+
+  function resetRenderDiagnosticsFrame() {
+    renderDiagnostics.frame.resizedThisFrame = false;
+    renderDiagnostics.frame.resizeRequestedThisFrame = false;
+    renderDiagnostics.frame.resizeNoopThisFrame = false;
+    renderDiagnostics.frame.dprRecalculatedThisFrame = false;
+    renderDiagnostics.frame.renderScaleChangedThisFrame = false;
+    renderDiagnostics.frame.activeScene = getActiveSceneLabel();
+    renderDiagnostics.frame.resizeReason = "";
+    renderDiagnostics.frame.dprReason = "";
+    renderDiagnostics.frame.renderScaleReason = "";
+    renderDiagnostics.frame.warnings = [];
+    renderDiagnostics.frame.detectors = Object.create(null);
+  }
+
+  function pushRecentRenderEvent(bucket, entry, limit = 24) {
+    if (!Array.isArray(bucket)) return;
+    bucket.push(entry);
+    while (bucket.length > limit) bucket.shift();
+  }
+
+  function countRecentRenderEvents(bucket, windowMs, predicate = null) {
+    if (!Array.isArray(bucket) || bucket.length === 0) return 0;
+    const now = performance.now();
+    let total = 0;
+    for (let i = bucket.length - 1; i >= 0; i -= 1) {
+      const entry = bucket[i];
+      if (!entry || now - entry.at > windowMs) break;
+      if (!predicate || predicate(entry)) total += 1;
+    }
+    return total;
+  }
+
+  function bumpRenderDetector(key, amount = 1) {
+    if (!key) return;
+    renderDiagnostics.totals[key] = (renderDiagnostics.totals[key] || 0) + amount;
+    const detectors = renderDiagnostics.frame.detectors || (renderDiagnostics.frame.detectors = Object.create(null));
+    detectors[key] = (detectors[key] || 0) + amount;
+  }
+
+  function logRenderDiagnosticsWarning(key, message) {
+    if (!key || !message) return;
+    const now = performance.now();
+    const bucket = renderDiagnostics._warningTimes || (renderDiagnostics._warningTimes = Object.create(null));
+    if (now - (bucket[key] || 0) < 1800) return;
+    bucket[key] = now;
+    console.warn(`[RenderDiag] ${message}`);
+  }
+
+  function noteRenderResizeRequested(reason = "unknown") {
+    renderDiagnostics.totals.resizeRequests += 1;
+    renderDiagnostics.frame.resizeRequestedThisFrame = true;
+    if (!renderDiagnostics.frame.resizeReason) {
+      renderDiagnostics.frame.resizeReason = String(reason || "unknown");
+    }
+    pushRecentRenderEvent(renderDiagnostics.resizeRequests, {
+      at: performance.now(),
+      reason: String(reason || "unknown"),
+    });
+  }
+
+  function noteRenderScaleChange(nextScale, reason = "unknown") {
+    const normalizedNext = clampRenderScale(nextScale);
+    const prevScale = clampRenderScale(renderDiagnostics.lastRenderScale);
+    if (Math.abs(normalizedNext - prevScale) <= 0.0005) return;
+    renderDiagnostics.lastRenderScale = normalizedNext;
+    renderDiagnostics.totals.renderScaleChanges += 1;
+    renderDiagnostics.frame.renderScaleChangedThisFrame = true;
+    renderDiagnostics.frame.renderScaleReason = String(reason || "unknown");
+    pushRecentRenderEvent(renderDiagnostics.scaleChanges, {
+      at: performance.now(),
+      reason: String(reason || "unknown"),
+      nextScale: normalizedNext,
+    });
+  }
+
+  function noteRenderDprCalculation(reason = "unknown", nextDpr = dpr) {
+    const normalizedDpr = Math.max(0.1, Number(nextDpr) || 0.1);
+    renderDiagnostics.totals.dprRecalculations += 1;
+    renderDiagnostics.frame.dprRecalculatedThisFrame = true;
+    renderDiagnostics.frame.dprReason = String(reason || "unknown");
+    renderDiagnostics.lastDpr = normalizedDpr;
+  }
+
+  function noteRenderResizeApplied(reason, changed, width, height, nextDpr) {
+    renderDiagnostics.totals.resizeCalls += 1;
+    renderDiagnostics.frame.resizedThisFrame = true;
+    renderDiagnostics.frame.resizeReason = String(reason || "unknown");
+    if (!changed) {
+      renderDiagnostics.totals.resizeNoops += 1;
+      renderDiagnostics.frame.resizeNoopThisFrame = true;
+    }
+    pushRecentRenderEvent(renderDiagnostics.resizeEvents, {
+      at: performance.now(),
+      reason: String(reason || "unknown"),
+      changed: !!changed,
+      width: Math.round(width || 0),
+      height: Math.round(height || 0),
+      dpr: Number((Number(nextDpr) || 0).toFixed(3)),
+    });
+  }
+
+  function getRenderDiagnosticsNativeResolutionRatio() {
+    const nativeDpr = Math.max(1, Number(window.devicePixelRatio) || 1);
+    const targetWidth = Math.max(1, Math.round(viewWidth * nativeDpr));
+    const targetHeight = Math.max(1, Math.round(viewHeight * nativeDpr));
+    const widthRatio = (canvas.width || 0) / targetWidth;
+    const heightRatio = (canvas.height || 0) / targetHeight;
+    return clamp(Math.min(widthRatio || 0, heightRatio || 0), 0, 2);
+  }
+
+  function getRenderDiagnosticsDisplayRatio() {
+    const widthRatio = (canvas.width || 0) / Math.max(1, viewWidth || 1);
+    const heightRatio = (canvas.height || 0) / Math.max(1, viewHeight || 1);
+    return clamp(Math.min(widthRatio || 0, heightRatio || 0), 0, 4);
+  }
+
+  function getPerfSectionsSorted(metric = "avg") {
+    return Object.entries(perfProfiler.sectionStats)
+      .map(([label, stats]) => {
+        const avgMs = stats.count > 0 ? (stats.totalMs / stats.count) : 0;
+        const lastMs = stats.lastMs || 0;
+        return {
+          label,
+          avgMs,
+          lastMs,
+          maxMs: stats.maxMs || 0,
+        };
+      })
+      .sort((a, b) => {
+        const aMetric = metric === "last" ? a.lastMs : a.avgMs;
+        const bMetric = metric === "last" ? b.lastMs : b.avgMs;
+        return (bMetric - aMetric) || (b.maxMs - a.maxMs) || a.label.localeCompare(b.label);
+      });
+  }
+
+  function getTopPerfSections(metric = "avg") {
+    return getPerfSectionsSorted(metric)
+      .slice(0, RENDER_DIAGNOSTICS_CONFIG.maxSlowSubsystems)
+      .map((entry) => `${entry.label} ${metric === "last" ? entry.lastMs.toFixed(2) : entry.avgMs.toFixed(2)}ms`);
+  }
+
+  function buildRenderDiagnosticsSnapshot() {
+    const nativeDpr = Math.max(1, Number(window.devicePixelRatio) || 1);
+    const counts = getPerfProfilerCounts();
+    const nativeResolutionRatio = getRenderDiagnosticsNativeResolutionRatio();
+    const displayRatio = getRenderDiagnosticsDisplayRatio();
+    const smoothedFps = Math.max(0, Number(debugFpsMeter.smoothed) || 0);
+    const activeWarnings = Array.isArray(renderDiagnostics.frame.warnings)
+      ? renderDiagnostics.frame.warnings.slice()
+      : [];
+    const recentResizeRequests = countRecentRenderEvents(
+      renderDiagnostics.resizeRequests,
+      RENDER_DIAGNOSTICS_CONFIG.repeatedResizeWindowMs
+    );
+    const recentResizeCalls = countRecentRenderEvents(
+      renderDiagnostics.resizeEvents,
+      RENDER_DIAGNOSTICS_CONFIG.repeatedResizeWindowMs
+    );
+    const recentScaleChanges = countRecentRenderEvents(
+      renderDiagnostics.scaleChanges,
+      Math.max(RENDER_DIAGNOSTICS_CONFIG.startupMutationGraceMs, 1e3),
+      (entry) => (entry.at - renderDiagnostics.startupAt) > RENDER_DIAGNOSTICS_CONFIG.startupMutationGraceMs
+    );
+    return {
+      fps: Number(smoothedFps.toFixed(1)),
+      updateMs: Number((perfProfiler.lastUpdateMs || 0).toFixed(3)),
+      renderMs: Number((perfProfiler.lastRenderMs || 0).toFixed(3)),
+      longestFrameMs: Number((perfProfiler.longestFrameMs || 0).toFixed(3)),
+      cssWidth: Math.round(viewWidth || 0),
+      cssHeight: Math.round(viewHeight || 0),
+      internalWidth: Math.round(canvas.width || 0),
+      internalHeight: Math.round(canvas.height || 0),
+      devicePixelRatio: Number(nativeDpr.toFixed(3)),
+      activeDpr: Number((Number(dpr) || 0).toFixed(3)),
+      effectiveRenderScale: Number((Number(state.renderScale) || 0).toFixed(3)),
+      activeBackbufferRatio: Number(displayRatio.toFixed(3)),
+      nativeResolutionRatio: Number(nativeResolutionRatio.toFixed(3)),
+      renderingBelowNative: nativeResolutionRatio + 0.001 < 1,
+      imageSmoothing: !!ctx.imageSmoothingEnabled,
+      resizedThisFrame: !!renderDiagnostics.frame.resizedThisFrame,
+      resizeRequestedThisFrame: !!renderDiagnostics.frame.resizeRequestedThisFrame,
+      resizeNoopThisFrame: !!renderDiagnostics.frame.resizeNoopThisFrame,
+      dprRecalculatedThisFrame: !!renderDiagnostics.frame.dprRecalculatedThisFrame,
+      renderScaleChangedThisFrame: !!renderDiagnostics.frame.renderScaleChangedThisFrame,
+      visibilityState: String(document.visibilityState || "unknown"),
+      documentHidden: !!document.hidden,
+      activeScene: getActiveSceneLabel(),
+      resizeReason: String(renderDiagnostics.frame.resizeReason || ""),
+      dprReason: String(renderDiagnostics.frame.dprReason || ""),
+      renderScaleReason: String(renderDiagnostics.frame.renderScaleReason || ""),
+      counts,
+      recentResizeRequests,
+      recentResizeCalls,
+      recentScaleChanges,
+      totals: { ...renderDiagnostics.totals },
+      detectors: { ...(renderDiagnostics.frame.detectors || {}) },
+      autosave: {
+        ranRecently: (performance.now() - renderDiagnostics.lastAutosaveAt) <= 3000,
+        lastDurationMs: Number((renderDiagnostics.lastAutosaveDurationMs || 0).toFixed(3)),
+        msSinceLastSave: Number((Math.max(0, performance.now() - renderDiagnostics.lastAutosaveAt) || 0).toFixed(1)),
+      },
+      slowestCurrent: getTopPerfSections("last"),
+      slowestAverage: getTopPerfSections("avg"),
+      warnings: activeWarnings,
+      stallCapture: renderDiagnostics.lastStallCapture,
+    };
+  }
+
+  function buildRenderDiagnosticsText() {
+    const snapshot = buildRenderDiagnosticsSnapshot();
+    const lines = [
+      `Scene: ${snapshot.activeScene} | vis=${snapshot.visibilityState}${snapshot.documentHidden ? " hidden" : ""}`,
+      `FPS ${snapshot.fps.toFixed(1)} | upd ${snapshot.updateMs.toFixed(2)}ms | ren ${snapshot.renderMs.toFixed(2)}ms | long ${snapshot.longestFrameMs.toFixed(1)}ms`,
+      `Canvas CSS ${snapshot.cssWidth}x${snapshot.cssHeight} | internal ${snapshot.internalWidth}x${snapshot.internalHeight}`,
+      `DPR native ${snapshot.devicePixelRatio.toFixed(3)} | active ${snapshot.activeDpr.toFixed(3)} | display ratio ${snapshot.activeBackbufferRatio.toFixed(3)}`,
+      `Render scale ${snapshot.effectiveRenderScale.toFixed(3)}`,
+      `Native-res ratio ${snapshot.nativeResolutionRatio.toFixed(3)}${snapshot.renderingBelowNative ? " (below native)" : " (native-ish)"}`,
+      `Smoothing ${snapshot.imageSmoothing ? "on" : "off"} | resized ${snapshot.resizedThisFrame ? "yes" : "no"} | resize request ${snapshot.resizeRequestedThisFrame ? "yes" : "no"}`,
+      `DPR recalced ${snapshot.dprRecalculatedThisFrame ? "yes" : "no"} | scale changed ${snapshot.renderScaleChangedThisFrame ? "yes" : "no"}`,
+      `Resize reason: ${snapshot.resizeReason || "-"} | DPR reason: ${snapshot.dprReason || "-"} | scale reason: ${snapshot.renderScaleReason || "-"}`,
+      `Recent resize req/calls: ${snapshot.recentResizeRequests}/${snapshot.recentResizeCalls} | scale changes after startup: ${snapshot.recentScaleChanges}`,
+      `Counts mobs:${snapshot.counts.mobs} animals:${snapshot.counts.animals} drops:${snapshot.counts.drops} resources:${snapshot.counts.resources} particles:${snapshot.counts.particles} caveRooms:${snapshot.counts.caveRooms} worldObjs:${snapshot.counts.worldObjects}`,
+      `Runtime timers:${snapshot.counts.timers} intervals:${snapshot.counts.intervals} raf:${snapshot.counts.animationLoops} listeners:${snapshot.counts.listeners}`,
+      `Frame detectors ${JSON.stringify(snapshot.detectors)}`,
+      `Autosave recent:${snapshot.autosave.ranRecently ? "yes" : "no"} | last ${snapshot.autosave.lastDurationMs.toFixed(2)}ms | ${snapshot.autosave.msSinceLastSave.toFixed(0)}ms ago`,
+      `Slow now: ${snapshot.slowestCurrent.join(" | ") || "n/a"}`,
+      `Slow avg: ${snapshot.slowestAverage.join(" | ") || "n/a"}`,
+    ];
+    if (snapshot.warnings.length > 0) {
+      lines.push(`Warnings: ${snapshot.warnings.join(" | ")}`);
+    }
+    if (snapshot.stallCapture) {
+      lines.push(`Stall capture: ${snapshot.stallCapture.fps.toFixed(1)} FPS @ ${snapshot.stallCapture.scene}`);
+    }
+    return lines.join("\n");
+  }
+
+  function buildCopyableRenderDiagnosticsReport() {
+    const snapshot = buildRenderDiagnosticsSnapshot();
+    const payload = snapshot.stallCapture || snapshot;
+    const text = [
+      "ISG Render Diagnostics Report",
+      `scene=${payload.activeScene || payload.scene || getActiveSceneLabel()}`,
+      `fps=${Number(payload.fps || snapshot.fps).toFixed(1)}`,
+      `updateMs=${Number(payload.updateMs || snapshot.updateMs).toFixed(3)}`,
+      `renderMs=${Number(payload.renderMs || snapshot.renderMs).toFixed(3)}`,
+      `longestFrameMs=${Number(payload.longestFrameMs || snapshot.longestFrameMs).toFixed(3)}`,
+      `css=${snapshot.cssWidth}x${snapshot.cssHeight}`,
+      `internal=${snapshot.internalWidth}x${snapshot.internalHeight}`,
+      `devicePixelRatio=${snapshot.devicePixelRatio.toFixed(3)}`,
+      `activeDpr=${snapshot.activeDpr.toFixed(3)}`,
+      `activeBackbufferRatio=${snapshot.activeBackbufferRatio.toFixed(3)}`,
+      `renderScale=${snapshot.effectiveRenderScale.toFixed(3)}`,
+      `nativeResolutionRatio=${snapshot.nativeResolutionRatio.toFixed(3)}`,
+      `imageSmoothing=${snapshot.imageSmoothing}`,
+      `resizedThisFrame=${snapshot.resizedThisFrame}`,
+      `dprRecalculatedThisFrame=${snapshot.dprRecalculatedThisFrame}`,
+      `renderScaleChangedThisFrame=${snapshot.renderScaleChangedThisFrame}`,
+      `visibility=${snapshot.visibilityState}`,
+      `counts=${JSON.stringify(snapshot.counts)}`,
+      `detectors=${JSON.stringify(snapshot.detectors)}`,
+      `autosave=${JSON.stringify(snapshot.autosave)}`,
+      `slowNow=${JSON.stringify(snapshot.slowestCurrent)}`,
+      `slowAvg=${JSON.stringify(snapshot.slowestAverage)}`,
+      `warnings=${JSON.stringify(snapshot.warnings)}`,
+    ].join("\n");
+    renderDiagnostics.lastCopiedReportText = text;
+    return text;
+  }
+
+  function updateDebugRenderDiagnostics(force = false) {
+    if (!debugRenderStatsEl) return;
+    if (!state.debugUnlocked) {
+      debugRenderStatsEl.textContent = "Unlock debug to inspect render state.";
+      if (copyRenderDiagnosticsBtn) copyRenderDiagnosticsBtn.disabled = true;
+      return;
+    }
+    if (copyRenderDiagnosticsBtn) copyRenderDiagnosticsBtn.disabled = false;
+    const now = performance.now();
+    if (!force && now - renderDiagnostics.lastPanelUpdateAt < RENDER_DIAGNOSTICS_CONFIG.panelUpdateIntervalMs) {
+      return;
+    }
+    renderDiagnostics.lastPanelUpdateAt = now;
+    debugRenderStatsEl.textContent = buildRenderDiagnosticsText();
+  }
+
+  function copyRenderDiagnosticsReport() {
+    const text = buildCopyableRenderDiagnosticsReport();
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(text)
+        .then(() => setPrompt("Render report copied", 1))
+        .catch(() => setPrompt("Copy failed", 1));
+      return;
+    }
+    setPrompt("Clipboard unavailable", 1);
+  }
+
+  function captureRenderStallReport() {
+    const snapshot = buildRenderDiagnosticsSnapshot();
+    renderDiagnostics.lastStallCapture = {
+      capturedAt: Date.now(),
+      scene: snapshot.activeScene,
+      fps: snapshot.fps,
+      updateMs: snapshot.updateMs,
+      renderMs: snapshot.renderMs,
+      longestFrameMs: snapshot.longestFrameMs,
+      cssWidth: snapshot.cssWidth,
+      cssHeight: snapshot.cssHeight,
+      internalWidth: snapshot.internalWidth,
+      internalHeight: snapshot.internalHeight,
+      devicePixelRatio: snapshot.devicePixelRatio,
+      activeDpr: snapshot.activeDpr,
+      effectiveRenderScale: snapshot.effectiveRenderScale,
+      activeBackbufferRatio: snapshot.activeBackbufferRatio,
+      nativeResolutionRatio: snapshot.nativeResolutionRatio,
+      counts: snapshot.counts,
+      autosave: snapshot.autosave,
+      resizedThisFrame: snapshot.resizedThisFrame,
+      dprRecalculatedThisFrame: snapshot.dprRecalculatedThisFrame,
+      renderScaleChangedThisFrame: snapshot.renderScaleChangedThisFrame,
+      slowestCurrent: snapshot.slowestCurrent,
+      warnings: snapshot.warnings.slice(),
+    };
+  }
+
+  function evaluateRenderDiagnosticsFrame(rawDeltaSeconds) {
+    renderDiagnostics.lastScene = getActiveSceneLabel();
+    renderDiagnostics.frame.activeScene = renderDiagnostics.lastScene;
+    renderDiagnostics.frame.warnings.length = 0;
+    const snapshot = buildRenderDiagnosticsSnapshot();
+    if (snapshot.nativeResolutionRatio < RENDER_DIAGNOSTICS_CONFIG.nativeResolutionWarnRatio) {
+      const warning = `Rendering below native resolution (${snapshot.nativeResolutionRatio.toFixed(3)})`;
+      renderDiagnostics.frame.warnings.push(warning);
+      logRenderDiagnosticsWarning("low-native-resolution", warning);
+    }
+    if (snapshot.recentResizeCalls >= RENDER_DIAGNOSTICS_CONFIG.repeatedResizeWarnCount) {
+      const warning = `Canvas resized ${snapshot.recentResizeCalls}x in ${(RENDER_DIAGNOSTICS_CONFIG.repeatedResizeWindowMs / 1000).toFixed(1)}s`;
+      renderDiagnostics.frame.warnings.push(warning);
+      logRenderDiagnosticsWarning("resize-loop", warning);
+    }
+    if (snapshot.recentScaleChanges > 1) {
+      const warning = `Render scale changed ${snapshot.recentScaleChanges}x after startup`;
+      renderDiagnostics.frame.warnings.push(warning);
+      logRenderDiagnosticsWarning("scale-churn", warning);
+    }
+    if (
+      snapshot.fps < RENDER_DIAGNOSTICS_CONFIG.lowFpsThreshold
+      && !document.hidden
+      && snapshot.activeScene !== "menu"
+    ) {
+      renderDiagnostics.lowFpsDuration += Math.max(0, Number(rawDeltaSeconds) || 0);
+      if (renderDiagnostics.lowFpsDuration >= RENDER_DIAGNOSTICS_CONFIG.lowFpsCaptureSeconds) {
+        if ((performance.now() - renderDiagnostics.lastLowFpsWarnAt) > 1500) {
+          renderDiagnostics.lastLowFpsWarnAt = performance.now();
+          captureRenderStallReport();
+          const warning = `FPS below ${RENDER_DIAGNOSTICS_CONFIG.lowFpsThreshold} for ${RENDER_DIAGNOSTICS_CONFIG.lowFpsCaptureSeconds.toFixed(1)}s`;
+          renderDiagnostics.frame.warnings.push(warning);
+          logRenderDiagnosticsWarning("low-fps-stall", warning);
+        }
+      }
+    } else {
+      renderDiagnostics.lowFpsDuration = 0;
+    }
+    updateDebugRenderDiagnostics();
   }
 
   function isPerfProfilerActive() {
@@ -2341,6 +2831,17 @@
     if (perfProfiler.enabled) {
       resetPerfProfilerStats();
     }
+  }
+
+  function syncDebugPerformanceInstrumentation(force = false) {
+    const shouldProfile = !!state.debugUnlocked && (
+      !!state.debugShowFps
+      || (!!debugPanel && !debugPanel.classList.contains("hidden"))
+    );
+    if (force || perfProfiler.enabled !== shouldProfile) {
+      setPerfProfilerEnabled(shouldProfile);
+    }
+    updateDebugRenderDiagnostics(force);
   }
 
   function trackPerfSection(label, fn) {
@@ -2477,7 +2978,10 @@
     perfProfiler.lastRenderMs = nextRenderMs;
     perfProfiler.counts = getPerfProfilerCounts();
     const now = performance.now();
-    if (now - perfProfiler.lastConsoleLogAt >= DEV_PERF_PROFILER_CONFIG.consoleLogIntervalMs) {
+    if (
+      DEV_PERF_PROFILER_CONFIG.consoleLogIntervalMs > 0
+      && now - perfProfiler.lastConsoleLogAt >= DEV_PERF_PROFILER_CONFIG.consoleLogIntervalMs
+    ) {
       perfProfiler.lastConsoleLogAt = now;
       const summary = getPerfProfilerSummary();
       console.info("[Perf]", {
@@ -2507,6 +3011,7 @@
   let stationRecipeDetailsExpanded = false;
   let storagePanelLayoutRaf = 0;
   let resizeRaf = 0;
+  let pendingResizeReason = "";
 
   const touch = {
     active: false,
@@ -3187,13 +3692,15 @@
       resize = true,
       syncCadence = true,
     } = options;
+    const nextScale = clampRenderScale(AUTO_GRAPHICS_BASELINE.renderScale);
     state.graphicsPreset = AUTO_GRAPHICS_BASELINE.preset;
-    state.renderScale = clampRenderScale(AUTO_GRAPHICS_BASELINE.renderScale);
+    state.renderScale = nextScale;
     state.graphicsEffectsLevel = clampGraphicsEffectsLevel(AUTO_GRAPHICS_BASELINE.effectsLevel);
+    noteRenderScaleChange(nextScale, "adaptive-baseline");
     resetWorldSystemCadence();
     updateGraphicsSettingsUI();
     if (syncCadence) syncNetworkCadenceTimers();
-    if (resize) requestResize();
+    if (resize) requestResize("adaptive-baseline");
     armAutoPerformanceWarmup();
     if (persist) saveUserSettings();
   }
@@ -3472,9 +3979,10 @@
     state.renderScale = nextScale;
     state.graphicsPreset = getAdaptiveGraphicsProfileKeyForScale(nextScale);
     state.graphicsEffectsLevel = AUTO_GRAPHICS_BASELINE.effectsLevel;
+    noteRenderScaleChange(nextScale, persist ? "settings-change" : "auto-performance");
     updateGraphicsSettingsUI();
     syncNetworkCadenceTimers();
-    requestResize();
+    requestResize(persist ? "settings-change" : "auto-performance");
     if (persist) saveUserSettings();
   }
 
@@ -3637,6 +4145,7 @@
     updateInfiniteHealthButton();
     updateDebugWorldMapButton();
     updateDebugFpsButton();
+    updateDebugRenderDiagnostics(true);
     updateDebugRepairableShipButton();
     updateContinentalShiftButton();
     updateDebugPlaceBoatButton();
@@ -3656,6 +4165,7 @@
       qaRuntime.caveDisableReadinessLogged = false;
     }
     updateMpAutotestControls();
+    syncDebugPerformanceInstrumentation(true);
     if (persist) saveUserSettings();
   }
 
@@ -19555,6 +20065,7 @@
       applyCaveV2RuntimeEntranceLinksFromSurfaceCaves(world, world.runtimeCaveV2Entrances);
       return world.runtimeCaveV2Entrances;
     }
+    bumpRenderDetector("worldEntranceRebuilds");
     const entrances = [];
     const sourceCaves = Array.isArray(world.caves) ? world.caves : [];
     for (const cave of sourceCaves) {
@@ -19936,6 +20447,7 @@
   }
 
   function findCaveV2TilePath(room, start, goal) {
+    bumpRenderDetector("pathfindingCalls");
     if (!room || !start || !goal) return null;
     const sx = Math.floor(Number(start.tx));
     const sy = Math.floor(Number(start.ty));
@@ -21666,6 +22178,7 @@
   }
 
   function createCaveV2(surfaceWorld, entrance) {
+    bumpRenderDetector("caveRegenerations");
     const caveId = entrance.caveId || getCaveV2EntranceStableId(surfaceWorld, entrance.tx, entrance.ty);
     const entrySurfaceKey = entrance.key || buildCaveV2EntranceSurfaceKey(surfaceWorld, entrance.tx, entrance.ty);
     const entryEntranceId = String(entrance.entranceId || entrySurfaceKey);
@@ -28294,6 +28807,8 @@
     if (!state.world || !state.player) return;
     const surface = state.surfaceWorld || state.world;
     if (!surface) return;
+    bumpRenderDetector("saveSerializations");
+    const saveStartedAt = performance.now();
     const seedKey = getSeedSaveKey(surface.seed);
     const playerUnlocks = normalizeUnlocks(state.player.unlocks);
 
@@ -28400,6 +28915,8 @@
 
     state.dirty = false;
     state.saveTimer = CONFIG.saveInterval;
+    renderDiagnostics.lastAutosaveAt = performance.now();
+    renderDiagnostics.lastAutosaveDurationMs = Math.max(0, renderDiagnostics.lastAutosaveAt - saveStartedAt);
   }
 
   function loadGame(seedStr = null) {
@@ -36860,6 +37377,7 @@
 
   function scheduleStoragePanelLayout() {
     if (storagePanelLayoutRaf) return;
+    bumpRenderDetector("uiLayoutRebuilds");
     storagePanelLayoutRaf = requestAnimationFrame(() => {
       storagePanelLayoutRaf = 0;
       applyStoragePanelLayout();
@@ -38462,6 +38980,7 @@
     } else {
       settingsPanel.classList.add("hidden");
     }
+    syncDebugPerformanceInstrumentation(true);
   }
 
   function toggleDebugMenu() {
@@ -38472,6 +38991,7 @@
     }
     closeSettingsPanel();
     debugPanel.classList.toggle("hidden");
+    syncDebugPerformanceInstrumentation(true);
   }
 
   function unlockDebugFromSettings() {
@@ -38916,6 +39436,7 @@
     }
     state.debugShowFps = !state.debugShowFps;
     updateDebugFpsButton();
+    syncDebugPerformanceInstrumentation(true);
     setPrompt(
       state.debugShowFps
         ? "FPS monitor enabled"
@@ -42523,6 +43044,7 @@
       ? (world.animalSpawnTimer - dt)
       : 0;
     if (world.animalManagementTimer <= 0) {
+      bumpRenderDetector("aiFullScans");
       world.animalManagementTimer = SURFACE_PASSIVE_ANIMAL_CONFIG.managementInterval;
       const refreshedTargets = getSurfacePassiveAnimalTargets(world);
       world._surfacePassiveAnimalTargets = refreshedTargets;
@@ -45014,6 +45536,7 @@
   function getSurfaceTileTextureSeedInt(world = state.surfaceWorld || state.world) {
     if (!world) return 0;
     if (!Number.isFinite(world._surfaceTileTextureSeedInt)) {
+      bumpRenderDetector("terrainCacheBuilds");
       world._surfaceTileTextureSeedInt = seedToInt(String(world.seed || "island-1"));
     }
     return world._surfaceTileTextureSeedInt;
@@ -45022,6 +45545,7 @@
   function getTileSpeckleVariantHash(variant = "land") {
     const key = typeof variant === "string" && variant ? variant : "land";
     if (!tileSpeckleVariantHashCache.has(key)) {
+      bumpRenderDetector("terrainCacheBuilds");
       tileSpeckleVariantHashCache.set(key, seedToInt(key));
     }
     return tileSpeckleVariantHashCache.get(key) || 0;
@@ -45033,6 +45557,7 @@
     const cacheKey = `${normalizedBiomeId}:${isBeach ? 1 : 0}:${shadeKey}`;
     let fill = landTileBaseFillCache.get(cacheKey);
     if (fill) return fill;
+    bumpRenderDetector("terrainCacheBuilds");
     const biome = BIOMES[normalizedBiomeId] || BIOMES[0];
     const base = isBeach ? biome.sand : biome.land;
     const multiplier = shadeKey / 255;
@@ -51039,6 +51564,7 @@
     let lastTime = performance.now();
     let accumulator = 0;
     resetWorldSystemCadence();
+    resetRenderDiagnosticsFrame();
     const autoPerf = {
       smoothedFrameMs: FIXED_SIM_TIMESTEP_SECONDS * 1000,
       criticalLowFpsTimer: 0,
@@ -51198,6 +51724,7 @@
     };
 
     function frame(time) {
+      resetRenderDiagnosticsFrame();
       const rawDeltaSeconds = Math.max(0, (time - lastTime) / 1000);
       const deltaSeconds = clamp(rawDeltaSeconds, 0, getRuntimeMaxFrameDeltaSeconds());
       const rawFrameMs = Math.max(0.01, (Number(time) || 0) - (Number(lastTime) || 0));
@@ -51218,6 +51745,7 @@
           frameMetrics?.renderTimeMs || 0
         );
         maybeApplyAutoPerformanceGuard(rawDeltaSeconds);
+        evaluateRenderDiagnosticsFrame(rawDeltaSeconds);
       } catch (err) {
         handleFrameRuntimeError(err);
       }
@@ -51231,6 +51759,7 @@
       let guard = 0;
       try {
         while (remaining > 0.0001 && guard < 1024) {
+          resetRenderDiagnosticsFrame();
           const step = Math.min(remaining, getRuntimeMaxFrameDeltaSeconds());
           const frameMetrics = stepSimulation(step, Math.max(getRuntimeMaxFixedSteps(), 10)) || null;
           recordPerfProfilerFrame(
@@ -51238,6 +51767,7 @@
             frameMetrics?.updateTimeMs || 0,
             frameMetrics?.renderTimeMs || 0
           );
+          evaluateRenderDiagnosticsFrame(step);
           remaining -= step;
           guard += 1;
         }
@@ -51264,7 +51794,7 @@
     };
   }
 
-  function getRenderDpr(width, height) {
+  function getRenderDpr(width, height, reason = "resize") {
     const nativeDpr = Math.max(1, window.devicePixelRatio || 1);
     const coarse = isCoarsePointerDevice();
     const dprCap = coarse ? MOBILE_RENDER_DPR_CAP : DESKTOP_RENDER_DPR_CAP;
@@ -51275,7 +51805,9 @@
     if (estimatedPixels > maxPixels && width > 0 && height > 0) {
       nextDpr = Math.sqrt(maxPixels / (width * height));
     }
-    return clamp(nextDpr, 0.42, nativeDpr);
+    const resolved = clamp(nextDpr, 0.42, nativeDpr);
+    noteRenderDprCalculation(reason, resolved);
+    return resolved;
   }
 
   function applyViewportCssVars(width, height) {
@@ -51284,24 +51816,48 @@
     root.style.setProperty("--app-vh", `${Math.max(1, Math.round(height))}px`);
   }
 
-  function resize() {
+  function resize(reason = "unknown") {
     const viewport = getViewportSize();
     viewWidth = viewport.width;
     viewHeight = viewport.height;
-    dpr = getRenderDpr(viewWidth, viewHeight);
-    canvas.width = Math.max(1, Math.round(viewWidth * dpr));
-    canvas.height = Math.max(1, Math.round(viewHeight * dpr));
-    canvas.style.width = `${viewWidth}px`;
-    canvas.style.height = `${viewHeight}px`;
+    const nextDpr = getRenderDpr(viewWidth, viewHeight, reason);
+    const nextCanvasWidth = Math.max(1, Math.round(viewWidth * nextDpr));
+    const nextCanvasHeight = Math.max(1, Math.round(viewHeight * nextDpr));
+    const nextCssWidth = `${viewWidth}px`;
+    const nextCssHeight = `${viewHeight}px`;
+    const changed = nextCanvasWidth !== canvas.width
+      || nextCanvasHeight !== canvas.height
+      || nextCssWidth !== canvas.style.width
+      || nextCssHeight !== canvas.style.height
+      || Math.abs(nextDpr - dpr) > 0.0005;
+    if (!changed) {
+      noteRenderResizeApplied(reason, false, viewWidth, viewHeight, nextDpr);
+      return;
+    }
+    dpr = nextDpr;
+    canvas.width = nextCanvasWidth;
+    canvas.height = nextCanvasHeight;
+    canvas.style.width = nextCssWidth;
+    canvas.style.height = nextCssHeight;
     applyViewportCssVars(viewWidth, viewHeight);
+    noteRenderResizeApplied(reason, changed, viewWidth, viewHeight, nextDpr);
     scheduleStoragePanelLayout();
   }
 
-  function requestResize() {
-    if (resizeRaf) return;
+  function requestResize(reason = "unknown") {
+    noteRenderResizeRequested(reason);
+    if (resizeRaf) {
+      if (!pendingResizeReason || pendingResizeReason === "unknown") {
+        pendingResizeReason = String(reason || "unknown");
+      }
+      return;
+    }
+    pendingResizeReason = String(reason || "unknown");
     resizeRaf = requestAnimationFrame(() => {
       resizeRaf = 0;
-      resize();
+      const nextReason = pendingResizeReason || String(reason || "unknown");
+      pendingResizeReason = "";
+      resize(nextReason);
     });
   }
 
@@ -51671,6 +52227,7 @@
       ? (state.loadingVisible ? "loading" : "game")
       : "menu";
     const activeWorld = state.world || state.surfaceWorld || null;
+    const renderSnapshot = buildRenderDiagnosticsSnapshot();
     return {
       note: "origin=top-left,x+=right,y+=down",
       mode,
@@ -51705,6 +52262,7 @@
         activeDpr: Number((Number(dpr) || 0).toFixed(3)),
         smoothing: !!ctx.imageSmoothingEnabled,
       },
+      renderDiagnostics: renderSnapshot,
       performance: getPerfProfilerSummary(),
       multiplayer: {
         enabled: !!net.enabled,
@@ -51847,6 +52405,9 @@
       },
       getUiRectSnapshot,
       requestResize,
+      getRenderDiagnosticsSnapshot: () => buildRenderDiagnosticsSnapshot(),
+      getRenderStallCapture: () => renderDiagnostics.lastStallCapture,
+      copyRenderDiagnosticsReport: () => buildCopyableRenderDiagnosticsReport(),
     };
   }
 
@@ -52256,7 +52817,7 @@
     hideLoadingOverlay();
     setupSlots();
     setupMobileZoomLock();
-    resize();
+    resize("init");
     if (startScreen) {
       startScreen.classList.remove("start-screen-transition-out");
       startScreen.classList.remove("hidden");
@@ -52283,11 +52844,10 @@
     updateDebugCaveSpawnButtons();
     if (settingsPanel) settingsPanel.classList.add("hidden");
 
-    window.addEventListener("resize", requestResize);
-    window.addEventListener("orientationchange", requestResize);
+    window.addEventListener("resize", () => requestResize("window-resize"));
+    window.addEventListener("orientationchange", () => requestResize("orientationchange"));
     if (window.visualViewport) {
-      window.visualViewport.addEventListener("resize", requestResize);
-      window.visualViewport.addEventListener("scroll", requestResize);
+      window.visualViewport.addEventListener("resize", () => requestResize("visualViewport-resize"));
     }
     window.addEventListener("keydown", handleKeyDown);
     window.addEventListener("keyup", handleKeyUp);
@@ -52297,7 +52857,7 @@
       if (document.visibilityState !== "visible") {
         clearTransientInputState();
       } else {
-        requestResize();
+        requestResize("visibility-visible");
       }
     });
     window.addEventListener("beforeunload", saveGame);
@@ -52492,6 +53052,7 @@
     if (infiniteHealthBtn) infiniteHealthBtn.addEventListener("click", toggleInfiniteHealth);
     if (debugWorldMapBtn) debugWorldMapBtn.addEventListener("click", toggleDebugWorldMap);
     if (debugFpsBtn) debugFpsBtn.addEventListener("click", toggleDebugFps);
+    if (copyRenderDiagnosticsBtn) copyRenderDiagnosticsBtn.addEventListener("click", copyRenderDiagnosticsReport);
     if (debugRepairableShipBtn) debugRepairableShipBtn.addEventListener("click", toggleDebugRepairableShipMarker);
     if (continentalShiftBtn) continentalShiftBtn.addEventListener("click", toggleContinentalShift);
     if (debugPlaceBoatBtn) debugPlaceBoatBtn.addEventListener("click", toggleDebugPlaceRepairedBoat);
