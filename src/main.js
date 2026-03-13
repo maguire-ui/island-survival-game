@@ -170,18 +170,18 @@
 
   const TOUCH_STICK_MAX_DIST = 40;
   const MOBILE_RENDER_DPR_CAP = 1.18;
-  const DESKTOP_RENDER_DPR_CAP = 1.35;
+  const DESKTOP_RENDER_DPR_CAP = 1.75;
   const MOBILE_RENDER_MAX_PIXELS = 1200000;
-  const DESKTOP_RENDER_MAX_PIXELS = 2600000;
+  const DESKTOP_RENDER_MAX_PIXELS = 4600000;
   const GRAPHICS_PRESET_CONFIG = Object.freeze({
-    performance: Object.freeze({ renderScale: 0.62, effectsLevel: 1 }),
-    balanced: Object.freeze({ renderScale: 0.74, effectsLevel: 2 }),
-    quality: Object.freeze({ renderScale: 0.84, effectsLevel: 2 }),
-    ultra: Object.freeze({ renderScale: 0.94, effectsLevel: 2 }),
+    performance: Object.freeze({ renderScale: 0.68, effectsLevel: 1 }),
+    balanced: Object.freeze({ renderScale: 0.82, effectsLevel: 2 }),
+    quality: Object.freeze({ renderScale: 0.92, effectsLevel: 2 }),
+    ultra: Object.freeze({ renderScale: 1.0, effectsLevel: 2 }),
   });
   const AUTO_GRAPHICS_BASELINE = Object.freeze({
-    preset: "quality",
-    renderScale: GRAPHICS_PRESET_CONFIG.quality.renderScale,
+    preset: "ultra",
+    renderScale: GRAPHICS_PRESET_CONFIG.ultra.renderScale,
     effectsLevel: 2,
   });
   const GRAPHICS_RUNTIME_PROFILE_CONFIG = Object.freeze({
@@ -1898,6 +1898,7 @@
     spawnIslandHarvestMin: 2,
     activeIslandHarvestMin: 1,
     catchupSpawnBurstMax: 1,
+    managementInterval: 0.35,
   });
 
   const AMBIENT_FISH_CONFIG = Object.freeze({
@@ -2153,6 +2154,345 @@
     instantaneous: 60,
     frameMs: 1000 / 60,
   };
+  const DEV_PERF_PROFILER_CONFIG = Object.freeze({
+    maxSlowSections: 10,
+    consoleLogIntervalMs: 4000,
+  });
+  const runtimeTracker = {
+    timeouts: new Set(),
+    intervals: new Set(),
+    animationFrames: new Set(),
+    listenersByTarget: Object.create(null),
+    listenersByType: Object.create(null),
+    activeListenerCount: 0,
+    installed: false,
+  };
+  const perfProfiler = {
+    enabled: false,
+    sampleCount: 0,
+    totalFrameMs: 0,
+    totalUpdateMs: 0,
+    totalRenderMs: 0,
+    longestFrameMs: 0,
+    longestWorkFrameMs: 0,
+    lastFrameMs: 0,
+    lastUpdateMs: 0,
+    lastRenderMs: 0,
+    sectionStats: Object.create(null),
+    counts: null,
+    lastConsoleLogAt: 0,
+  };
+
+  function getRuntimeTrackerTargetLabel(target) {
+    if (target === window) return "window";
+    if (target === document) return "document";
+    if (target === canvas) return "canvas";
+    if (target === startScreen) return "startScreen";
+    if (target === settingsPanel) return "settingsPanel";
+    if (target === debugPanel) return "debugPanel";
+    if (target === buildMenu) return "buildMenu";
+    if (target === stationMenu) return "stationMenu";
+    if (target === chestPanel) return "chestPanel";
+    if (target?.id) return `#${target.id}`;
+    if (typeof target?.tagName === "string") return String(target.tagName).toLowerCase();
+    return "other";
+  }
+
+  function installRuntimeTrackerHooks() {
+    if (runtimeTracker.installed || typeof window === "undefined") return;
+    runtimeTracker.installed = true;
+
+    const nativeSetTimeout = window.setTimeout.bind(window);
+    const nativeClearTimeout = window.clearTimeout.bind(window);
+    const nativeSetInterval = window.setInterval.bind(window);
+    const nativeClearInterval = window.clearInterval.bind(window);
+    const nativeRequestAnimationFrame = window.requestAnimationFrame?.bind(window) || null;
+    const nativeCancelAnimationFrame = window.cancelAnimationFrame?.bind(window) || null;
+
+    window.setTimeout = (handler, delay, ...args) => {
+      if (typeof handler !== "function") {
+        return nativeSetTimeout(handler, delay, ...args);
+      }
+      let handle = 0;
+      const wrapped = (...cbArgs) => {
+        runtimeTracker.timeouts.delete(handle);
+        return handler(...cbArgs);
+      };
+      handle = nativeSetTimeout(wrapped, delay, ...args);
+      runtimeTracker.timeouts.add(handle);
+      return handle;
+    };
+
+    window.clearTimeout = (handle) => {
+      runtimeTracker.timeouts.delete(handle);
+      return nativeClearTimeout(handle);
+    };
+
+    window.setInterval = (handler, delay, ...args) => {
+      const handle = nativeSetInterval(handler, delay, ...args);
+      runtimeTracker.intervals.add(handle);
+      return handle;
+    };
+
+    window.clearInterval = (handle) => {
+      runtimeTracker.intervals.delete(handle);
+      return nativeClearInterval(handle);
+    };
+
+    if (nativeRequestAnimationFrame && nativeCancelAnimationFrame) {
+      window.requestAnimationFrame = (callback) => {
+        if (typeof callback !== "function") {
+          return nativeRequestAnimationFrame(callback);
+        }
+        let handle = 0;
+        const wrapped = (timestamp) => {
+          runtimeTracker.animationFrames.delete(handle);
+          return callback(timestamp);
+        };
+        handle = nativeRequestAnimationFrame(wrapped);
+        runtimeTracker.animationFrames.add(handle);
+        return handle;
+      };
+
+      window.cancelAnimationFrame = (handle) => {
+        runtimeTracker.animationFrames.delete(handle);
+        return nativeCancelAnimationFrame(handle);
+      };
+    }
+
+    const listenerRegistry = new WeakMap();
+    const nativeAddEventListener = EventTarget.prototype.addEventListener;
+    const nativeRemoveEventListener = EventTarget.prototype.removeEventListener;
+    const getCaptureFlag = (options) => {
+      if (typeof options === "boolean") return options;
+      return !!options?.capture;
+    };
+    const bumpListenerCount = (bucket, key, delta) => {
+      const next = Math.max(0, (bucket[key] || 0) + delta);
+      if (next <= 0) delete bucket[key];
+      else bucket[key] = next;
+    };
+
+    EventTarget.prototype.addEventListener = function patchedAddEventListener(type, listener, options) {
+      nativeAddEventListener.call(this, type, listener, options);
+      if (!listener || !type) return;
+      let targetMap = listenerRegistry.get(this);
+      if (!targetMap) {
+        targetMap = new Map();
+        listenerRegistry.set(this, targetMap);
+      }
+      const capture = getCaptureFlag(options) ? 1 : 0;
+      const registryKey = `${String(type)}|${capture}`;
+      let listenerMap = targetMap.get(registryKey);
+      if (!listenerMap) {
+        listenerMap = new Map();
+        targetMap.set(registryKey, listenerMap);
+      }
+      if (listenerMap.has(listener)) return;
+      listenerMap.set(listener, true);
+      runtimeTracker.activeListenerCount += 1;
+      const targetLabel = getRuntimeTrackerTargetLabel(this);
+      bumpListenerCount(runtimeTracker.listenersByTarget, targetLabel, 1);
+      bumpListenerCount(runtimeTracker.listenersByType, String(type), 1);
+    };
+
+    EventTarget.prototype.removeEventListener = function patchedRemoveEventListener(type, listener, options) {
+      nativeRemoveEventListener.call(this, type, listener, options);
+      if (!listener || !type) return;
+      const targetMap = listenerRegistry.get(this);
+      if (!targetMap) return;
+      const capture = getCaptureFlag(options) ? 1 : 0;
+      const registryKey = `${String(type)}|${capture}`;
+      const listenerMap = targetMap.get(registryKey);
+      if (!listenerMap || !listenerMap.has(listener)) return;
+      listenerMap.delete(listener);
+      if (listenerMap.size === 0) {
+        targetMap.delete(registryKey);
+      }
+      runtimeTracker.activeListenerCount = Math.max(0, runtimeTracker.activeListenerCount - 1);
+      const targetLabel = getRuntimeTrackerTargetLabel(this);
+      bumpListenerCount(runtimeTracker.listenersByTarget, targetLabel, -1);
+      bumpListenerCount(runtimeTracker.listenersByType, String(type), -1);
+    };
+  }
+
+  function isPerfProfilerActive() {
+    return !!state?.debugUnlocked && !!state?.debugPerfProfiler;
+  }
+
+  function resetPerfProfilerStats() {
+    perfProfiler.sampleCount = 0;
+    perfProfiler.totalFrameMs = 0;
+    perfProfiler.totalUpdateMs = 0;
+    perfProfiler.totalRenderMs = 0;
+    perfProfiler.longestFrameMs = 0;
+    perfProfiler.longestWorkFrameMs = 0;
+    perfProfiler.lastFrameMs = 0;
+    perfProfiler.lastUpdateMs = 0;
+    perfProfiler.lastRenderMs = 0;
+    perfProfiler.sectionStats = Object.create(null);
+    perfProfiler.counts = null;
+    perfProfiler.lastConsoleLogAt = 0;
+  }
+
+  function setPerfProfilerEnabled(enabled) {
+    perfProfiler.enabled = !!enabled;
+    state.debugPerfProfiler = !!enabled;
+    if (perfProfiler.enabled) {
+      resetPerfProfilerStats();
+    }
+  }
+
+  function trackPerfSection(label, fn) {
+    if (!perfProfiler.enabled || typeof fn !== "function") return fn();
+    const startedAt = performance.now();
+    try {
+      return fn();
+    } finally {
+      const elapsed = Math.max(0, performance.now() - startedAt);
+      let stats = perfProfiler.sectionStats[label];
+      if (!stats) {
+        stats = perfProfiler.sectionStats[label] = {
+          totalMs: 0,
+          maxMs: 0,
+          count: 0,
+          lastMs: 0,
+        };
+      }
+      stats.totalMs += elapsed;
+      stats.maxMs = Math.max(stats.maxMs, elapsed);
+      stats.count += 1;
+      stats.lastMs = elapsed;
+    }
+  }
+
+  function getPerfProfilerCounts() {
+    const activeWorld = state.world || state.surfaceWorld || null;
+    const caveState = CAVE_V2_ENABLED ? getCaveV2State() : null;
+    let caveRoomCount = 0;
+    if (caveState?.cavesById) {
+      for (const cave of Object.values(caveState.cavesById)) {
+        caveRoomCount += Array.isArray(cave?.rooms) ? cave.rooms.length : 0;
+      }
+    }
+    const structures = Array.isArray(state.structures)
+      ? state.structures.reduce((sum, entry) => sum + Number(!!entry && !entry.removed), 0)
+      : 0;
+    const projectiles = Array.isArray(activeWorld?.projectiles) ? activeWorld.projectiles.length : 0;
+    const poisonClouds = Array.isArray(activeWorld?.poisonClouds) ? activeWorld.poisonClouds.length : 0;
+    return {
+      mobs: Array.isArray(activeWorld?.monsters) ? activeWorld.monsters.length : 0,
+      animals: Array.isArray(activeWorld?.animals) ? activeWorld.animals.length : 0,
+      drops: Array.isArray(activeWorld?.drops) ? activeWorld.drops.length : 0,
+      resources: Array.isArray(activeWorld?.resources) ? activeWorld.resources.filter((entry) => entry && !entry.removed).length : 0,
+      particles: projectiles + poisonClouds,
+      projectiles,
+      poisonClouds,
+      ambientFish: Array.isArray(state.ambientFish) ? state.ambientFish.length : 0,
+      caveRooms: caveRoomCount,
+      worldObjects: structures,
+      timers: runtimeTracker.timeouts.size,
+      intervals: runtimeTracker.intervals.size,
+      animationLoops: runtimeTracker.animationFrames.size,
+      listeners: runtimeTracker.activeListenerCount,
+    };
+  }
+
+  function getPerfProfilerSummary() {
+    const avgFrameMs = perfProfiler.sampleCount > 0
+      ? (perfProfiler.totalFrameMs / perfProfiler.sampleCount)
+      : 0;
+    const avgUpdateMs = perfProfiler.sampleCount > 0
+      ? (perfProfiler.totalUpdateMs / perfProfiler.sampleCount)
+      : 0;
+    const avgRenderMs = perfProfiler.sampleCount > 0
+      ? (perfProfiler.totalRenderMs / perfProfiler.sampleCount)
+      : 0;
+    const avgFps = avgFrameMs > 0 ? (1000 / avgFrameMs) : 0;
+    const slowestSections = Object.entries(perfProfiler.sectionStats)
+      .map(([label, stats]) => ({
+        label,
+        avgMs: stats.count > 0 ? (stats.totalMs / stats.count) : 0,
+        maxMs: stats.maxMs || 0,
+        lastMs: stats.lastMs || 0,
+        samples: stats.count || 0,
+      }))
+      .sort((a, b) => (b.avgMs - a.avgMs) || (b.maxMs - a.maxMs) || a.label.localeCompare(b.label))
+      .slice(0, DEV_PERF_PROFILER_CONFIG.maxSlowSections)
+      .map((entry) => ({
+        label: entry.label,
+        avgMs: Number(entry.avgMs.toFixed(3)),
+        maxMs: Number(entry.maxMs.toFixed(3)),
+        lastMs: Number(entry.lastMs.toFixed(3)),
+        samples: entry.samples,
+      }));
+    const listenerTargets = Object.entries(runtimeTracker.listenersByTarget)
+      .sort((a, b) => (b[1] - a[1]) || a[0].localeCompare(b[0]))
+      .slice(0, 8)
+      .map(([label, count]) => ({ label, count }));
+    const listenerTypes = Object.entries(runtimeTracker.listenersByType)
+      .sort((a, b) => (b[1] - a[1]) || a[0].localeCompare(b[0]))
+      .slice(0, 8)
+      .map(([label, count]) => ({ label, count }));
+    return {
+      enabled: !!perfProfiler.enabled,
+      samples: perfProfiler.sampleCount,
+      averageFps: Number(avgFps.toFixed(2)),
+      averageFrameMs: Number(avgFrameMs.toFixed(3)),
+      averageUpdateMs: Number(avgUpdateMs.toFixed(3)),
+      averageRenderMs: Number(avgRenderMs.toFixed(3)),
+      longestFrameMs: Number(perfProfiler.longestFrameMs.toFixed(3)),
+      longestWorkFrameMs: Number(perfProfiler.longestWorkFrameMs.toFixed(3)),
+      lastFrameMs: Number(perfProfiler.lastFrameMs.toFixed(3)),
+      lastUpdateMs: Number(perfProfiler.lastUpdateMs.toFixed(3)),
+      lastRenderMs: Number(perfProfiler.lastRenderMs.toFixed(3)),
+      counts: perfProfiler.counts || getPerfProfilerCounts(),
+      slowestSections,
+      frameBuckets: {
+        total: Number((qaRuntime.frameBuckets.total || 0).toFixed(3)),
+        backdrop: Number((qaRuntime.frameBuckets.backdrop || 0).toFixed(3)),
+        terrain: Number((qaRuntime.frameBuckets.terrain || 0).toFixed(3)),
+        world: Number((qaRuntime.frameBuckets.world || 0).toFixed(3)),
+        entities: Number((qaRuntime.frameBuckets.entities || 0).toFixed(3)),
+        overlays: Number((qaRuntime.frameBuckets.overlays || 0).toFixed(3)),
+      },
+      listenerTargets,
+      listenerTypes,
+    };
+  }
+
+  function recordPerfProfilerFrame(frameMs, updateMs, renderMs) {
+    if (!perfProfiler.enabled) return;
+    const nextFrameMs = Math.max(0, Number(frameMs) || 0);
+    const nextUpdateMs = Math.max(0, Number(updateMs) || 0);
+    const nextRenderMs = Math.max(0, Number(renderMs) || 0);
+    perfProfiler.sampleCount += 1;
+    perfProfiler.totalFrameMs += nextFrameMs;
+    perfProfiler.totalUpdateMs += nextUpdateMs;
+    perfProfiler.totalRenderMs += nextRenderMs;
+    perfProfiler.longestFrameMs = Math.max(perfProfiler.longestFrameMs, nextFrameMs);
+    perfProfiler.longestWorkFrameMs = Math.max(perfProfiler.longestWorkFrameMs, nextUpdateMs + nextRenderMs);
+    perfProfiler.lastFrameMs = nextFrameMs;
+    perfProfiler.lastUpdateMs = nextUpdateMs;
+    perfProfiler.lastRenderMs = nextRenderMs;
+    perfProfiler.counts = getPerfProfilerCounts();
+    const now = performance.now();
+    if (now - perfProfiler.lastConsoleLogAt >= DEV_PERF_PROFILER_CONFIG.consoleLogIntervalMs) {
+      perfProfiler.lastConsoleLogAt = now;
+      const summary = getPerfProfilerSummary();
+      console.info("[Perf]", {
+        averageFps: summary.averageFps,
+        averageFrameMs: summary.averageFrameMs,
+        averageUpdateMs: summary.averageUpdateMs,
+        averageRenderMs: summary.averageRenderMs,
+        longestFrameMs: summary.longestFrameMs,
+        counts: summary.counts,
+        slowestSections: summary.slowestSections.slice(0, 6),
+      });
+    }
+  }
+
+  installRuntimeTrackerHooks();
 
   const keyState = new Map();
   let interactPressed = false;
@@ -2187,6 +2527,8 @@
   const inventorySlots = [];
   const chestSlots = [];
   const itemTextureCache = new Map();
+  const landTileBaseFillCache = new Map();
+  const tileSpeckleVariantHashCache = new Map();
   const ITEM_TEXTURE_CACHE_VERSION = 6;
   const qaRuntime = {
     runTimer: QA_SELF_TEST_CONFIG.runInterval,
@@ -2361,6 +2703,7 @@
     debugInfiniteHealth: SETTINGS_DEFAULTS.debugInfiniteHealth,
     debugWorldMapVisible: false,
     debugShowFps: false,
+    debugPerfProfiler: false,
     debugShowAbandonedRobot: false,
     debugShowRepairableShip: false,
     debugContinentalShift: false,
@@ -42170,68 +42513,80 @@
     if (netIsClient()) return;
     const world = state.surfaceWorld || state.world;
     if (!world || !Array.isArray(world.animals)) return;
-    const passiveTargets = getSurfacePassiveAnimalTargets(world);
+    const passiveTargets = world._surfacePassiveAnimalTargets || getSurfacePassiveAnimalTargets(world);
     const maxAnimals = passiveTargets.maxAnimals;
-    const players = getPlayersForWorld(world);
-    const trimmedByIslandCap = trimSurfaceAnimalsToIslandCaps(world, players, {
-      spawnIslandHarvestMin: passiveTargets.spawnIslandHarvestMin,
-      mushroomMinPerIsland: MUSHROOM_GREEN_COW_CONFIG.minPerIsland,
-    });
-    const trimmedAnimals = trimSurfaceAnimalsToCap(world, maxAnimals, players, {
-      spawnIslandHarvestMin: passiveTargets.spawnIslandHarvestMin,
-      mushroomMinPerIsland: MUSHROOM_GREEN_COW_CONFIG.minPerIsland,
-    });
-    if (trimmedByIslandCap > 0 || trimmedAnimals > 0) {
-      markDirty();
-    }
-    // Only repopulate on the timed spawn cadence below. This avoids instant
-    // one-for-one replacement pop-in when a passive animal is killed.
-    world.animalSpawnTimer -= dt;
-    if (world.animalSpawnTimer <= 0) {
-      const catchupDeficit = Math.max(0, passiveTargets.baselineAnimals - world.animals.length);
-      world.animalSpawnTimer = catchupDeficit > 0
-        ? (4.2 + Math.random() * 3.2)
-        : (7 + Math.random() * 5);
-      const activeIslands = getSurfaceActiveIslands(world, players);
-      // Reserve a few slots so spawn island can always repopulate for early survival loops.
-      const spawnIslandHarvestAdded = ensureSpawnIslandHarvestAnimals(
-        world,
-        state.spawnTile,
-        passiveTargets.spawnIslandHarvestMin,
-        maxAnimals
-      );
-      const activeIslandHarvestAdded = ensureActiveIslandHarvestAnimals(
-        world,
-        activeIslands,
-        passiveTargets.activeIslandHarvestMin,
-        maxAnimals
-      );
-      const greenCowAdded = ensureMushroomIslandGreenCows(world, maxAnimals);
-      let passiveSpawned = false;
-
-      if (world.animals.length < maxAnimals) {
-        const deficit = Math.max(0, passiveTargets.baselineAnimals - world.animals.length);
-        const catchupBurst = clamp(
-          Math.ceil(deficit / 4),
-          1,
-          SURFACE_PASSIVE_ANIMAL_CONFIG.catchupSpawnBurstMax
-        );
-        const targetSpawns = deficit > 0 ? catchupBurst : 1;
-        let attempts = 0;
-        let spawnedCount = 0;
-        const maxAttempts = targetSpawns * 2;
-        while (world.animals.length < maxAnimals && attempts < maxAttempts && spawnedCount < targetSpawns) {
-          attempts += 1;
-          const spawnedNearPlayers = activeIslands.length > 0
-            && spawnSurfaceAnimalFromIslands(world, 5.2, { islands: activeIslands });
-          const spawned = spawnedNearPlayers || spawnSurfaceAnimalFromIslands(world, 5.8);
-          if (!spawned) continue;
-          spawnedCount += 1;
-          passiveSpawned = true;
-        }
-      }
-      if (greenCowAdded > 0 || spawnIslandHarvestAdded > 0 || activeIslandHarvestAdded > 0 || passiveSpawned) {
+    world._surfacePassiveAnimalTargets = passiveTargets;
+    world.animalManagementTimer = Number.isFinite(world.animalManagementTimer)
+      ? (world.animalManagementTimer - dt)
+      : 0;
+    world.animalSpawnTimer = Number.isFinite(world.animalSpawnTimer)
+      ? (world.animalSpawnTimer - dt)
+      : 0;
+    if (world.animalManagementTimer <= 0) {
+      world.animalManagementTimer = SURFACE_PASSIVE_ANIMAL_CONFIG.managementInterval;
+      const refreshedTargets = getSurfacePassiveAnimalTargets(world);
+      world._surfacePassiveAnimalTargets = refreshedTargets;
+      const refreshedMaxAnimals = refreshedTargets.maxAnimals;
+      const players = getPlayersForWorld(world);
+      const trimmedByIslandCap = trimSurfaceAnimalsToIslandCaps(world, players, {
+        spawnIslandHarvestMin: refreshedTargets.spawnIslandHarvestMin,
+        mushroomMinPerIsland: MUSHROOM_GREEN_COW_CONFIG.minPerIsland,
+      });
+      const trimmedAnimals = trimSurfaceAnimalsToCap(world, refreshedMaxAnimals, players, {
+        spawnIslandHarvestMin: refreshedTargets.spawnIslandHarvestMin,
+        mushroomMinPerIsland: MUSHROOM_GREEN_COW_CONFIG.minPerIsland,
+      });
+      if (trimmedByIslandCap > 0 || trimmedAnimals > 0) {
         markDirty();
+      }
+      // Only repopulate on the timed spawn cadence below. This avoids instant
+      // one-for-one replacement pop-in when a passive animal is killed.
+      if (world.animalSpawnTimer <= 0) {
+        const catchupDeficit = Math.max(0, refreshedTargets.baselineAnimals - world.animals.length);
+        world.animalSpawnTimer = catchupDeficit > 0
+          ? (4.2 + Math.random() * 3.2)
+          : (7 + Math.random() * 5);
+        const activeIslands = getSurfaceActiveIslands(world, players);
+        // Reserve a few slots so spawn island can always repopulate for early survival loops.
+        const spawnIslandHarvestAdded = ensureSpawnIslandHarvestAnimals(
+          world,
+          state.spawnTile,
+          refreshedTargets.spawnIslandHarvestMin,
+          refreshedMaxAnimals
+        );
+        const activeIslandHarvestAdded = ensureActiveIslandHarvestAnimals(
+          world,
+          activeIslands,
+          refreshedTargets.activeIslandHarvestMin,
+          refreshedMaxAnimals
+        );
+        const greenCowAdded = ensureMushroomIslandGreenCows(world, refreshedMaxAnimals);
+        let passiveSpawned = false;
+
+        if (world.animals.length < refreshedMaxAnimals) {
+          const deficit = Math.max(0, refreshedTargets.baselineAnimals - world.animals.length);
+          const catchupBurst = clamp(
+            Math.ceil(deficit / 4),
+            1,
+            SURFACE_PASSIVE_ANIMAL_CONFIG.catchupSpawnBurstMax
+          );
+          const targetSpawns = deficit > 0 ? catchupBurst : 1;
+          let attempts = 0;
+          let spawnedCount = 0;
+          const maxAttempts = targetSpawns * 2;
+          while (world.animals.length < refreshedMaxAnimals && attempts < maxAttempts && spawnedCount < targetSpawns) {
+            attempts += 1;
+            const spawnedNearPlayers = activeIslands.length > 0
+              && spawnSurfaceAnimalFromIslands(world, 5.2, { islands: activeIslands });
+            const spawned = spawnedNearPlayers || spawnSurfaceAnimalFromIslands(world, 5.8);
+            if (!spawned) continue;
+            spawnedCount += 1;
+            passiveSpawned = true;
+          }
+        }
+        if (greenCowAdded > 0 || spawnIslandHarvestAdded > 0 || activeIslandHarvestAdded > 0 || passiveSpawned) {
+          markDirty();
+        }
       }
     }
 
@@ -44535,41 +44890,44 @@
   }
 
   function update(dt) {
+    const profile = (label, fn) => trackPerfSection(label, fn);
     updateJoinLoadingOverlay();
     if (!state.world || !state.player) {
       if (net.enabled) {
         if (!net.isHost && !net.ready) {
           setPrompt(getJoinPhasePromptText(), 0.5);
         }
-        netTick(dt);
+        profile("update.multiplayerSync", () => netTick(dt));
       }
-      runDebugQaSelfTests(dt);
-      runMultiplayerAutotest(dt);
+      profile("update.debugQa", () => runDebugQaSelfTests(dt));
+      profile("update.multiplayerAutotest", () => runMultiplayerAutotest(dt));
       updatePrompt(dt);
       return;
     }
     if (!CAVES_ENABLED) {
-      runCaveDisableRecoveryTick(dt);
-      if (state.surfaceWorld) refreshRuntimeCaveEntranceCache(state.surfaceWorld);
+      profile("update.caveRecovery", () => runCaveDisableRecoveryTick(dt));
+      if (state.surfaceWorld) {
+        profile("update.caveRuntimeCache", () => refreshRuntimeCaveEntranceCache(state.surfaceWorld));
+      }
     }
     if (isCaveV2Active()) {
-      updateCaveV2(dt);
+      profile("update.caveV2", () => updateCaveV2(dt));
       // CaveV2 uses room-local player coordinates; keep the canonical player position synced
       // so shared timers/effects and debug overlays never drift from the visible cave player.
       const caveV2Active = state.caveV2?.active;
       if (caveV2Active && Number.isFinite(caveV2Active.x) && Number.isFinite(caveV2Active.y)) {
         syncCaveV2PlayerProxyPosition(caveV2Active.x, caveV2Active.y);
       }
-      updatePlayerCombatTimers(dt);
-      updatePlayerEffects(dt);
-      updateRemoteRender(dt);
-      updateAudio(dt);
-      netTick(dt);
-      runDebugSyncAudit(dt);
-      runMultiplayerAutotest(dt);
+      profile("update.playerCombat", () => updatePlayerCombatTimers(dt));
+      profile("update.playerEffects", () => updatePlayerEffects(dt));
+      profile("update.remoteRender", () => updateRemoteRender(dt));
+      profile("update.audio", () => updateAudio(dt));
+      profile("update.multiplayerSync", () => netTick(dt));
+      profile("update.debugSyncAudit", () => runDebugSyncAudit(dt));
+      profile("update.multiplayerAutotest", () => runMultiplayerAutotest(dt));
       updatePrompt(dt);
-      updateSave(dt);
-      runDebugQaSelfTests(dt);
+      profile("update.saveAutosave", () => updateSave(dt));
+      profile("update.debugQa", () => runDebugQaSelfTests(dt));
       if (state.player.hp <= 0 && !state.respawnLock) {
         if (!applyInfiniteHealthGuard()) {
           handlePlayerDeath();
@@ -44581,65 +44939,65 @@
       // Join handshake phase: keep networking active but avoid expensive world simulation
       // until authoritative host snapshot is accepted.
       setPrompt(getJoinPhasePromptText(), 0.5);
-      netTick(dt);
-      runDebugSyncAudit(dt);
-      runMultiplayerAutotest(dt);
-      updateAudio(dt);
-      runDebugQaSelfTests(dt);
+      profile("update.multiplayerSync", () => netTick(dt));
+      profile("update.debugSyncAudit", () => runDebugSyncAudit(dt));
+      profile("update.multiplayerAutotest", () => runMultiplayerAutotest(dt));
+      profile("update.audio", () => updateAudio(dt));
+      profile("update.debugQa", () => runDebugQaSelfTests(dt));
       return;
     }
-    const sleeping = updateSleepSequence(dt);
+    const sleeping = profile("update.sleepSequence", () => updateSleepSequence(dt));
     if (!sleeping) {
-      updatePlayer(dt);
+      profile("update.playerMovementCollision", () => updatePlayer(dt));
     }
-    updateStructureEffects(dt);
-    updateCheckpoint(dt);
-    updateWinSequence(dt);
-    updatePlayerCombatTimers(dt);
-    maintainRobotInteractionPause(dt);
+    profile("update.structureEffects", () => updateStructureEffects(dt));
+    profile("update.checkpoint", () => updateCheckpoint(dt));
+    profile("update.winSequence", () => updateWinSequence(dt));
+    profile("update.playerCombat", () => updatePlayerCombatTimers(dt));
+    profile("update.robotInteractionPause", () => maintainRobotInteractionPause(dt));
     const worldSpeed = getDebugWorldSpeedMultiplier();
     const worldStepMax = getRuntimeWorldStepMax();
     let worldDtRemaining = Math.max(0, dt * worldSpeed);
     while (worldDtRemaining > 0.0001) {
       const worldStep = Math.min(worldDtRemaining, worldStepMax);
-      updateDayNight(worldStep);
-      const resourceDt = consumeWorldSystemDt("resources", worldStep);
+      profile("update.worldDayNight", () => updateDayNight(worldStep));
+      const resourceDt = profile("update.worldCadence.resources", () => consumeWorldSystemDt("resources", worldStep));
       if (resourceDt > 0) {
-        updateResources(resourceDt);
+        profile("update.worldResources", () => updateResources(resourceDt));
       }
-      const ambientFishDt = consumeWorldSystemDt("ambientFish", worldStep);
+      const ambientFishDt = profile("update.worldCadence.ambientFish", () => consumeWorldSystemDt("ambientFish", worldStep));
       if (ambientFishDt > 0) {
-        updateAmbientFish(ambientFishDt);
+        profile("update.worldAmbientFish", () => updateAmbientFish(ambientFishDt));
       }
-      updateMonsters(worldStep);
-      updateAnimals(worldStep);
-      const villagerDt = consumeWorldSystemDt("villagers", worldStep);
+      profile("update.ai.monsters", () => updateMonsters(worldStep));
+      profile("update.ai.animals", () => updateAnimals(worldStep));
+      const villagerDt = profile("update.worldCadence.villagers", () => consumeWorldSystemDt("villagers", worldStep));
       if (villagerDt > 0) {
-        updateVillagers(villagerDt);
+        profile("update.ai.villagers", () => updateVillagers(villagerDt));
       }
-      const robotDt = consumeWorldSystemDt("robots", worldStep);
+      const robotDt = profile("update.worldCadence.robots", () => consumeWorldSystemDt("robots", worldStep));
       if (robotDt > 0) {
-        updateRobots(robotDt);
+        profile("update.ai.robots", () => updateRobots(robotDt));
       }
-      const shipDt = consumeWorldSystemDt("ships", worldStep);
+      const shipDt = profile("update.worldCadence.ships", () => consumeWorldSystemDt("ships", worldStep));
       if (shipDt > 0) {
-        updateAbandonedShips(shipDt);
+        profile("update.worldShips", () => updateAbandonedShips(shipDt));
       }
-      updateAllMonsterBurnEffects(worldStep);
+      profile("update.worldMonsterBurnEffects", () => updateAllMonsterBurnEffects(worldStep));
       worldDtRemaining -= worldStep;
     }
-    updatePlayerEffects(dt);
-    updateDrops(dt);
-    updateInteraction();
-    updateRemoteRender(dt);
-    updateCaveLayerTransition(dt);
-    updateAudio(dt);
-    netTick(dt);
-    runDebugSyncAudit(dt);
-    runMultiplayerAutotest(dt);
+    profile("update.playerEffects", () => updatePlayerEffects(dt));
+    profile("update.drops", () => updateDrops(dt));
+    profile("update.interaction", () => updateInteraction());
+    profile("update.remoteRender", () => updateRemoteRender(dt));
+    profile("update.caveLayerTransition", () => updateCaveLayerTransition(dt));
+    profile("update.audio", () => updateAudio(dt));
+    profile("update.multiplayerSync", () => netTick(dt));
+    profile("update.debugSyncAudit", () => runDebugSyncAudit(dt));
+    profile("update.multiplayerAutotest", () => runMultiplayerAutotest(dt));
     updatePrompt(dt);
-    updateSave(dt);
-    runDebugQaSelfTests(dt);
+    profile("update.saveAutosave", () => updateSave(dt));
+    profile("update.debugQa", () => runDebugQaSelfTests(dt));
     if (state.player.hp <= 0 && !state.respawnLock) {
       if (applyInfiniteHealthGuard()) return;
       handlePlayerDeath();
@@ -44653,9 +45011,39 @@
     };
   }
 
+  function getSurfaceTileTextureSeedInt(world = state.surfaceWorld || state.world) {
+    if (!world) return 0;
+    if (!Number.isFinite(world._surfaceTileTextureSeedInt)) {
+      world._surfaceTileTextureSeedInt = seedToInt(String(world.seed || "island-1"));
+    }
+    return world._surfaceTileTextureSeedInt;
+  }
+
+  function getTileSpeckleVariantHash(variant = "land") {
+    const key = typeof variant === "string" && variant ? variant : "land";
+    if (!tileSpeckleVariantHashCache.has(key)) {
+      tileSpeckleVariantHashCache.set(key, seedToInt(key));
+    }
+    return tileSpeckleVariantHashCache.get(key) || 0;
+  }
+
+  function getLandTileBaseFillStyle(biomeId, isBeach, shade) {
+    const normalizedBiomeId = Number.isInteger(biomeId) ? biomeId : 0;
+    const shadeKey = clamp(Math.round((Number(shade) || 0) * 255), 0, 255);
+    const cacheKey = `${normalizedBiomeId}:${isBeach ? 1 : 0}:${shadeKey}`;
+    let fill = landTileBaseFillCache.get(cacheKey);
+    if (fill) return fill;
+    const biome = BIOMES[normalizedBiomeId] || BIOMES[0];
+    const base = isBeach ? biome.sand : biome.land;
+    const multiplier = shadeKey / 255;
+    fill = `rgb(${Math.floor(base[0] * multiplier)}, ${Math.floor(base[1] * multiplier)}, ${Math.floor(base[2] * multiplier)})`;
+    landTileBaseFillCache.set(cacheKey, fill);
+    return fill;
+  }
+
   function drawTileSpeckleTexture(x, y, size, tx, ty, seed, variant = "land") {
     const baseHash = (
-      (((tx * 73856093) ^ (ty * 19349663) ^ (seed * 83492791) ^ seedToInt(String(variant))) >>> 0)
+      (((tx * 73856093) ^ (ty * 19349663) ^ (seed * 83492791) ^ getTileSpeckleVariantHash(variant)) >>> 0)
     );
     const lightAlpha = variant === "beach" ? 0.026 : 0.034;
     const darkAlpha = variant === "beach" ? 0.03 : 0.042;
@@ -44813,14 +45201,10 @@
     }
   }
 
-  function drawLandTile(x, y, shade, biomeId, isBeach, tx, ty, effectsLevel = 2) {
+  function drawLandTile(x, y, shade, biomeId, isBeach, tx, ty, effectsLevel = 2, tileSeed = null) {
     const detailLevel = clampGraphicsEffectsLevel(effectsLevel);
     const biome = BIOMES[biomeId] || BIOMES[0];
-    const base = isBeach ? biome.sand : biome.land;
-    const r = Math.floor(base[0] * shade);
-    const g = Math.floor(base[1] * shade);
-    const b = Math.floor(base[2] * shade);
-    ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
+    ctx.fillStyle = getLandTileBaseFillStyle(biomeId, isBeach, shade);
     ctx.fillRect(x, y, CONFIG.tileSize, CONFIG.tileSize);
     if (detailLevel <= 0) return;
 
@@ -44835,9 +45219,8 @@
     if (detailLevel <= 1 || isBeach) return;
     if (!shouldDrawFineSurfaceTileTexture()) return;
 
-    const tileSeed = state.surfaceWorld?.seed ? seedToInt(String(state.surfaceWorld.seed)) : 0;
-    drawTileSpeckleTexture(x, y, CONFIG.tileSize, tx, ty, tileSeed + 311, isBeach ? "beach" : biome.key);
-    const seed = tileSeed;
+    const seed = Number.isFinite(tileSeed) ? tileSeed : getSurfaceTileTextureSeedInt(state.surfaceWorld || state.world);
+    drawTileSpeckleTexture(x, y, CONFIG.tileSize, tx, ty, seed + 311, isBeach ? "beach" : biome.key);
     const detail = rand2d(tx, ty, seed + 913);
     if (biome.key === "jungle") {
       if (detail < 0.26) {
@@ -49310,14 +49693,15 @@
 
   function render() {
     if (!state.world || !state.player) return;
+    const profile = (label, fn) => trackPerfSection(label, fn);
 
     if (isCaveV2Active()) {
-      renderCaveV2();
+      profile("render.caveV2", () => renderCaveV2());
       return;
     }
 
     if (state.player.inHut && state.activeHouse) {
-      renderHouseInterior();
+      profile("render.houseInterior", () => renderHouseInterior());
       return;
     }
 
@@ -49325,7 +49709,7 @@
     ctx.clearRect(0, 0, viewWidth, viewHeight);
 
     const camera = getCamera();
-    const captureFrameBuckets = !!(state.debugUnlocked || state.debugShowFps);
+    const captureFrameBuckets = !!(state.debugUnlocked || state.debugShowFps || perfProfiler.enabled);
     const frameStart = captureFrameBuckets ? performance.now() : 0;
     const frameBuckets = captureFrameBuckets
       ? { backdrop: 0, terrain: 0, world: 0, entities: 0, overlays: 0 }
@@ -49352,16 +49736,21 @@
     const useSimplifiedDropVisuals = graphicsEffectsLevel <= 0 || getAdaptiveVisualDetailTier() <= 0;
     const oceanDecorStride = getRuntimeOceanDecorStride();
     const oceanNowSeconds = performance.now() * 0.001;
+    const surfaceTileSeed = !state.inCave
+      ? getSurfaceTileTextureSeedInt(state.surfaceWorld || state.world)
+      : 0;
     ctx.setTransform(dpr * cameraScale, 0, 0, dpr * cameraScale, 0, 0);
 
-    if (state.inCave) {
-      ctx.fillStyle = COLORS.caveWall;
-      ctx.fillRect(0, 0, cameraViewWidth, cameraViewHeight);
-    } else {
-      drawSurfaceSkyAmbience(camera, oceanNowSeconds);
-      drawOceanBackdrop(camera, oceanNowSeconds, graphicsEffectsLevel);
-      drawAmbientFish(camera, graphicsEffectsLevel);
-    }
+    profile("render.backdrop", () => {
+      if (state.inCave) {
+        ctx.fillStyle = COLORS.caveWall;
+        ctx.fillRect(0, 0, cameraViewWidth, cameraViewHeight);
+      } else {
+        drawSurfaceSkyAmbience(camera, oceanNowSeconds);
+        drawOceanBackdrop(camera, oceanNowSeconds, graphicsEffectsLevel);
+        drawAmbientFish(camera, graphicsEffectsLevel);
+      }
+    });
     commitFrameBucket("backdrop");
 
     const startX = Math.max(0, Math.floor(camera.x / CONFIG.tileSize) - 1);
@@ -49369,96 +49758,102 @@
     const endX = Math.min(state.world.size, Math.ceil((camera.x + cameraViewWidth) / CONFIG.tileSize) + 1);
     const endY = Math.min(state.world.size, Math.ceil((camera.y + cameraViewHeight) / CONFIG.tileSize) + 1);
 
-    for (let y = startY; y < endY; y += 1) {
-      for (let x = startX; x < endX; x += 1) {
-        const idx = tileIndex(x, y, state.world.size);
-        const screenX = x * CONFIG.tileSize - camera.x;
-        const screenY = y * CONFIG.tileSize - camera.y;
-        if (!state.world.tiles[idx]) {
-          if (!state.inCave) {
-            const shouldDrawOceanDecor = oceanDecorStride <= 1
-              || (((x * 92837111) ^ (y * 689287499) ^ state.world.seedInt) % oceanDecorStride) === 0;
-            if (shouldDrawOceanDecor) {
-              drawOceanTileDecor(state.world, x, y, screenX, screenY, oceanNowSeconds, graphicsEffectsLevel);
+    profile("render.terrainTiles", () => {
+      for (let y = startY; y < endY; y += 1) {
+        for (let x = startX; x < endX; x += 1) {
+          const idx = tileIndex(x, y, state.world.size);
+          const screenX = x * CONFIG.tileSize - camera.x;
+          const screenY = y * CONFIG.tileSize - camera.y;
+          if (!state.world.tiles[idx]) {
+            if (!state.inCave) {
+              const shouldDrawOceanDecor = oceanDecorStride <= 1
+                || (((x * 92837111) ^ (y * 689287499) ^ state.world.seedInt) % oceanDecorStride) === 0;
+              if (shouldDrawOceanDecor) {
+                drawOceanTileDecor(state.world, x, y, screenX, screenY, oceanNowSeconds, graphicsEffectsLevel);
+              }
             }
+            continue;
           }
-          continue;
-        }
-        if (state.inCave) {
-          const shade = state.world.shades[idx] ?? 0.6;
-          const base = [60, 48, 42];
-          const r = Math.floor(base[0] * shade + 10 + (caveRoomTint?.warm || 0));
-          const g = Math.floor(base[1] * shade + 10 + ((caveRoomTint?.cool || 0) * 0.4));
-          const b = Math.floor(base[2] * shade + 10 + (caveRoomTint?.cool || 0));
-          ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
-          ctx.fillRect(screenX, screenY, CONFIG.tileSize, CONFIG.tileSize);
-          const tileNoise = (((x * 73856093) ^ (y * 19349663) ^ ((activeCaveRoomId + 1) * 83492791)) >>> 0);
-          if ((tileNoise & 31) === 7) {
-            ctx.fillStyle = "rgba(255,255,255,0.035)";
-            ctx.fillRect(screenX + 3 + (tileNoise % 6), screenY + 4 + ((tileNoise >> 3) % 7), 2, 1);
+          if (state.inCave) {
+            const shade = state.world.shades[idx] ?? 0.6;
+            const base = [60, 48, 42];
+            const r = Math.floor(base[0] * shade + 10 + (caveRoomTint?.warm || 0));
+            const g = Math.floor(base[1] * shade + 10 + ((caveRoomTint?.cool || 0) * 0.4));
+            const b = Math.floor(base[2] * shade + 10 + (caveRoomTint?.cool || 0));
+            ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
+            ctx.fillRect(screenX, screenY, CONFIG.tileSize, CONFIG.tileSize);
+            const tileNoise = (((x * 73856093) ^ (y * 19349663) ^ ((activeCaveRoomId + 1) * 83492791)) >>> 0);
+            if ((tileNoise & 31) === 7) {
+              ctx.fillStyle = "rgba(255,255,255,0.035)";
+              ctx.fillRect(screenX + 3 + (tileNoise % 6), screenY + 4 + ((tileNoise >> 3) % 7), 2, 1);
+            }
+            if ((tileNoise & 63) === 19) {
+              ctx.strokeStyle = "rgba(14, 18, 24, 0.12)";
+              ctx.lineWidth = 1;
+              ctx.beginPath();
+              ctx.moveTo(screenX + 4, screenY + 5);
+              ctx.lineTo(screenX + 10, screenY + 9);
+              ctx.stroke();
+            }
+            const leftOpen = x <= 0 || !state.world.tiles[tileIndex(x - 1, y, state.world.size)];
+            const rightOpen = x >= (state.world.size - 1) || !state.world.tiles[tileIndex(x + 1, y, state.world.size)];
+            const upOpen = y <= 0 || !state.world.tiles[tileIndex(x, y - 1, state.world.size)];
+            const downOpen = y >= (state.world.size - 1) || !state.world.tiles[tileIndex(x, y + 1, state.world.size)];
+            if (upOpen) {
+              ctx.fillStyle = "rgba(255,255,255,0.03)";
+              ctx.fillRect(screenX, screenY, CONFIG.tileSize, 2);
+            }
+            if (leftOpen) {
+              ctx.fillStyle = "rgba(255,255,255,0.022)";
+              ctx.fillRect(screenX, screenY, 2, CONFIG.tileSize);
+            }
+            if (downOpen) {
+              ctx.fillStyle = "rgba(0,0,0,0.075)";
+              ctx.fillRect(screenX, screenY + CONFIG.tileSize - 2, CONFIG.tileSize, 2);
+            }
+            if (rightOpen) {
+              ctx.fillStyle = "rgba(0,0,0,0.06)";
+              ctx.fillRect(screenX + CONFIG.tileSize - 2, screenY, 2, CONFIG.tileSize);
+            }
+          } else {
+            const biomeId = state.world.biomeGrid?.[idx] ?? 0;
+            const isBeach = !!state.world.beachGrid?.[idx];
+            drawLandTile(
+              screenX,
+              screenY,
+              state.world.shades[idx],
+              biomeId,
+              isBeach,
+              x,
+              y,
+              graphicsEffectsLevel,
+              surfaceTileSeed
+            );
           }
-          if ((tileNoise & 63) === 19) {
-            ctx.strokeStyle = "rgba(14, 18, 24, 0.12)";
-            ctx.lineWidth = 1;
-            ctx.beginPath();
-            ctx.moveTo(screenX + 4, screenY + 5);
-            ctx.lineTo(screenX + 10, screenY + 9);
-            ctx.stroke();
-          }
-          const leftOpen = x <= 0 || !state.world.tiles[tileIndex(x - 1, y, state.world.size)];
-          const rightOpen = x >= (state.world.size - 1) || !state.world.tiles[tileIndex(x + 1, y, state.world.size)];
-          const upOpen = y <= 0 || !state.world.tiles[tileIndex(x, y - 1, state.world.size)];
-          const downOpen = y >= (state.world.size - 1) || !state.world.tiles[tileIndex(x, y + 1, state.world.size)];
-          if (upOpen) {
-            ctx.fillStyle = "rgba(255,255,255,0.03)";
-            ctx.fillRect(screenX, screenY, CONFIG.tileSize, 2);
-          }
-          if (leftOpen) {
-            ctx.fillStyle = "rgba(255,255,255,0.022)";
-            ctx.fillRect(screenX, screenY, 2, CONFIG.tileSize);
-          }
-          if (downOpen) {
-            ctx.fillStyle = "rgba(0,0,0,0.075)";
-            ctx.fillRect(screenX, screenY + CONFIG.tileSize - 2, CONFIG.tileSize, 2);
-          }
-          if (rightOpen) {
-            ctx.fillStyle = "rgba(0,0,0,0.06)";
-            ctx.fillRect(screenX + CONFIG.tileSize - 2, screenY, 2, CONFIG.tileSize);
-          }
-        } else {
-          const biomeId = state.world.biomeGrid?.[idx] ?? 0;
-          const isBeach = !!state.world.beachGrid?.[idx];
-          drawLandTile(
-            screenX,
-            screenY,
-            state.world.shades[idx],
-            biomeId,
-            isBeach,
-            x,
-            y,
-            graphicsEffectsLevel
-          );
         }
       }
-    }
+    });
     commitFrameBucket("terrain");
 
-    if (!state.inCave) {
-      for (const structure of state.structures) {
-        if (structure.removed) continue;
-        if (
-          structure.type === "floor"
-          || structure.type === "village_path"
-          || structure.type === "brick_floor"
-          || structure.type === "bridge"
-          || structure.type === "dock"
-        ) {
-          drawStructureSafe(structure, camera);
+    profile("render.worldStructuresBase", () => {
+      if (!state.inCave) {
+        for (const structure of state.structures) {
+          if (structure.removed) continue;
+          if (
+            structure.type === "floor"
+            || structure.type === "village_path"
+            || structure.type === "brick_floor"
+            || structure.type === "bridge"
+            || structure.type === "dock"
+          ) {
+            drawStructureSafe(structure, camera);
+          }
         }
       }
-    }
+    });
 
-    if (!state.inCave && state.surfaceWorld) {
+    profile("render.worldDetails", () => {
+      if (!state.inCave && state.surfaceWorld) {
       for (const cave of getRuntimeCaveEntrances(state.surfaceWorld)) {
         const screenX = cave.tx * CONFIG.tileSize - camera.x;
         const screenY = cave.ty * CONFIG.tileSize - camera.y;
@@ -49666,13 +50061,14 @@
         }
       }
       drawPendingLinkedCavePlacementGuide(camera, cameraViewWidth, cameraViewHeight);
-    }
+      }
 
-    if (state.inCave) {
-      drawCaveRoomLandmarkDecor(camera);
-    }
+      if (state.inCave) {
+        drawCaveRoomLandmarkDecor(camera);
+      }
+    });
 
-    forEachVisibleResource(state.world, camera, (res) => {
+    profile("render.resources", () => forEachVisibleResource(state.world, camera, (res) => {
       if (res.removed) return;
       const screen = worldToScreen(res.x, res.y, camera);
       if (
@@ -50229,44 +50625,47 @@
         ctx.arc(screen.x, screen.y, 16, 0, Math.PI * 2);
         ctx.stroke();
       }
-    });
+    }));
 
-    drawPoisonClouds(state.world, camera);
+    profile("render.poisonClouds", () => drawPoisonClouds(state.world, camera));
     commitFrameBucket("world");
 
-    if (!state.inCave) {
-      for (const animal of state.world.animals || []) {
-        drawAnimal(animal, camera);
-      }
-      for (const villager of state.world.villagers || []) {
-        drawVillager(villager, camera);
-      }
-    }
-
-    for (const monster of state.world.monsters || []) {
-      drawMonster(monster, camera);
-    }
-
-    drawMonsterBurnEffects(state.world, camera);
-
-    for (const projectile of state.world.projectiles || []) {
-      drawProjectile(projectile, camera);
-    }
-
-    if (!state.inCave) {
-      for (const structure of state.structures) {
-        if (structure.removed) continue;
-        if (
-          structure.type !== "floor"
-          && structure.type !== "village_path"
-          && structure.type !== "brick_floor"
-          && structure.type !== "bridge"
-          && structure.type !== "dock"
-        ) {
-          drawStructureSafe(structure, camera);
+    profile("render.animalsVillagers", () => {
+      if (!state.inCave) {
+        for (const animal of state.world.animals || []) {
+          drawAnimal(animal, camera);
+        }
+        for (const villager of state.world.villagers || []) {
+          drawVillager(villager, camera);
         }
       }
-    } else if (state.inCave && state.world?.entrance) {
+    });
+
+    profile("render.monstersProjectiles", () => {
+      for (const monster of state.world.monsters || []) {
+        drawMonster(monster, camera);
+      }
+      drawMonsterBurnEffects(state.world, camera);
+      for (const projectile of state.world.projectiles || []) {
+        drawProjectile(projectile, camera);
+      }
+    });
+
+    profile("render.structuresForeground", () => {
+      if (!state.inCave) {
+        for (const structure of state.structures) {
+          if (structure.removed) continue;
+          if (
+            structure.type !== "floor"
+            && structure.type !== "village_path"
+            && structure.type !== "brick_floor"
+            && structure.type !== "bridge"
+            && structure.type !== "dock"
+          ) {
+            drawStructureSafe(structure, camera);
+          }
+        }
+      } else if (state.inCave && state.world?.entrance) {
       const caveWorld = state.world;
       const currentLayer = normalizeCaveLayerIndex(state.activeCaveLayer ?? 0);
       const entrance = caveWorld.entrance;
@@ -50416,112 +50815,117 @@
           ctx.restore();
         }
       }
-    }
-
-    for (const drop of state.world.drops || []) {
-      const screen = worldToScreen(drop.x, drop.y, camera);
-      if (
-        screen.x < -20 ||
-        screen.y < -20 ||
-        screen.x > cameraViewWidth + 20 ||
-        screen.y > cameraViewHeight + 20
-      ) {
-        continue;
       }
-      if (useSimplifiedDropVisuals) {
+    });
+
+    profile("render.drops", () => {
+      for (const drop of state.world.drops || []) {
+        const screen = worldToScreen(drop.x, drop.y, camera);
+        if (
+          screen.x < -20 ||
+          screen.y < -20 ||
+          screen.x > cameraViewWidth + 20 ||
+          screen.y > cameraViewHeight + 20
+        ) {
+          continue;
+        }
+        if (useSimplifiedDropVisuals) {
+          drawDroppedItemVisual(drop, screen.x, screen.y, {
+            alpha: 1,
+            size: 11.5,
+            shadowScale: 1,
+            bobOffset: 0,
+          });
+          if (drop.qty > 1) {
+            ctx.fillStyle = "rgba(242, 249, 255, 0.92)";
+            ctx.font = "10px Trebuchet MS";
+            ctx.textAlign = "center";
+            ctx.fillText(String(drop.qty), screen.x, screen.y - 10);
+          }
+          continue;
+        }
+        const ttl = Number.isFinite(drop.ttl) ? drop.ttl : DROP_DESPAWN.lifetime;
+        const warningAmount = clamp(
+          (DROP_DESPAWN.warningStart - ttl) / DROP_DESPAWN.warningStart,
+          0,
+          1
+        );
+        const criticalAmount = clamp(
+          (DROP_DESPAWN.criticalStart - ttl) / DROP_DESPAWN.criticalStart,
+          0,
+          1
+        );
+        const pulse = 0.5 + (0.5 * Math.sin((performance.now() * 0.02) + ((drop.id ?? 0) * 0.73)));
+        const baseAlpha = 1 - (warningAmount * 0.3) - (criticalAmount * 0.2);
+        const flickerAlpha = criticalAmount > 0 ? (0.45 + (pulse * 0.55)) : 1;
+        const drawAlpha = clamp(baseAlpha * flickerAlpha, 0.18, 1);
+        const sizeScale = 1 - (warningAmount * 0.08) - (criticalAmount * (0.08 + ((1 - pulse) * 0.06)));
+        const drawSize = (12.8 * sizeScale) + (criticalAmount * 0.8);
+        const bobSeed = (seedToInt(String(drop.id || drop.itemId)) >>> 0) % 997;
+        const bob = Math.sin((performance.now() * 0.005) + (bobSeed * 0.17)) * 0.8;
         drawDroppedItemVisual(drop, screen.x, screen.y, {
-          alpha: 1,
-          size: 11.5,
-          shadowScale: 1,
-          bobOffset: 0,
+          alpha: drawAlpha,
+          size: drawSize,
+          shadowScale: 1 + (criticalAmount * 0.08),
+          bobOffset: bob,
         });
+
+        if (warningAmount > 0) {
+          const ringAlpha = clamp(0.08 + (warningAmount * 0.2) + (criticalAmount * 0.26), 0, 0.66);
+          const ringRadius = (9 + (warningAmount * 2)) * (1 + (criticalAmount * pulse * 0.25));
+          ctx.strokeStyle = `rgba(255, 241, 188, ${ringAlpha})`;
+          ctx.lineWidth = 1.2;
+          ctx.beginPath();
+          ctx.arc(screen.x, screen.y, ringRadius, 0, Math.PI * 2);
+          ctx.stroke();
+        }
         if (drop.qty > 1) {
           ctx.fillStyle = "rgba(242, 249, 255, 0.92)";
           ctx.font = "10px Trebuchet MS";
           ctx.textAlign = "center";
-          ctx.fillText(String(drop.qty), screen.x, screen.y - 10);
+          ctx.fillText(String(drop.qty), screen.x, screen.y - 10 + bob);
         }
-        continue;
       }
-      const ttl = Number.isFinite(drop.ttl) ? drop.ttl : DROP_DESPAWN.lifetime;
-      const warningAmount = clamp(
-        (DROP_DESPAWN.warningStart - ttl) / DROP_DESPAWN.warningStart,
-        0,
-        1
-      );
-      const criticalAmount = clamp(
-        (DROP_DESPAWN.criticalStart - ttl) / DROP_DESPAWN.criticalStart,
-        0,
-        1
-      );
-      const pulse = 0.5 + (0.5 * Math.sin((performance.now() * 0.02) + ((drop.id ?? 0) * 0.73)));
-      const baseAlpha = 1 - (warningAmount * 0.3) - (criticalAmount * 0.2);
-      const flickerAlpha = criticalAmount > 0 ? (0.45 + (pulse * 0.55)) : 1;
-      const drawAlpha = clamp(baseAlpha * flickerAlpha, 0.18, 1);
-      const sizeScale = 1 - (warningAmount * 0.08) - (criticalAmount * (0.08 + ((1 - pulse) * 0.06)));
-      const drawSize = (12.8 * sizeScale) + (criticalAmount * 0.8);
-      const bobSeed = (seedToInt(String(drop.id || drop.itemId)) >>> 0) % 997;
-      const bob = Math.sin((performance.now() * 0.005) + (bobSeed * 0.17)) * 0.8;
-      drawDroppedItemVisual(drop, screen.x, screen.y, {
-        alpha: drawAlpha,
-        size: drawSize,
-        shadowScale: 1 + (criticalAmount * 0.08),
-        bobOffset: bob,
-      });
+    });
 
-      if (warningAmount > 0) {
-        const ringAlpha = clamp(0.08 + (warningAmount * 0.2) + (criticalAmount * 0.26), 0, 0.66);
-        const ringRadius = (9 + (warningAmount * 2)) * (1 + (criticalAmount * pulse * 0.25));
-        ctx.strokeStyle = `rgba(255, 241, 188, ${ringAlpha})`;
-        ctx.lineWidth = 1.2;
-        ctx.beginPath();
-        ctx.arc(screen.x, screen.y, ringRadius, 0, Math.PI * 2);
-        ctx.stroke();
-      }
-      if (drop.qty > 1) {
-        ctx.fillStyle = "rgba(242, 249, 255, 0.92)";
-        ctx.font = "10px Trebuchet MS";
-        ctx.textAlign = "center";
-        ctx.fillText(String(drop.qty), screen.x, screen.y - 10 + bob);
-      }
-    }
-
-    if (
-      isResourceInteractable(state.targetResource)
-    ) {
-      const screen = worldToScreen(state.targetResource.x, state.targetResource.y, camera);
-      ctx.strokeStyle = "rgba(255, 255, 255, 0.7)";
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(screen.x, screen.y, 20, 0, Math.PI * 2);
-      ctx.stroke();
-    }
-
-    if (state.targetMonster) {
-      const targetPos = getEntityWorldPosition(state.targetMonster, false);
-      if (targetPos) {
-        const screen = worldToScreen(targetPos.x, targetPos.y, camera);
-        ctx.strokeStyle = "rgba(255, 80, 80, 0.8)";
+    profile("render.targetHighlights", () => {
+      if (
+        isResourceInteractable(state.targetResource)
+      ) {
+        const screen = worldToScreen(state.targetResource.x, state.targetResource.y, camera);
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.7)";
         ctx.lineWidth = 2;
         ctx.beginPath();
-        ctx.arc(screen.x, screen.y, 18, 0, Math.PI * 2);
+        ctx.arc(screen.x, screen.y, 20, 0, Math.PI * 2);
         ctx.stroke();
       }
-    }
 
-    if (state.targetAnimal) {
-      const targetPos = getEntityWorldPosition(state.targetAnimal, false);
-      if (targetPos) {
-        const screen = worldToScreen(targetPos.x, targetPos.y, camera);
-        ctx.strokeStyle = "rgba(255, 180, 100, 0.8)";
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.arc(screen.x, screen.y, 16, 0, Math.PI * 2);
-        ctx.stroke();
+      if (state.targetMonster) {
+        const targetPos = getEntityWorldPosition(state.targetMonster, false);
+        if (targetPos) {
+          const screen = worldToScreen(targetPos.x, targetPos.y, camera);
+          ctx.strokeStyle = "rgba(255, 80, 80, 0.8)";
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(screen.x, screen.y, 18, 0, Math.PI * 2);
+          ctx.stroke();
+        }
       }
-    }
 
-    drawRobotInteractionHighlight(camera);
+      if (state.targetAnimal) {
+        const targetPos = getEntityWorldPosition(state.targetAnimal, false);
+        if (targetPos) {
+          const screen = worldToScreen(targetPos.x, targetPos.y, camera);
+          ctx.strokeStyle = "rgba(255, 180, 100, 0.8)";
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(screen.x, screen.y, 16, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+      }
+
+      drawRobotInteractionHighlight(camera);
+    });
 
     const placement = getPlacementItem();
     if (placement) {
@@ -50586,32 +50990,40 @@
       }
     }
 
-    ctx.save();
-    ctx.globalAlpha = 1;
-    ctx.globalCompositeOperation = "source-over";
-    drawPlayer(camera);
-    drawRemotePlayers(camera);
-    ctx.restore();
+    profile("render.players", () => {
+      ctx.save();
+      ctx.globalAlpha = 1;
+      ctx.globalCompositeOperation = "source-over";
+      drawPlayer(camera);
+      drawRemotePlayers(camera);
+      ctx.restore();
+    });
 
-    if (state.inCave) {
-      drawCaveDarkness(camera);
-    } else if (state.isNight && !state.gameWon) {
-      ctx.fillStyle = "rgba(8, 14, 24, 0.4)";
-      ctx.fillRect(0, 0, cameraViewWidth, cameraViewHeight);
-      drawNightLighting(camera);
-    }
+    profile("render.lighting", () => {
+      if (state.inCave) {
+        drawCaveDarkness(camera);
+      } else if (state.isNight && !state.gameWon) {
+        ctx.fillStyle = "rgba(8, 14, 24, 0.4)";
+        ctx.fillRect(0, 0, cameraViewWidth, cameraViewHeight);
+        drawNightLighting(camera);
+      }
+    });
 
-    drawBeaconBeam(camera);
-    drawRescueSequence(camera);
+    profile("render.winFx", () => {
+      drawBeaconBeam(camera);
+      drawRescueSequence(camera);
+    });
     commitFrameBucket("entities");
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    drawGuidanceMapOverlay();
-    drawDebugWorldMiniMapOverlay();
-    drawDebugCaveRoomOverlay();
-    drawDebugFpsOverlay();
-    drawSleepTransitionOverlay();
-    drawCaveLayerTransitionOverlay();
+    profile("render.ui", () => {
+      drawGuidanceMapOverlay();
+      drawDebugWorldMiniMapOverlay();
+      drawDebugCaveRoomOverlay();
+      drawDebugFpsOverlay();
+      drawSleepTransitionOverlay();
+      drawCaveLayerTransitionOverlay();
+    });
     commitFrameBucket("overlays");
     if (captureFrameBuckets) {
       recordQaFrameBuckets(Math.max(0, performance.now() - frameStart), frameBuckets);
@@ -50758,9 +51170,14 @@
       const dt = clamp(Number(frameSeconds) || 0, 0, maxFrameStep);
       accumulator = Math.min(accumulator + dt, FIXED_SIM_TIMESTEP_SECONDS * (maxSteps + 1));
       let steps = 0;
+      let updateTimeMs = 0;
       while (accumulator >= FIXED_SIM_TIMESTEP_SECONDS && steps < maxSteps) {
         captureInterpolationSimulationState();
+        const updateStartedAt = perfProfiler.enabled ? performance.now() : 0;
         update(FIXED_SIM_TIMESTEP_SECONDS);
+        if (perfProfiler.enabled) {
+          updateTimeMs += Math.max(0, performance.now() - updateStartedAt);
+        }
         accumulator -= FIXED_SIM_TIMESTEP_SECONDS;
         steps += 1;
       }
@@ -50769,7 +51186,15 @@
       }
       const alpha = clamp(accumulator / FIXED_SIM_TIMESTEP_SECONDS, 0, 1);
       applyFrameInterpolation(alpha);
+      const renderStartedAt = perfProfiler.enabled ? performance.now() : 0;
       render();
+      const renderTimeMs = perfProfiler.enabled
+        ? Math.max(0, performance.now() - renderStartedAt)
+        : 0;
+      return {
+        updateTimeMs,
+        renderTimeMs,
+      };
     };
 
     function frame(time) {
@@ -50786,7 +51211,12 @@
       );
       lastTime = time;
       try {
-        stepSimulation(deltaSeconds);
+        const frameMetrics = stepSimulation(deltaSeconds) || null;
+        recordPerfProfilerFrame(
+          rawFrameMs,
+          frameMetrics?.updateTimeMs || 0,
+          frameMetrics?.renderTimeMs || 0
+        );
         maybeApplyAutoPerformanceGuard(rawDeltaSeconds);
       } catch (err) {
         handleFrameRuntimeError(err);
@@ -50802,7 +51232,12 @@
       try {
         while (remaining > 0.0001 && guard < 1024) {
           const step = Math.min(remaining, getRuntimeMaxFrameDeltaSeconds());
-          stepSimulation(step, Math.max(getRuntimeMaxFixedSteps(), 10));
+          const frameMetrics = stepSimulation(step, Math.max(getRuntimeMaxFixedSteps(), 10)) || null;
+          recordPerfProfilerFrame(
+            Math.max(0.01, step * 1000),
+            frameMetrics?.updateTimeMs || 0,
+            frameMetrics?.renderTimeMs || 0
+          );
           remaining -= step;
           guard += 1;
         }
@@ -51261,6 +51696,16 @@
           overlays: Number((qaRuntime.frameBuckets.overlays || 0).toFixed(2)),
         },
       },
+      canvas: {
+        cssWidth: Math.round(viewWidth),
+        cssHeight: Math.round(viewHeight),
+        backBufferWidth: Math.round(canvas.width || 0),
+        backBufferHeight: Math.round(canvas.height || 0),
+        devicePixelRatio: Number((Number(window.devicePixelRatio) || 0).toFixed(3)),
+        activeDpr: Number((Number(dpr) || 0).toFixed(3)),
+        smoothing: !!ctx.imageSmoothingEnabled,
+      },
+      performance: getPerfProfilerSummary(),
       multiplayer: {
         enabled: !!net.enabled,
         isHost: !!net.isHost,
@@ -51306,6 +51751,53 @@
     window.__isgDiagnostics = {
       getSnapshot: () => buildRenderGameTextPayload(),
       getFrameBuckets: () => ({ ...qaRuntime.frameBuckets }),
+      getPerformanceSummary: () => getPerfProfilerSummary(),
+      resetPerformanceSummary: () => {
+        resetPerfProfilerStats();
+        return getPerfProfilerSummary();
+      },
+      setPerformanceProfilerEnabled: (enabled = true) => {
+        if (!state.debugUnlocked && enabled) {
+          setDebugUnlocked(true, false);
+        }
+        setPerfProfilerEnabled(enabled);
+        return getPerfProfilerSummary();
+      },
+      setDebugUnlocked: (enabled = true) => {
+        setDebugUnlocked(enabled, false);
+        return buildRenderGameTextPayload();
+      },
+      setHeldKeys: (codes = []) => {
+        keyState.clear();
+        for (const code of Array.isArray(codes) ? codes : []) {
+          if (typeof code === "string" && code) {
+            keyState.set(code, true);
+          }
+        }
+        return Array.from(keyState.keys());
+      },
+      clearHeldKeys: () => {
+        keyState.clear();
+        return [];
+      },
+      toggleSettingsPanel: () => {
+        toggleSettingsPanel();
+        return buildRenderGameTextPayload();
+      },
+      toggleDebugPanel: () => {
+        toggleDebugMenu();
+        return buildRenderGameTextPayload();
+      },
+      forceDebugDay: () => {
+        if (!state.debugUnlocked) setDebugUnlocked(true, false);
+        forceDebugDay();
+        return buildRenderGameTextPayload();
+      },
+      forceDebugNight: () => {
+        if (!state.debugUnlocked) setDebugUnlocked(true, false);
+        forceDebugNight();
+        return buildRenderGameTextPayload();
+      },
       getMpAutotestSummary: () => buildQaMpAutotestSummary(),
       getCaveV2Summary: () => buildQaCaveV2Summary(),
       hasCaveV2EntranceId: (entranceId) => {
