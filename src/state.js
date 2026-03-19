@@ -1,6 +1,11 @@
 (() => {
   "use strict";
 
+  function createEmptyInventoryState(size = 0) {
+    const slotCount = Math.max(0, Math.floor(Number(size) || 0));
+    return Array.from({ length: slotCount }, () => ({ id: null, qty: 0 }));
+  }
+
   function createTouchState() {
     return {
       active: false,
@@ -119,11 +124,12 @@
     const settings = cfg.SETTINGS_DEFAULTS || Object.create(null);
     const surfaceGuardians = cfg.SURFACE_GUARDIAN_CONFIG || Object.create(null);
     const gameConfig = cfg.CONFIG || Object.create(null);
+    const inventorySize = Math.max(0, Math.floor(Number(cfg.INVENTORY_SIZE) || 0));
     return {
       world: null,
       surfaceWorld: null,
       player: null,
-      inventory: null,
+      inventory: createEmptyInventoryState(inventorySize),
       structures: [],
       structureGrid: null,
       targetResource: null,
@@ -184,6 +190,7 @@
       promptText: "",
       promptTimer: 0,
       dirty: false,
+      serializationRevision: 0,
       saveTimer: Number(gameConfig.saveInterval) || 0,
       nextDropId: 1,
       nextAnimalId: 1,
@@ -273,7 +280,21 @@
       syncLedgerEventCounter: 0,
       syncLedgerLastEventCounter: 0,
       syncLedgerLastEventLabel: "",
+      snapshotDirty: false,
+      snapshotDirtyReason: "",
+      lastSnapshotBuiltAt: 0,
+      lastSnapshotSentAt: 0,
       lastSentPlayerFingerprint: "",
+      trafficWindowStartedAt: 0,
+      trafficWindowOutgoing: 0,
+      trafficWindowIncoming: 0,
+      trafficWindowOutgoingByType: Object.create(null),
+      trafficWindowIncomingByType: Object.create(null),
+      trafficLastWindowDurationMs: 1000,
+      trafficLastOutgoingPerSec: 0,
+      trafficLastIncomingPerSec: 0,
+      trafficLastOutgoingByType: Object.create(null),
+      trafficLastIncomingByType: Object.create(null),
       robotPausePingTimer: 0.2,
       localName: "",
       localColor: "",
@@ -290,6 +311,7 @@
       hostConnPendingSince: 0,
       joinLastErrorCode: "",
       joinPromptGuardUntil: 0,
+      joinPromptActive: false,
       connectIntent: "idle",
       hostCodeRetryCount: 0,
     };

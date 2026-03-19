@@ -8,7 +8,7 @@
   />
   <title>Island Survival Game</title>
   <link rel="icon" href="data:," />
-  <link rel="stylesheet" href="styles.css?v=20260313-6" />
+  <link rel="stylesheet" href="styles.css?v=20260319-2" />
 </head>
 <body>
   <canvas id="game"></canvas>
@@ -116,6 +116,16 @@
       <div id="buildRobotControls" class="build-robot-controls hidden">
         <button id="toggleRobotRecallBtn" class="build-robot-btn" type="button">Call All Robots</button>
         <div id="buildRobotControlsHint" class="build-robot-hint"></div>
+      </div>
+      <div id="buildCategoryHeader" class="build-category-header hidden">
+        <button id="buildCategoryBack" class="build-category-back" type="button" aria-label="Back to crafting categories">
+          <span aria-hidden="true">←</span>
+        </button>
+        <span id="buildCategoryHeaderIcon" class="build-category-header-icon" aria-hidden="true"></span>
+        <div class="build-category-header-copy">
+          <div id="buildCategoryTitle" class="build-category-title">Travel</div>
+          <div id="buildCategoryMeta" class="build-category-meta">Paths & bridges.</div>
+        </div>
       </div>
       <div id="buildCategoryTabs" class="build-category-tabs" role="tablist" aria-label="Crafting categories">
         <button class="build-category-btn active" data-category="navigation" type="button" title="Paths, bridges, and travel structures.">
@@ -384,6 +394,6 @@
     })();
   </script>
   <script src="https://unpkg.com/peerjs@1.5.5/dist/peerjs.min.js"></script>
-  <script src="src/main.js?v=20260319-1"></script>
+  <script src="src/main.js?v=20260319-7"></script>
 </body>
 </html>

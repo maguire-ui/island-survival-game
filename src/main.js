@@ -60,6 +60,12 @@
   let loadingScreensApi = null;
   let promptsApi = null;
 
+  const NET_SNAPSHOT_BURST_DELAY = 0.05;
+  const serializedResourceStateCache = new WeakMap();
+  let serializedStructureSnapshotCacheRevision = -1;
+  let serializedStructureSnapshotCacheSource = null;
+  let serializedStructureSnapshotCache = [];
+
   const canvas = document.getElementById("game");
   const ctx = canvas.getContext("2d");
 
@@ -80,6 +86,11 @@
   const buildRobotControls = document.getElementById("buildRobotControls");
   const toggleRobotRecallBtn = document.getElementById("toggleRobotRecallBtn");
   const buildRobotControlsHint = document.getElementById("buildRobotControlsHint");
+  const buildCategoryHeader = document.getElementById("buildCategoryHeader");
+  const buildCategoryBackBtn = document.getElementById("buildCategoryBack");
+  const buildCategoryHeaderIcon = document.getElementById("buildCategoryHeaderIcon");
+  const buildCategoryTitle = document.getElementById("buildCategoryTitle");
+  const buildCategoryMeta = document.getElementById("buildCategoryMeta");
   const stationMenu = document.getElementById("stationMenu");
   const stationTitle = document.getElementById("stationTitle");
   const stationOptions = document.getElementById("stationOptions");
@@ -831,7 +842,7 @@
 
   const ITEMS = {
     wood: { name: "Wood", color: "#c89b5f" },
-    stone: { name: "Stone", color: "#a1a4b2" },
+    stone: { name: "Stone", color: "#7f8894" },
     ore: { name: "Ore (Legacy)", color: "#8d5aa3" },
     ingot: { name: "Ingot (Legacy)", color: "#c9b36c" },
     coal: { name: "Coal", color: "#2a2f38" },
@@ -895,7 +906,7 @@
     tree_resource: { symbol: "TREE", bg: "#2f7f4f", border: "#7ed19d", fg: "#ecffef" },
     stop_icon: { symbol: "STOP", bg: "#7f2f37", border: "#ea8d8d", fg: "#ffecec" },
     wood: { symbol: "LOG", bg: "#8a5c35", border: "#b7845a", fg: "#ffe0bc" },
-    stone: { symbol: "ROC", bg: "#656d7f", border: "#9da7be", fg: "#f2f5ff" },
+    stone: { symbol: "ROC", bg: "#5c6571", border: "#939daa", fg: "#e7edf4" },
     ore: { symbol: "ORE", bg: "#5c3f72", border: "#9f7bc0", fg: "#f4e8ff" },
     ingot: { symbol: "ING", bg: "#8f7c3e", border: "#d8c276", fg: "#fff5d5" },
     coal: { symbol: "COL", bg: "#1f2530", border: "#4a5b71", fg: "#e9f1ff" },
@@ -1410,41 +1421,49 @@
       id: "navigation",
       label: "Travel",
       description: "Paths & bridges.",
+      icon: "bridge",
     },
     {
       id: "housing",
       label: "Homes",
       description: "Shelter & beds.",
+      icon: "small_house",
     },
     {
       id: "stations",
       label: "Stations",
       description: "Process mats.",
+      icon: "sawmill",
     },
     {
       id: "survival",
       label: "Survival",
       description: "Fire & heals.",
+      icon: "campfire",
     },
     {
       id: "storage",
       label: "Storage",
       description: "Store items.",
+      icon: "chest",
     },
     {
       id: "maps",
       label: "Maps",
       description: "Find POIs.",
+      icon: "village_map",
     },
     {
       id: "endgame",
       label: "Endgame",
       description: "Rescue tech.",
+      icon: "beacon",
     },
     {
       id: "upgrades",
       label: "Upgrades",
       description: "Gear tiers.",
+      icon: "iron_ingot",
     },
   ]);
 
@@ -1582,7 +1601,7 @@
       land: [198, 214, 230],
       tree: "#e8f3ff",
       grassColor: "#b8d8f1",
-      rock: "#9fa7b5",
+      rock: "#8993a1",
       ore: "#7f6a9f",
       stoneColor: BIOME_STONES[2].color,
       sand: [226, 217, 184],
@@ -2468,6 +2487,7 @@
       Math.max(RENDER_DIAGNOSTICS_CONFIG.startupMutationGraceMs, 1e3),
       (entry) => (entry.at - renderDiagnostics.startupAt) > RENDER_DIAGNOSTICS_CONFIG.startupMutationGraceMs
     );
+    const network = getNetTrafficSnapshot();
     return {
       fps: Number(smoothedFps.toFixed(1)),
       updateMs: Number((perfProfiler.lastUpdateMs || 0).toFixed(3)),
@@ -2506,6 +2526,7 @@
         lastDurationMs: Number((renderDiagnostics.lastAutosaveDurationMs || 0).toFixed(3)),
         msSinceLastSave: Number((Math.max(0, performance.now() - renderDiagnostics.lastAutosaveAt) || 0).toFixed(1)),
       },
+      network,
       slowestCurrent: getTopPerfSections("last"),
       slowestAverage: getTopPerfSections("avg"),
       warnings: activeWarnings,
@@ -2528,6 +2549,7 @@
       `Recent resize req/calls: ${snapshot.recentResizeRequests}/${snapshot.recentResizeCalls} | scale changes after startup: ${snapshot.recentScaleChanges}`,
       `Counts mobs:${snapshot.counts.mobs} animals:${snapshot.counts.animals} drops:${snapshot.counts.drops} resources:${snapshot.counts.resources} particles:${snapshot.counts.particles} caveRooms:${snapshot.counts.caveRooms} worldObjs:${snapshot.counts.worldObjects}`,
       `Runtime timers:${snapshot.counts.timers} intervals:${snapshot.counts.intervals} raf:${snapshot.counts.animationLoops} listeners:${snapshot.counts.listeners}`,
+      `Net out ${snapshot.network.outgoingPerSec.toFixed(1)}/s in ${snapshot.network.incomingPerSec.toFixed(1)}/s | snap ${snapshot.network.snapshotOutPerSec.toFixed(1)}/s motion ${snapshot.network.motionOutPerSec.toFixed(1)}/s player ${snapshot.network.playerOutPerSec.toFixed(1)}/s`,
       `Frame detectors ${JSON.stringify(snapshot.detectors)}`,
       `Autosave recent:${snapshot.autosave.ranRecently ? "yes" : "no"} | last ${snapshot.autosave.lastDurationMs.toFixed(2)}ms | ${snapshot.autosave.msSinceLastSave.toFixed(0)}ms ago`,
       `Slow now: ${snapshot.slowestCurrent.join(" | ") || "n/a"}`,
@@ -2565,6 +2587,7 @@
       `renderScaleChangedThisFrame=${snapshot.renderScaleChangedThisFrame}`,
       `visibility=${snapshot.visibilityState}`,
       `counts=${JSON.stringify(snapshot.counts)}`,
+      `network=${JSON.stringify(snapshot.network)}`,
       `detectors=${JSON.stringify(snapshot.detectors)}`,
       `autosave=${JSON.stringify(snapshot.autosave)}`,
       `slowNow=${JSON.stringify(snapshot.slowestCurrent)}`,
@@ -2868,6 +2891,7 @@
   let attackPressed = false;
   let inventoryOpen = false;
   let buildCategory = "navigation";
+  let buildCategoryView = "overview";
   let selectedSlot = null;
   let activeSlot = 0;
   const buildRecipeCursorByCategory = Object.create(null);
@@ -2877,6 +2901,7 @@
   let storagePanelLayoutRaf = 0;
   let resizeRaf = 0;
   let pendingResizeReason = "";
+  let inventoryUiValidationSignature = "";
 
   const touch = createTouchState();
 
@@ -2898,6 +2923,7 @@
 
   const state = createGameState({
     CONFIG,
+    INVENTORY_SIZE,
     SETTINGS_DEFAULTS,
     SURFACE_GUARDIAN_CONFIG,
   });
@@ -3191,7 +3217,7 @@
     const paletteByBiome = {
       temperate: { accent: "#8cae6b", vein: "#5c7651", speck: "#d5e3bf" },
       jungle: { accent: "#58b283", vein: "#2f7352", speck: "#b8e6cf" },
-      snow: { accent: "#d7ecff", vein: "#8ca8c2", speck: "#f7fdff" },
+      snow: { accent: "#a6b4c3", vein: "#7e91a7", speck: "#dbe3ec" },
       volcanic: { accent: "#d2815c", vein: "#723d31", speck: "#f0b293" },
       mangrove: { accent: "#79ba98", vein: "#3f725a", speck: "#c4e7d7" },
       redwood: { accent: "#7ba777", vein: "#466847", speck: "#bad7b8" },
@@ -3201,7 +3227,7 @@
     };
     const key = String(biome?.key || BIOME_KEYS.plains);
     const palette = paletteByBiome[key] || paletteByBiome[BIOME_KEYS.plains];
-    const accentBlend = isBiomeStone ? 0.34 : 0.22;
+    const accentBlend = isBiomeStone ? 0.34 : 0.14;
     const base = mixColor(baseColor, palette.accent, accentBlend);
     return {
       base,
@@ -5498,6 +5524,79 @@
     return normalized ? JSON.stringify(normalized) : "";
   }
 
+  function buildQaSavedCaveV2EntranceSummary(savedEntrances, world = null) {
+    const normalized = normalizeSerializedCaveV2EntranceEntries(world || state.surfaceWorld || state.world || null, savedEntrances);
+    const linkedPairs = new Set();
+    const seenEntranceIds = new Set();
+    const seenTileKeys = new Set();
+    const issues = [];
+    const entrances = normalized.map((entry) => {
+      const entranceId = String(entry?.entranceId || entry?.key || "");
+      const tileKey = `${Math.floor(Number(entry?.tx) || 0)},${Math.floor(Number(entry?.ty) || 0)}`;
+      if (seenEntranceIds.has(entranceId)) {
+        issues.push(`duplicate-entrance-id:${entranceId}`);
+      } else if (entranceId) {
+        seenEntranceIds.add(entranceId);
+      }
+      if (seenTileKeys.has(tileKey)) {
+        issues.push(`duplicate-entrance-tile:${tileKey}`);
+      } else {
+        seenTileKeys.add(tileKey);
+      }
+      if (typeof entry?.linkedPairId === "string" && entry.linkedPairId.length > 0) {
+        linkedPairs.add(entry.linkedPairId);
+      }
+      return {
+        entranceId,
+        caveId: String(entry?.caveId || ""),
+        tx: Math.floor(Number(entry?.tx) || 0),
+        ty: Math.floor(Number(entry?.ty) || 0),
+        linkedPairId: typeof entry?.linkedPairId === "string" ? entry.linkedPairId : null,
+        linkedExitKey: typeof entry?.linkedExitKey === "string" ? entry.linkedExitKey : null,
+      };
+    }).sort((a, b) => (
+      a.tx - b.tx
+      || a.ty - b.ty
+      || a.entranceId.localeCompare(b.entranceId)
+    ));
+    return {
+      entranceCount: entrances.length,
+      linkedPairCount: linkedPairs.size,
+      entrances,
+      issues,
+    };
+  }
+
+  function buildQaRuntimeCaveV2EntranceSummary(world = null) {
+    const targetWorld = world || state.surfaceWorld || state.world || null;
+    if (!targetWorld) {
+      return {
+        entranceCount: 0,
+        linkedPairCount: 0,
+        entrances: [],
+        issues: [],
+      };
+    }
+    return buildQaSavedCaveV2EntranceSummary(serializeRuntimeCaveV2Entrances(targetWorld), targetWorld);
+  }
+
+  function qaBuildSavedCaveV2EntranceSignature(savedEntrances, world = null) {
+    const normalized = buildQaSavedCaveV2EntranceSummary(savedEntrances, world);
+    return JSON.stringify({
+      entranceCount: normalized.entranceCount,
+      linkedPairCount: normalized.linkedPairCount,
+      entrances: normalized.entrances,
+    });
+  }
+
+  function qaBuildRuntimeCaveV2EntranceSignature(world = null) {
+    const targetWorld = world || state.surfaceWorld || state.world || null;
+    return qaBuildSavedCaveV2EntranceSignature(
+      serializeRuntimeCaveV2Entrances(targetWorld),
+      targetWorld
+    );
+  }
+
   function qaBuildRuntimeCaveV2PersistenceSignature() {
     return qaBuildSavedCaveV2PersistenceSignature(serializeCaveV2ForSave());
   }
@@ -5523,6 +5622,7 @@
       caveCount: Array.isArray(world.caves) ? world.caves.length : 0,
       caveSignature: qaBuildRuntimeCavePersistenceSignature(world),
       caveV2Signature: qaBuildRuntimeCaveV2PersistenceSignature(),
+      caveV2EntranceSignature: qaBuildRuntimeCaveV2EntranceSignature(world),
       toolTier: Number(state.player.toolTier) || 1,
     };
     const prevDirty = state.dirty;
@@ -5580,6 +5680,20 @@
     } else if (state.debugUnlocked && before.caveV2Signature) {
       console.debug(
         `[QA] CaveV2 save hash stable=${qaBuildCaveV2StateHashFromSignature(before.caveV2Signature)}`
+      );
+    }
+    const loadedCaveV2EntranceSignature = qaBuildSavedCaveV2EntranceSignature(loaded.caveV2Entrances, world);
+    if (loadedCaveV2EntranceSignature !== before.caveV2EntranceSignature) {
+      qaPushIssue(issues, "[save/load] CaveV2 entrance/link registry mismatch after reload");
+      if (state.debugUnlocked) {
+        console.debug("[QA] CaveV2 entrance save mismatch", {
+          before: JSON.parse(before.caveV2EntranceSignature || "{\"entrances\":[]}"),
+          after: JSON.parse(loadedCaveV2EntranceSignature || "{\"entrances\":[]}"),
+        });
+      }
+    } else if (state.debugUnlocked && before.caveV2EntranceSignature) {
+      console.debug(
+        `[QA] CaveV2 entrance registry stable=${qaBuildCaveV2StateHashFromSignature(before.caveV2EntranceSignature)}`
       );
     }
     if ((Number(loaded.player?.toolTier) || 1) !== before.toolTier) {
@@ -13721,6 +13835,7 @@
     net.hostConnPendingSince = 0;
     net.joinLastErrorCode = "";
     net.joinPromptGuardUntil = 0;
+    net.joinPromptActive = false;
     net.hostCodeRetryCount = 0;
   }
 
@@ -13729,9 +13844,23 @@
     net.motionSeq = 0;
     net.localPlayerSeq = 0;
     net.localPlayerAckSeq = -1;
+    net.snapshotDirty = false;
+    net.snapshotDirtyReason = "";
+    net.lastSnapshotBuiltAt = 0;
+    net.lastSnapshotSentAt = 0;
     net.lastSentPlayerFingerprint = "";
     net.lastSnapshotSeq = -1;
     net.lastMotionSeq = -1;
+    net.trafficWindowStartedAt = 0;
+    net.trafficWindowOutgoing = 0;
+    net.trafficWindowIncoming = 0;
+    net.trafficWindowOutgoingByType = Object.create(null);
+    net.trafficWindowIncomingByType = Object.create(null);
+    net.trafficLastWindowDurationMs = 1000;
+    net.trafficLastOutgoingPerSec = 0;
+    net.trafficLastIncomingPerSec = 0;
+    net.trafficLastOutgoingByType = Object.create(null);
+    net.trafficLastIncomingByType = Object.create(null);
     if (net.remotePlayerSeq instanceof Map) {
       net.remotePlayerSeq.clear();
     } else {
@@ -13898,6 +14027,48 @@
     net.joinPromptGuardUntil = performance.now() + Math.max(250, Number(windowMs) || 900);
   }
 
+  function requestJoinRoomCode(options = null) {
+    const opts = options && typeof options === "object" ? options : Object.create(null);
+    const source = typeof opts.source === "string" && opts.source ? opts.source : "unknown";
+    const promptLabel = typeof opts.promptLabel === "string" && opts.promptLabel
+      ? opts.promptLabel
+      : "Enter room code:";
+    const initialValue = typeof opts.initialValue === "string" ? opts.initialValue : "";
+    if (net.joinPromptActive || isJoinPromptGuardActive() || (state.loadingVisible && state.loadingTitle === "Joining")) {
+      logJoinFlow("prompt skipped", {
+        source,
+        reason: net.joinPromptActive
+          ? "prompt-active"
+          : (isJoinPromptGuardActive() ? "guard-active" : "already-joining"),
+      });
+      return { ok: false, skipped: true, code: "PROMPT_SKIPPED", roomId: null };
+    }
+    net.joinPromptActive = true;
+    armJoinPromptGuard(4000);
+    logJoinFlow("start", {
+      source,
+      initialValue,
+    });
+    try {
+      const input = window.prompt(promptLabel, initialValue);
+      if (input === null) {
+        logJoinFlow("cancelled", { source });
+        return { ok: false, cancelled: true, code: "PROMPT_CANCELLED", roomId: null };
+      }
+      armJoinPromptGuard(1600);
+      const roomId = parseRoomInput(input);
+      if (!roomId) {
+        logJoinFlow("invalid-code", { source, raw: input });
+        setPrompt("Bad code", 1.2);
+        return { ok: false, invalid: true, code: "BAD_CODE", roomId: null };
+      }
+      logJoinFlow("code accepted", { source, roomId });
+      return { ok: true, code: "OK", roomId };
+    } finally {
+      net.joinPromptActive = false;
+    }
+  }
+
   function normalizeSnapshotStructureStorageEntry(entry) {
     if (!entry || typeof entry !== "object") return entry;
     const normalizedType = resolveStructureType(entry.type, entry.meta);
@@ -14036,28 +14207,16 @@
   }
 
   function joinRoomPrompt() {
-    if (isJoinPromptGuardActive() || (state.loadingVisible && state.loadingTitle === "Joining")) {
-      logJoinFlow("prompt skipped", {
-        source: "topbar",
-        reason: isJoinPromptGuardActive() ? "guard-active" : "already-joining",
-      });
-      return;
-    }
-    armJoinPromptGuard();
     const current = getRoomIdFromUrl() || net.roomId || "";
-    logJoinFlow("start", { source: "topbar", current });
-    const input = window.prompt("Enter code/link:", current);
-    if (input === null) {
-      logJoinFlow("cancelled", { source: "topbar" });
+    const joinRequest = requestJoinRoomCode({
+      source: "topbar",
+      promptLabel: "Enter code/link:",
+      initialValue: current,
+    });
+    if (!joinRequest.ok) {
       return;
     }
-    const roomId = parseRoomInput(input);
-    if (!roomId) {
-      logJoinFlow("invalid-code", { source: "topbar", raw: input });
-      setPrompt("Bad code", 1.2);
-      return;
-    }
-    logJoinFlow("code accepted", { source: "topbar", roomId });
+    const roomId = joinRequest.roomId;
     if (shouldPersistRoomInUrl()) {
       setRoomIdInUrl(roomId);
     }
@@ -14546,27 +14705,15 @@
   }
 
   function startJoin() {
-    if (isJoinPromptGuardActive() || (state.loadingVisible && state.loadingTitle === "Joining")) {
-      logJoinFlow("prompt skipped", {
-        source: "start-menu",
-        reason: isJoinPromptGuardActive() ? "guard-active" : "already-joining",
-      });
+    const joinRequest = requestJoinRoomCode({
+      source: "start-menu",
+      promptLabel: "Enter room code:",
+      initialValue: "",
+    });
+    if (!joinRequest.ok) {
       return;
     }
-    armJoinPromptGuard();
-    logJoinFlow("start", { source: "start-menu" });
-    const input = window.prompt("Enter room code:", "");
-    if (input === null) {
-      logJoinFlow("cancelled", { source: "start-menu" });
-      return;
-    }
-    const roomId = parseRoomInput(input);
-    if (!roomId) {
-      logJoinFlow("invalid-code", { source: "start-menu", raw: input });
-      setPrompt("Bad code", 1.2);
-      return;
-    }
-    logJoinFlow("code accepted", { source: "start-menu", roomId });
+    const roomId = joinRequest.roomId;
     normalizeInventoryState(state, { forceInventory: true, inventorySize: INVENTORY_SIZE });
     armStartFlowWatchdog("join", JOIN_FLOW_TIMEOUT_MS, () => {
       if (net.ready || net.joinPhase === "playable") return;
@@ -14808,6 +14955,13 @@
   function sanitizeNetPayloadValue(value, seen = null, inArray = false) {
     if (value === undefined) return inArray ? null : undefined;
     if (value == null) return value;
+    if (typeof window.structuredClone === "function") {
+      try {
+        return window.structuredClone(value);
+      } catch (err) {
+        // Fall through to JSON-compatible sanitization for values structuredClone cannot copy.
+      }
+    }
     try {
       const visited = new WeakSet();
       const json = JSON.stringify(value, (_key, entry) => {
@@ -14837,12 +14991,33 @@
     }
   }
 
-  function sendConnPayload(conn, payload) {
-    if (!conn?.open || payload == null) return false;
+  function prepareOutgoingNetPayload(payload) {
+    if (payload == null) return { ok: false, sanitized: undefined };
     try {
       const sanitized = sanitizeNetPayloadValue(payload);
-      if (sanitized === undefined) return false;
+      if (sanitized === undefined) return { ok: false, sanitized: undefined };
+      return { ok: true, sanitized };
+    } catch (err) {
+      net.lastSendFailure = {
+        type: payload?.type || "unknown",
+        peer: null,
+        error: err?.message || String(err),
+        at: performance.now ? performance.now() : Date.now(),
+      };
+      console.warn("[net] Recoverable send failure", {
+        type: payload?.type || "unknown",
+        peer: null,
+        error: err?.message || String(err),
+      });
+      return { ok: false, sanitized: undefined };
+    }
+  }
+
+  function sendPreparedConnPayload(conn, payload, sanitized) {
+    if (!conn?.open || sanitized === undefined) return false;
+    try {
       conn.send(sanitized);
+      recordNetTrafficEvent("outgoing", payload?.type);
       return true;
     } catch (err) {
       net.lastSendFailure = {
@@ -14858,6 +15033,13 @@
       });
       return false;
     }
+  }
+
+  function sendConnPayload(conn, payload) {
+    if (!conn?.open || payload == null) return false;
+    const prepared = prepareOutgoingNetPayload(payload);
+    if (!prepared.ok) return false;
+    return sendPreparedConnPayload(conn, payload, prepared.sanitized);
   }
 
   function sendHello() {
@@ -14879,23 +15061,97 @@
   }
 
   function broadcastNet(payload, exceptId = null) {
+    const prepared = prepareOutgoingNetPayload(payload);
+    if (!prepared.ok) return;
     for (const [peerId, conn] of net.connections.entries()) {
       if (peerId === exceptId) continue;
       if (conn.open) {
         qaTrackCaveDisabledNetMessage("send", payload);
-        sendConnPayload(conn, payload);
+        sendPreparedConnPayload(conn, payload, prepared.sanitized);
       }
     }
   }
 
   function broadcastNetToReadyPeers(payload, exceptId = null) {
+    const prepared = prepareOutgoingNetPayload(payload);
+    if (!prepared.ok) return;
     for (const [peerId, conn] of net.connections.entries()) {
       if (peerId === exceptId) continue;
       if (!conn?.open) continue;
       if (!net.players.has(peerId)) continue;
       qaTrackCaveDisabledNetMessage("send", payload);
-      sendConnPayload(conn, payload);
+      sendPreparedConnPayload(conn, payload, prepared.sanitized);
     }
+  }
+
+  function hasReadyNetPeers() {
+    if (!(net.connections instanceof Map) || net.connections.size <= 0) return false;
+    for (const [peerId, conn] of net.connections.entries()) {
+      if (!conn?.open) continue;
+      if (!net.players.has(peerId)) continue;
+      return true;
+    }
+    return false;
+  }
+
+  function rotateNetTrafficWindow(now = performance.now()) {
+    if (!Number.isFinite(now)) now = Date.now();
+    if (!(Number(net.trafficWindowStartedAt) > 0)) {
+      net.trafficWindowStartedAt = now;
+      return;
+    }
+    const elapsed = now - Number(net.trafficWindowStartedAt);
+    if (elapsed < 1000) return;
+    const seconds = Math.max(0.001, elapsed / 1000);
+    net.trafficLastWindowDurationMs = elapsed;
+    net.trafficLastOutgoingPerSec = Number((Number(net.trafficWindowOutgoing || 0) / seconds).toFixed(2));
+    net.trafficLastIncomingPerSec = Number((Number(net.trafficWindowIncoming || 0) / seconds).toFixed(2));
+    const nextOutgoingByType = Object.create(null);
+    const nextIncomingByType = Object.create(null);
+    for (const [type, count] of Object.entries(net.trafficWindowOutgoingByType || {})) {
+      nextOutgoingByType[type] = Number((Number(count || 0) / seconds).toFixed(2));
+    }
+    for (const [type, count] of Object.entries(net.trafficWindowIncomingByType || {})) {
+      nextIncomingByType[type] = Number((Number(count || 0) / seconds).toFixed(2));
+    }
+    net.trafficLastOutgoingByType = nextOutgoingByType;
+    net.trafficLastIncomingByType = nextIncomingByType;
+    net.trafficWindowStartedAt = now;
+    net.trafficWindowOutgoing = 0;
+    net.trafficWindowIncoming = 0;
+    net.trafficWindowOutgoingByType = Object.create(null);
+    net.trafficWindowIncomingByType = Object.create(null);
+  }
+
+  function recordNetTrafficEvent(direction, type) {
+    const now = performance.now();
+    rotateNetTrafficWindow(now);
+    const normalizedDirection = direction === "incoming" ? "incoming" : "outgoing";
+    const typeKey = String(type || "unknown");
+    if (normalizedDirection === "incoming") {
+      net.trafficWindowIncoming = (Number(net.trafficWindowIncoming) || 0) + 1;
+      net.trafficWindowIncomingByType[typeKey] = (Number(net.trafficWindowIncomingByType[typeKey]) || 0) + 1;
+      return;
+    }
+    net.trafficWindowOutgoing = (Number(net.trafficWindowOutgoing) || 0) + 1;
+    net.trafficWindowOutgoingByType[typeKey] = (Number(net.trafficWindowOutgoingByType[typeKey]) || 0) + 1;
+  }
+
+  function getNetTrafficSnapshot() {
+    rotateNetTrafficWindow(performance.now());
+    const outgoingByType = net.trafficLastOutgoingByType || Object.create(null);
+    const incomingByType = net.trafficLastIncomingByType || Object.create(null);
+    return {
+      outgoingPerSec: Number(net.trafficLastOutgoingPerSec || 0),
+      incomingPerSec: Number(net.trafficLastIncomingPerSec || 0),
+      snapshotOutPerSec: Number(outgoingByType.snapshot || 0),
+      motionOutPerSec: Number(outgoingByType.motion || 0),
+      playerOutPerSec: Number(outgoingByType.playerUpdate || 0),
+      snapshotInPerSec: Number(incomingByType.snapshot || 0),
+      motionInPerSec: Number(incomingByType.motion || 0),
+      playerInPerSec: Number(incomingByType.playerUpdate || 0),
+      windowMs: Math.round(Number(net.trafficLastWindowDurationMs) || 1000),
+    };
   }
 
   function sendJoinProgressToPendingPeers(note = "") {
@@ -15028,7 +15284,7 @@
         joinPhase: "snapshotReady",
         playerId: conn.peer,
         playerState,
-        snapshot: buildSnapshot({ includeStaticWorld: true }),
+        snapshot: buildSnapshot(),
       });
     }
     if (opts.broadcastJoin !== false) {
@@ -15040,6 +15296,7 @@
   function handleNetMessage(conn, message) {
     if (!message || typeof message !== "object") return;
     qaTrackCaveDisabledNetMessage("recv", message);
+    recordNetTrafficEvent("incoming", message.type);
     if (!net.isHost && conn && conn === net.hostConn) {
       net.lastHostPacketAt = performance.now();
     }
@@ -15441,6 +15698,122 @@
       nextVillagerId: 1,
     };
     return world;
+  }
+
+  function getSerializedResourceStatesForSnapshot(world) {
+    if (!world || typeof world !== "object") return [];
+    let cache = serializedResourceStateCache.get(world);
+    if (!cache) {
+      cache = { revision: -1, data: [] };
+      serializedResourceStateCache.set(world, cache);
+    }
+    const revision = Math.max(0, Math.floor(Number(state.serializationRevision) || 0));
+    if (cache.revision === revision && Array.isArray(cache.data)) {
+      return cache.data;
+    }
+    const resources = Array.isArray(world.resources) ? world.resources : [];
+    cache.revision = revision;
+    cache.data = resources.map((res) => serializeResource(res));
+    return cache.data;
+  }
+
+  function getSerializedStructuresListForSnapshot() {
+    const revision = Math.max(0, Math.floor(Number(state.serializationRevision) || 0));
+    if (
+      serializedStructureSnapshotCacheRevision === revision
+      && serializedStructureSnapshotCacheSource === state.structures
+      && Array.isArray(serializedStructureSnapshotCache)
+    ) {
+      return serializedStructureSnapshotCache;
+    }
+    serializedStructureSnapshotCacheRevision = revision;
+    serializedStructureSnapshotCacheSource = state.structures;
+    serializedStructureSnapshotCache = serializeStructuresList();
+    return serializedStructureSnapshotCache;
+  }
+
+  function serializeWorldStateForSnapshot(world) {
+    if (!world || typeof world !== "object") {
+      return serializeWorldState(world);
+    }
+    return {
+      resourceStates: getSerializedResourceStatesForSnapshot(world),
+      respawnTasks: world.respawnTasks ?? [],
+      drops: (world.drops ?? []).map((drop) => ({
+        id: drop.id,
+        itemId: drop.itemId,
+        qty: drop.qty,
+        x: drop.x,
+        y: drop.y,
+        ttl: Number.isFinite(drop.ttl) ? drop.ttl : DROP_DESPAWN.lifetime,
+      })),
+      monsters: (world.monsters ?? []).map((monster) => ({
+        id: monster.id,
+        type: monster.type ?? "crawler",
+        x: monster.x,
+        y: monster.y,
+        hp: monster.hp,
+        maxHp: monster.maxHp,
+        attackTimer: Math.max(0, Number(monster.attackTimer) || 0),
+        dayBurning: !!monster.dayBurning,
+        burnTimer: Math.max(0, Number(monster.burnTimer) || 0),
+        burnDuration: Math.max(0, Number(monster.burnDuration) || 0),
+        poisonDuration: Math.max(0, Number(monster.poisonDuration) || 0),
+        poisonDps: Math.max(0, Number(monster.poisonDps) || 0),
+      })),
+      projectiles: (world.projectiles ?? []).map((projectile) => ({
+        id: projectile.id,
+        type: projectile.type || "arrow",
+        monsterType: projectile.monsterType || "skeleton",
+        x: projectile.x,
+        y: projectile.y,
+        vx: projectile.vx,
+        vy: projectile.vy,
+        life: projectile.life,
+        maxLife: projectile.maxLife,
+        maxDistance: projectile.maxDistance,
+        distanceTraveled: projectile.distanceTraveled,
+        damage: projectile.damage,
+        radius: projectile.radius,
+        poisonDuration: Math.max(0, Number(projectile.poisonDuration) || 0),
+        poisonDps: Math.max(0, Number(projectile.poisonDps) || 0),
+        cloudRadius: Math.max(0, Number(projectile.cloudRadius) || 0),
+        cloudDuration: Math.max(0, Number(projectile.cloudDuration) || 0),
+        cloudAffectInterval: Math.max(0, Number(projectile.cloudAffectInterval) || 0),
+      })),
+      poisonClouds: (world.poisonClouds ?? []).map((cloud) => ({
+        id: cloud.id,
+        x: cloud.x,
+        y: cloud.y,
+        life: cloud.life,
+        maxLife: cloud.maxLife,
+        radius: cloud.radius,
+        poisonDuration: Math.max(0, Number(cloud.poisonDuration) || 0),
+        poisonDps: Math.max(0, Number(cloud.poisonDps) || 0),
+        affectInterval: Math.max(0, Number(cloud.affectInterval) || 0),
+        monsterType: cloud.monsterType || "marsh_stalker",
+      })),
+      animals: (world.animals ?? []).map((animal) => ({
+        id: animal.id,
+        type: animal.type,
+        x: animal.x,
+        y: animal.y,
+        hp: animal.hp,
+        maxHp: animal.maxHp,
+        speed: animal.speed,
+        color: animal.color,
+      })),
+      villagers: (world.villagers ?? []).map((villager) => ({
+        id: villager.id,
+        x: villager.x,
+        y: villager.y,
+        homeX: villager.homeX,
+        homeY: villager.homeY,
+        speed: villager.speed,
+        color: villager.color,
+        wanderRadius: villager.wanderRadius,
+      })),
+    };
   }
 
   function serializeWorldState(world) {
@@ -15860,9 +16233,15 @@
       if (!cave) return [];
       return getGeneratedCaveLayerWorldEntries(cave).map((entry) => ({
         layer: normalizeCaveLayerIndex(entry.layer),
-        world: serializeWorldState(entry.world),
+        world: serializeWorldStateForSnapshot(entry.world),
       }));
     };
+    const worldPayload = perfProfiler.enabled
+      ? trackPerfSection("net.snapshot.world", () => serializeWorldStateForSnapshot(surface))
+      : serializeWorldStateForSnapshot(surface);
+    const structuresPayload = perfProfiler.enabled
+      ? trackPerfSection("net.snapshot.structures", () => getSerializedStructuresListForSnapshot())
+      : getSerializedStructuresListForSnapshot();
     return {
       type: "snapshot",
       seq,
@@ -15873,13 +16252,13 @@
       gameWon: state.gameWon,
       surfaceStatic: includeStaticWorld ? serializeSurfaceStaticSnapshot(surface) : null,
       caveV2Entrances: CAVE_V2_ENABLED ? serializeRuntimeCaveV2Entrances(surface) : [],
-      world: serializeWorldState(surface),
+      world: worldPayload,
       caves: (CAVES_ENABLED || CAVE_V2_ENABLED) ? (surface.caves?.map((cave) => {
         const layers = CAVES_ENABLED ? serializeCaveLayers(cave) : [];
         const layerZeroWorld = CAVES_ENABLED
           ? (
             layers.find((entry) => normalizeCaveLayerIndex(entry.layer) === 0)?.world
-            || serializeWorldState(ensureCaveLayerWorld(cave, 0, surface))
+            || serializeWorldStateForSnapshot(ensureCaveLayerWorld(cave, 0, surface))
           )
           : null;
         return {
@@ -15894,7 +16273,7 @@
           layers,
         };
       }) ?? []) : [],
-      structures: serializeStructuresList(),
+      structures: structuresPayload,
       players: getPlayersSnapshot(),
     };
   }
@@ -16047,6 +16426,48 @@
       robots: serializeRobotMotion(),
       ships: serializeShipMotion(),
     };
+  }
+
+  function queueHostSnapshotBroadcast(reason = "", options = null) {
+    if (!net.isHost || !net.enabled) return false;
+    if (!hasReadyNetPeers()) return false;
+    const opts = options && typeof options === "object" ? options : Object.create(null);
+    const cadence = getNetworkCadenceConfig();
+    const urgentDelay = Math.min(cadence.snapshotInterval, NET_SNAPSHOT_BURST_DELAY);
+    net.snapshotDirty = true;
+    if (reason) {
+      net.snapshotDirtyReason = String(reason);
+    }
+    if (opts.urgent) {
+      const timer = Number.isFinite(net.snapshotTimer) ? net.snapshotTimer : cadence.snapshotInterval;
+      net.snapshotTimer = Math.min(Math.max(0.001, timer), urgentDelay);
+    }
+    return true;
+  }
+
+  function broadcastHostSnapshotNow(options = null) {
+    if (!net.isHost || !net.enabled) return false;
+    if (!hasReadyNetPeers()) {
+      net.snapshotDirty = false;
+      net.snapshotDirtyReason = "";
+      return false;
+    }
+    const opts = options && typeof options === "object" ? options : Object.create(null);
+    const snapshot = perfProfiler.enabled
+      ? trackPerfSection("net.snapshot.build", () => buildSnapshot(opts))
+      : buildSnapshot(opts);
+    if (!snapshot) return false;
+    const sendAt = performance.now();
+    if (perfProfiler.enabled) {
+      trackPerfSection("net.snapshot.broadcast", () => broadcastNetToReadyPeers(snapshot));
+    } else {
+      broadcastNetToReadyPeers(snapshot);
+    }
+    net.snapshotDirty = false;
+    net.snapshotDirtyReason = "";
+    net.lastSnapshotBuiltAt = sendAt;
+    net.lastSnapshotSentAt = sendAt;
+    return true;
   }
 
   function applyMotionWorld(world, motionWorld) {
@@ -16658,16 +17079,11 @@
       wasNearBench = false;
       let world = buildSurfaceWorldFromStaticSnapshot(snapshot.seed, snapshot.surfaceStatic);
       if (!world) {
-        if (!net.isHost && !net.ready) {
-          requestAuthoritativeStaticSnapshot("missing_surface_static");
-          return {
-            ok: false,
-            deferred: true,
-            code: "STATIC_SNAPSHOT_PENDING",
-            detail: "Requested authoritative static snapshot from host.",
-            issues: validation.issues,
-            snapshot,
-          };
+        if (!net.isHost && !net.ready && (state.debugUnlocked || mpAutotest.active)) {
+          console.warn("[Join Snapshot Validation]", {
+            context: "welcomeSnapshot",
+            issues: [...validation.issues, "welcomeSnapshot: missing surfaceStatic; regenerated from seed"],
+          });
         }
         world = generateWorld(snapshot.seed);
       }
@@ -16890,7 +17306,7 @@
       sendWelcome: true,
       broadcastJoin: true,
     });
-    sendConnPayload(conn, buildSnapshot({ includeStaticWorld: true }));
+    sendConnPayload(conn, buildSnapshot());
     const motion = buildMotionUpdate();
     if (motion) sendConnPayload(conn, motion);
     sendConnPayload(conn, {
@@ -18193,7 +18609,7 @@
 
     markDirty();
     respond(true);
-    broadcastNet(buildSnapshot());
+    queueHostSnapshotBroadcast("debugBoatPlace", { urgent: true });
     const motion = buildMotionUpdate();
     if (motion) broadcastNet(motion);
   }
@@ -18435,7 +18851,7 @@
     updateTimeUI();
     markDirty();
     if (net.isHost && net.connections.size > 0) {
-      broadcastNet(buildSnapshot());
+      queueHostSnapshotBroadcast("sleepSkip", { urgent: true });
       const motion = buildMotionUpdate();
       if (motion) broadcastNet(motion);
     }
@@ -19102,6 +19518,7 @@
     resetNetSequenceState();
     net.joinLastErrorCode = code;
     net.joinPromptGuardUntil = 0;
+    net.joinPromptActive = false;
     net.connectIntent = "idle";
     if (state.loadingVisible && state.loadingTitle === "Joining") {
       hideLoadingOverlay();
@@ -19228,15 +19645,21 @@
       }
       net.motionTimer -= dt;
       if (net.motionTimer <= 0) {
-        const motion = buildMotionUpdate();
+        const motion = perfProfiler.enabled
+          ? trackPerfSection("net.motion.build", () => buildMotionUpdate())
+          : buildMotionUpdate();
         if (motion) {
-          broadcastNetToReadyPeers(motion);
+          if (perfProfiler.enabled) {
+            trackPerfSection("net.motion.broadcast", () => broadcastNetToReadyPeers(motion));
+          } else {
+            broadcastNetToReadyPeers(motion);
+          }
         }
         net.motionTimer = cadence.motionInterval;
       }
       net.snapshotTimer -= dt;
       if (net.snapshotTimer <= 0) {
-        broadcastNetToReadyPeers(buildSnapshot());
+        broadcastHostSnapshotNow();
         net.snapshotTimer = cadence.snapshotInterval;
       }
     }
@@ -19998,7 +20421,7 @@
   function serializeRuntimeCaveV2Entrances(world) {
     const entrances = getRuntimeCaveV2Entrances(world);
     if (!Array.isArray(entrances) || entrances.length <= 0) return [];
-    return entrances.map((entry) => ({
+    return normalizeSerializedCaveV2EntranceEntries(world, entrances.map((entry) => ({
       tx: Number.isInteger(entry?.tx) ? entry.tx : null,
       ty: Number.isInteger(entry?.ty) ? entry.ty : null,
       key: typeof entry?.key === "string" && entry.key.length > 0 ? entry.key : null,
@@ -20006,16 +20429,14 @@
       entranceId: typeof entry?.entranceId === "string" && entry.entranceId.length > 0 ? entry.entranceId : null,
       linkedPairId: typeof entry?.linkedPairId === "string" && entry.linkedPairId.length > 0 ? entry.linkedPairId : null,
       linkedExitKey: typeof entry?.linkedExitKey === "string" && entry.linkedExitKey.length > 0 ? entry.linkedExitKey : null,
-    })).filter((entry) => Number.isInteger(entry.tx) && Number.isInteger(entry.ty));
+    })));
   }
 
-  function applyRuntimeCaveV2EntrancesFromSnapshot(world, serializedEntrances) {
-    if (!world || typeof world !== "object") return;
-    if (!Array.isArray(serializedEntrances)) {
-      applyCaveV2RuntimeEntranceLinksFromSurfaceCaves(world, getRuntimeCaveV2Entrances(world));
-      return;
-    }
+  function normalizeSerializedCaveV2EntranceEntries(world, serializedEntrances) {
+    if (!world || !Array.isArray(serializedEntrances)) return [];
     const nextEntrances = [];
+    const seenTiles = new Set();
+    const seenEntranceIds = new Set();
     for (const raw of serializedEntrances) {
       if (!raw || !Number.isInteger(raw.tx) || !Number.isInteger(raw.ty)) continue;
       const tx = clamp(raw.tx, 0, Math.max(0, world.size - 1));
@@ -20023,6 +20444,13 @@
       const key = typeof raw.key === "string" && raw.key.length > 0
         ? raw.key
         : buildCaveV2EntranceSurfaceKey(world, tx, ty);
+      const entranceId = typeof raw.entranceId === "string" && raw.entranceId.length > 0
+        ? raw.entranceId
+        : key;
+      const tileKey = `${tx},${ty}`;
+      if (seenTiles.has(tileKey) || seenEntranceIds.has(entranceId)) continue;
+      seenTiles.add(tileKey);
+      seenEntranceIds.add(entranceId);
       nextEntrances.push({
         tx,
         ty,
@@ -20030,9 +20458,7 @@
         caveId: typeof raw.caveId === "string" && raw.caveId.length > 0
           ? raw.caveId
           : getCaveV2EntranceStableId(world, tx, ty),
-        entranceId: typeof raw.entranceId === "string" && raw.entranceId.length > 0
-          ? raw.entranceId
-          : key,
+        entranceId,
         linkedPairId: typeof raw.linkedPairId === "string" && raw.linkedPairId.length > 0
           ? raw.linkedPairId
           : null,
@@ -20041,8 +20467,47 @@
           : null,
       });
     }
+    const validEntranceIds = new Set(nextEntrances.map((entry) => entry.entranceId || entry.key));
+    for (const entry of nextEntrances) {
+      if (entry.linkedExitKey === entry.entranceId || !validEntranceIds.has(entry.linkedExitKey)) {
+        entry.linkedExitKey = null;
+      }
+    }
+    return nextEntrances;
+  }
+
+  function applyRuntimeCaveV2EntrancesFromSnapshot(world, serializedEntrances) {
+    if (!world || typeof world !== "object") return;
+    if (!Array.isArray(serializedEntrances)) {
+      applyCaveV2RuntimeEntranceLinksFromSurfaceCaves(world, getRuntimeCaveV2Entrances(world));
+      return;
+    }
+    const nextEntrances = normalizeSerializedCaveV2EntranceEntries(world, serializedEntrances);
     world.runtimeCaveV2Entrances = nextEntrances;
     applyCaveV2RuntimeEntranceLinksFromSurfaceCaves(world, world.runtimeCaveV2Entrances);
+  }
+
+  function restoreSavedRuntimeCaveV2Entrances(world, serializedEntrances) {
+    if (!world || typeof world !== "object") {
+      return {
+        restoredFromSave: false,
+        entranceCount: 0,
+        linkedPairCount: 0,
+        signature: "",
+      };
+    }
+    if (Array.isArray(serializedEntrances)) {
+      applyRuntimeCaveV2EntrancesFromSnapshot(world, serializedEntrances);
+    } else {
+      applyCaveV2RuntimeEntranceLinksFromSurfaceCaves(world, getRuntimeCaveV2Entrances(world));
+    }
+    const summary = buildQaRuntimeCaveV2EntranceSummary(world);
+    return {
+      restoredFromSave: Array.isArray(serializedEntrances),
+      entranceCount: summary.entranceCount,
+      linkedPairCount: summary.linkedPairCount,
+      signature: qaBuildSavedCaveV2EntranceSignature(summary.entrances, world),
+    };
   }
 
   function getCaveV2EntranceRuntimeId(world, entrance) {
@@ -28373,7 +28838,7 @@
 
   function moveSlotToFirstAvailable(fromInv, fromIndex, toInv) {
     const from = fromInv?.[fromIndex];
-    if (!from || !from.id || !Array.isArray(toInv)) return false;
+    if (!from || !from.id || !Array.isArray(toInv)) return -1;
     let emptyIndex = -1;
     for (let i = 0; i < toInv.length; i += 1) {
       const slot = toInv[i];
@@ -28383,13 +28848,116 @@
       }
       if (slot.id !== from.id || slot.qty >= MAX_STACK) continue;
       moveSlotBetween(fromInv, fromIndex, toInv, i);
-      return true;
+      return i;
     }
     if (emptyIndex >= 0) {
       moveSlotBetween(fromInv, fromIndex, toInv, emptyIndex);
-      return true;
+      return emptyIndex;
     }
-    return false;
+    return -1;
+  }
+
+  function getBackpackSlotCount() {
+    return Math.max(0, INVENTORY_SIZE - HOTBAR_SIZE);
+  }
+
+  function getBackpackInventoryIndex(localIndex) {
+    if (!Number.isInteger(localIndex)) return -1;
+    const backpackSize = getBackpackSlotCount();
+    if (localIndex < 0 || localIndex >= backpackSize) return -1;
+    return HOTBAR_SIZE + localIndex;
+  }
+
+  function buildInventoryUiValidationReport() {
+    const issues = [];
+    const seenIndices = new Map();
+
+    const registerView = (label, localIndex, inventoryIndex) => {
+      if (!Number.isInteger(inventoryIndex)) {
+        issues.push(`${label}[${localIndex}] missing inventoryIndex`);
+        return;
+      }
+      if (inventoryIndex < 0 || inventoryIndex >= INVENTORY_SIZE) {
+        issues.push(`${label}[${localIndex}] maps out of range -> ${inventoryIndex}`);
+        return;
+      }
+      const prior = seenIndices.get(inventoryIndex);
+      if (prior) {
+        issues.push(`${label}[${localIndex}] overlaps ${prior} at inventory[${inventoryIndex}]`);
+        return;
+      }
+      seenIndices.set(inventoryIndex, `${label}[${localIndex}]`);
+    };
+
+    if (hotbarSlots.length !== HOTBAR_SIZE) {
+      issues.push(`hotbarSlots length ${hotbarSlots.length} !== HOTBAR_SIZE ${HOTBAR_SIZE}`);
+    }
+    if (inventorySlots.length !== getBackpackSlotCount()) {
+      issues.push(`inventorySlots length ${inventorySlots.length} !== backpack size ${getBackpackSlotCount()}`);
+    }
+
+    for (let i = 0; i < hotbarSlots.length; i += 1) {
+      registerView("hotbar", i, hotbarSlots[i]?.inventoryIndex);
+    }
+    for (let i = 0; i < inventorySlots.length; i += 1) {
+      registerView("inventory", i, inventorySlots[i]?.inventoryIndex);
+    }
+
+    if (selectedSlot?.scope === "inventory" && !seenIndices.has(selectedSlot.index)) {
+      issues.push(`selected inventory slot ${selectedSlot.index} is not mapped to a visible slot`);
+    }
+
+    if (Array.isArray(state.inventory)) {
+      const seenSlots = new Map();
+      for (let i = 0; i < state.inventory.length; i += 1) {
+        const slot = state.inventory[i];
+        if (!slot || typeof slot !== "object") continue;
+        const prior = seenSlots.get(slot);
+        if (prior != null) {
+          issues.push(`state.inventory[${i}] reuses slot object from index ${prior}`);
+          continue;
+        }
+        seenSlots.set(slot, i);
+      }
+    }
+
+    return {
+      issues,
+      hotbarMappings: hotbarSlots.map((view, localIndex) => ({
+        localIndex,
+        inventoryIndex: view?.inventoryIndex ?? null,
+      })),
+      inventoryMappings: inventorySlots.map((view, localIndex) => ({
+        localIndex,
+        inventoryIndex: view?.inventoryIndex ?? null,
+      })),
+    };
+  }
+
+  function validateInventoryUiMapping() {
+    if (!state.debugUnlocked) return;
+    const report = buildInventoryUiValidationReport();
+    const signature = JSON.stringify(report);
+    if (signature === inventoryUiValidationSignature) return;
+    inventoryUiValidationSignature = signature;
+    if (report.issues.length > 0) {
+      console.warn("[Inventory UI Validation]", report);
+    }
+  }
+
+  function logInventoryMoveDebug(fromScope, fromIndex, toScope, toIndex, movedItemId = null) {
+    if (!state.debugUnlocked) return;
+    const fromList = fromScope === "inventory" ? state.inventory : state.activeChest?.storage;
+    const toList = toScope === "inventory" ? state.inventory : state.activeChest?.storage;
+    console.debug("[Inventory Move]", {
+      fromScope,
+      fromIndex,
+      toScope,
+      toIndex,
+      movedItemId: movedItemId ?? fromList?.[fromIndex]?.id ?? null,
+      fromItem: fromList?.[fromIndex]?.id ?? null,
+      toItem: toList?.[toIndex]?.id ?? null,
+    });
   }
 
   function compactUiSentence(text, maxLen = 56) {
@@ -28518,8 +29086,12 @@
 
   function markDirty() {
     state.dirty = true;
+    state.serializationRevision = Math.max(0, Math.floor(Number(state.serializationRevision) || 0)) + 1;
     if (!netIsClientReady()) {
       setSaveStatus("Saving...");
+    }
+    if (net.isHost && net.enabled && net.connections.size > 0) {
+      net.snapshotDirty = true;
     }
   }
 
@@ -28904,6 +29476,7 @@
       animals: surfaceState.animals,
       villagers: surfaceState.villagers,
       caveV2: serializeCaveV2ForSave(),
+      caveV2Entrances: CAVE_V2_ENABLED ? serializeRuntimeCaveV2Entrances(surface) : null,
       caves: surface.caves?.map((cave) => {
         if (!CAVES_ENABLED) {
           const preserved = cave?.persistedSavePayload && typeof cave.persistedSavePayload === "object"
@@ -29037,6 +29610,7 @@
         seed: normalizeSeedValue(data.seed),
         islandLayout,
         caveV2: data.caveV2 && typeof data.caveV2 === "object" ? data.caveV2 : null,
+        caveV2Entrances: Array.isArray(data.caveV2Entrances) ? data.caveV2Entrances : null,
         player: {
           ...player,
           unlocks: migratedUnlocks,
@@ -29080,6 +29654,7 @@
         animals: Array.isArray(data.animals) ? data.animals : [],
         villagers: [],
         caveV2: null,
+        caveV2Entrances: null,
         caves: [],
       };
     }
@@ -29112,6 +29687,7 @@
         animals: Array.isArray(data.animals) ? data.animals : [],
         villagers: [],
         caveV2: null,
+        caveV2Entrances: null,
         caves: [],
       };
     }
@@ -29144,6 +29720,7 @@
         animals: Array.isArray(data.animals) ? data.animals : [],
         villagers: [],
         caveV2: null,
+        caveV2Entrances: null,
         caves: Array.isArray(data.caves) ? data.caves : [],
       };
     }
@@ -29181,6 +29758,7 @@
         animals: Array.isArray(data.animals) ? data.animals : [],
         villagers: [],
         caveV2: null,
+        caveV2Entrances: null,
         caves: Array.isArray(data.caves) ? data.caves : [],
       };
     }
@@ -29218,6 +29796,7 @@
       animals: Array.isArray(data.animals) ? data.animals : [],
       villagers: Array.isArray(data.villagers) ? data.villagers : [],
       caveV2: data.caveV2 && typeof data.caveV2 === "object" ? data.caveV2 : null,
+      caveV2Entrances: Array.isArray(data.caveV2Entrances) ? data.caveV2Entrances : null,
       caves: Array.isArray(data.caves) ? data.caves : [],
     };
   }
@@ -32699,6 +33278,16 @@
       ensureSurfaceCaves(world, preparedSave.caves);
       resetCaveV2RuntimeState();
       restoreCaveV2FromSave(preparedSave.caveV2, world);
+      const savedCaveV2EntranceSignature = qaBuildSavedCaveV2EntranceSignature(preparedSave.caveV2Entrances, world);
+      const restoredCaveV2EntranceSummary = restoreSavedRuntimeCaveV2Entrances(world, preparedSave.caveV2Entrances);
+      if (state.debugUnlocked) {
+        console.debug("[CaveV2 Save Restore]", {
+          restoredFromSave: restoredCaveV2EntranceSummary.restoredFromSave,
+          entranceCount: restoredCaveV2EntranceSummary.entranceCount,
+          linkedPairCount: restoredCaveV2EntranceSummary.linkedPairCount,
+          matchedSavedLinks: restoredCaveV2EntranceSummary.signature === savedCaveV2EntranceSignature,
+        });
+      }
       const caveV2SavedReturnPos = state.caveV2?.active?.returnSurfacePos
         && Number.isFinite(state.caveV2.active.returnSurfacePos.x)
         && Number.isFinite(state.caveV2.active.returnSurfacePos.y)
@@ -35936,14 +36525,21 @@
 
   function updateAllSlotUI() {
     const inventoryData = Array.isArray(state.inventory) ? state.inventory : null;
+    for (let i = 0; i < hotbarSlots.length; i += 1) {
+      const view = hotbarSlots[i];
+      const slotIndex = view?.inventoryIndex ?? i;
+      const slotData = inventoryData ? (inventoryData[slotIndex] ?? null) : null;
+      const selected = !!(selectedSlot && selectedSlot.scope === "inventory" && selectedSlot.index === slotIndex);
+      const active = slotIndex === activeSlot;
+      applySlotView(view, slotData, selected, active);
+    }
+
     for (let i = 0; i < inventorySlots.length; i += 1) {
-      const slotData = inventoryData ? (inventoryData[i] ?? null) : null;
       const view = inventorySlots[i];
-      const hotbar = hotbarSlots[i];
-      const selected = selectedSlot && selectedSlot.scope === "inventory" && selectedSlot.index === i;
-      const active = i === activeSlot;
+      const slotIndex = view?.inventoryIndex ?? getBackpackInventoryIndex(i);
+      const slotData = inventoryData ? (inventoryData[slotIndex] ?? null) : null;
+      const selected = !!(selectedSlot && selectedSlot.scope === "inventory" && selectedSlot.index === slotIndex);
       applySlotView(view, slotData, selected, false);
-      if (hotbar) applySlotView(hotbar, slotData, selected, active);
     }
 
     const chestStorage = Array.isArray(state.activeChest?.storage) ? state.activeChest.storage : null;
@@ -35978,6 +36574,7 @@
       renderObjectiveGuide();
     }
 
+    validateInventoryUiMapping();
     scheduleStoragePanelLayout();
   }
 
@@ -37268,10 +37865,18 @@
       if (!sourceList || !sourceList[index]) return;
 
       if (!selectedSlot && chestStorage && sourceList[index]?.id) {
-        const quickMoved = scope === "inventory"
+        const movingItemId = sourceList[index]?.id ?? null;
+        const quickMoveTarget = scope === "inventory"
           ? moveSlotToFirstAvailable(state.inventory, index, chestStorage)
           : moveSlotToFirstAvailable(chestStorage, index, state.inventory);
-        if (quickMoved) {
+        if (quickMoveTarget >= 0) {
+          logInventoryMoveDebug(
+            scope,
+            index,
+            scope === "inventory" ? "chest" : "inventory",
+            quickMoveTarget,
+            movingItemId,
+          );
           markDirty();
           sendChestUpdate(state.activeChest);
           updateAllSlotUI();
@@ -37289,6 +37894,13 @@
         const fromList = selectedSlot.scope === "inventory" ? state.inventory : state.activeChest?.storage;
         const toList = scope === "inventory" ? state.inventory : state.activeChest?.storage;
         if (fromList && toList) {
+          logInventoryMoveDebug(
+            selectedSlot.scope,
+            selectedSlot.index,
+            scope,
+            index,
+            fromList?.[selectedSlot.index]?.id ?? null,
+          );
           moveSlotBetween(fromList, selectedSlot.index, toList, index);
           markDirty();
           if (state.activeChest) {
@@ -37322,10 +37934,12 @@
         handleSlotClick("inventory", i);
       });
       hotbarEl.appendChild(el);
-      hotbarSlots.push({ el, item, count });
+      hotbarSlots.push({ el, item, count, inventoryIndex: i });
     }
 
-    for (let i = 0; i < INVENTORY_SIZE; i += 1) {
+    const backpackSize = getBackpackSlotCount();
+    for (let i = 0; i < backpackSize; i += 1) {
+      const inventoryIndex = getBackpackInventoryIndex(i);
       const el = document.createElement("div");
       el.className = "slot";
       const item = document.createElement("div");
@@ -37337,10 +37951,10 @@
       el.addEventListener("pointerdown", (event) => {
         event.preventDefault();
         ensureAudioContext();
-        handleSlotClick("inventory", i);
+        handleSlotClick("inventory", inventoryIndex);
       });
       inventorySlotsEl.appendChild(el);
-      inventorySlots.push({ el, item, count });
+      inventorySlots.push({ el, item, count, inventoryIndex });
     }
 
     for (let i = 0; i < CHEST_SIZE; i += 1) {
@@ -37360,6 +37974,8 @@
       chestSlotsEl.appendChild(el);
       chestSlots.push({ el, item, count });
     }
+
+    validateInventoryUiMapping();
   }
 
   function buildMenuOpen() {
@@ -38068,23 +38684,81 @@
     return BUILD_RECIPES.filter((recipe) => getBuildRecipeCategory(recipe.id) === categoryId);
   }
 
-  function setBuildCategoryHint(categoryId) {
+  function getBuildCategoryRecipeCount(categoryId) {
+    return getBuildRecipesForCategory(categoryId).length;
+  }
+
+  function updateBuildCategoryTiles() {
+    for (const tab of buildCategoryTabs) {
+      const categoryId = tab.dataset.category;
+      const active = buildCategoryView === "detail" && categoryId === buildCategory;
+      tab.classList.toggle("active", active);
+      tab.setAttribute("aria-selected", active ? "true" : "false");
+      let countEl = tab.querySelector(".build-category-count");
+      if (!countEl) {
+        countEl = document.createElement("span");
+        countEl.className = "build-category-count";
+        tab.appendChild(countEl);
+      }
+      const count = getBuildCategoryRecipeCount(categoryId);
+      countEl.textContent = `${count} ${count === 1 ? "item" : "items"}`;
+    }
+  }
+
+  function syncBuildCategoryHeader() {
+    if (!buildMenu) return;
+    const detailMode = buildCategoryView === "detail";
+    buildMenu.classList.toggle("build-menu-detail-view", detailMode);
+    if (buildCategoryHeader) {
+      buildCategoryHeader.classList.toggle("hidden", !detailMode);
+    }
+    if (!detailMode) return;
+    const def = getBuildCategoryDefinition(buildCategory);
+    if (buildCategoryTitle) buildCategoryTitle.textContent = def.label;
+    if (buildCategoryMeta) buildCategoryMeta.textContent = def.description;
+    if (buildCategoryHeaderIcon) {
+      applyItemVisual(buildCategoryHeaderIcon, def.icon || def.id, true);
+    }
+  }
+
+  function setBuildCategoryHint(categoryId = null) {
     if (!buildCategoryHint) return;
+    if (!categoryId) {
+      const totalCategories = BUILD_CATEGORY_DEFS.length;
+      const totalRecipes = BUILD_CATEGORY_DEFS.reduce((sum, entry) => sum + getBuildCategoryRecipeCount(entry.id), 0);
+      buildCategoryHint.textContent = `Choose a crafting folder. ${totalCategories} folders • ${totalRecipes} recipes.`;
+      return;
+    }
     const def = getBuildCategoryDefinition(categoryId);
-    buildCategoryHint.textContent = def?.description || "";
+    const recipeCount = getBuildCategoryRecipeCount(def.id);
+    if (buildCategoryView === "detail" && categoryId === buildCategory) {
+      buildCategoryHint.textContent = `${recipeCount} ${recipeCount === 1 ? "recipe" : "recipes"} in ${def.label.toLowerCase()}.`;
+      return;
+    }
+    buildCategoryHint.textContent = `${def.description} ${recipeCount} ${recipeCount === 1 ? "recipe" : "recipes"}.`;
   }
 
   function setBuildCategory(categoryId, shouldRender = true) {
     const def = getBuildCategoryDefinition(categoryId);
     buildCategory = def.id;
     buildRecipeDetailsExpanded = false;
-    for (const tab of buildCategoryTabs) {
-      const active = tab.dataset.category === buildCategory;
-      tab.classList.toggle("active", active);
-      tab.setAttribute("aria-selected", active ? "true" : "false");
-    }
-    setBuildCategoryHint(buildCategory);
+    updateBuildCategoryTiles();
+    syncBuildCategoryHeader();
+    setBuildCategoryHint(buildCategoryView === "detail" ? buildCategory : null);
     if (shouldRender) renderBuildMenu();
+  }
+
+  function showBuildCategoryOverview(shouldRender = true) {
+    buildCategoryView = "overview";
+    updateBuildCategoryTiles();
+    syncBuildCategoryHeader();
+    setBuildCategoryHint(null);
+    if (shouldRender) renderBuildMenu();
+  }
+
+  function openBuildCategory(categoryId, shouldRender = true) {
+    buildCategoryView = "detail";
+    setBuildCategory(categoryId, shouldRender);
   }
 
   function isUpgradeRecipe(recipe) {
@@ -38212,6 +38886,31 @@
   function renderBuildMenu() {
     renderBuildRobotControls();
     buildList.innerHTML = "";
+    updateBuildCategoryTiles();
+    syncBuildCategoryHeader();
+    buildList.classList.remove("build-menu-overview", "build-recipe-grid");
+    if (buildCategoryView !== "detail") {
+      setBuildCategoryHint(null);
+      buildList.classList.add("build-menu-overview");
+      const overview = document.createElement("div");
+      overview.className = "build-overview-card";
+      const eyebrow = document.createElement("div");
+      eyebrow.className = "build-overview-eyebrow";
+      eyebrow.textContent = "Crafting Folders";
+      const title = document.createElement("div");
+      title.className = "build-overview-title";
+      title.textContent = "Choose a category to open its recipes.";
+      const desc = document.createElement("div");
+      desc.className = "build-overview-desc";
+      desc.textContent = "This keeps travel, homes, stations, survival gear, and upgrades in cleaner visual folders instead of one long stack.";
+      overview.appendChild(eyebrow);
+      overview.appendChild(title);
+      overview.appendChild(desc);
+      buildList.appendChild(overview);
+      return;
+    }
+    buildList.classList.add("build-recipe-grid");
+    setBuildCategoryHint(buildCategory);
     const recipes = getBuildRecipesForCategory(buildCategory);
     if (!recipes.length) {
       const empty = document.createElement("div");
@@ -38223,18 +38922,26 @@
     for (const recipe of recipes) {
       const upgradeRecipe = isUpgradeRecipe(recipe);
       const card = document.createElement("div");
-      card.className = "recipe-card";
+      card.className = "recipe-card build-recipe-card";
+      const header = document.createElement("div");
+      header.className = "recipe-card-header";
       const icon = document.createElement("div");
-      icon.className = "recipe-icon";
+      icon.className = "recipe-icon build-recipe-icon";
       applyItemVisual(icon, recipe.icon || recipe.id, true);
+      const titleWrap = document.createElement("div");
+      titleWrap.className = "recipe-card-title-wrap";
       const title = document.createElement("div");
       title.className = "recipe-title";
       title.textContent = recipe.name;
       const desc = document.createElement("div");
-      desc.className = "recipe-desc";
+      desc.className = "recipe-desc build-recipe-desc";
       desc.textContent = compactUiSentence(recipe.description || "", 44);
+      titleWrap.appendChild(title);
+      if (desc.textContent) titleWrap.appendChild(desc);
+      header.appendChild(icon);
+      header.appendChild(titleWrap);
       const cost = document.createElement("div");
-      cost.className = "recipe-cost";
+      cost.className = "recipe-cost build-recipe-cost";
       if (recipe.cost && isInfiniteResourcesEnabled()) {
         const free = document.createElement("span");
         free.className = "recipe-flow-arrow";
@@ -38287,9 +38994,7 @@
       }
       button.addEventListener("click", () => craftRecipe(recipe));
 
-      card.appendChild(icon);
-      card.appendChild(title);
-      if (desc.textContent) card.appendChild(desc);
+      card.appendChild(header);
       if (recipe.cost || Object.keys(getRecipeOutput(recipe)).length > 0) card.appendChild(cost);
       if (disabled && lockReason) {
         const lock = document.createElement("div");
@@ -39092,7 +39797,7 @@
         saveGame();
         setPrompt(`World reset (${seed})`, 1.4);
         if (net.isHost && net.connections.size > 0) {
-          broadcastNet(buildSnapshot());
+          queueHostSnapshotBroadcast("resetWorld", { urgent: true });
         }
       },
     });
@@ -39232,7 +39937,7 @@
     setPrompt("Debug cave spawned", 1.2);
     markDirty();
     if (net.isHost && net.connections.size > 0) {
-      broadcastNet(buildSnapshot());
+      queueHostSnapshotBroadcast("debugCaveSpawn", { urgent: true });
     }
   }
 
@@ -39281,7 +39986,7 @@
       setPrompt("Linked cave A set. Move island, place cave B.", 1.8);
       markDirty();
       if (net.isHost && net.connections.size > 0) {
-        broadcastNet(buildSnapshot());
+        queueHostSnapshotBroadcast("debugLinkedCaveStepA", { urgent: true });
       }
       return;
     }
@@ -39332,7 +40037,7 @@
     setPrompt("Linked cave pair connected (A exits at B)", 1.5);
     markDirty();
     if (net.isHost && net.connections.size > 0) {
-      broadcastNet(buildSnapshot());
+      queueHostSnapshotBroadcast("debugLinkedCaveStepB", { urgent: true });
     }
   }
 
@@ -39359,7 +40064,7 @@
     setPrompt(`Village spawned (${result.houses} houses, ${villagerCount} villagers)`, 1.4);
     markDirty();
     if (net.isHost && net.connections.size > 0) {
-      broadcastNet(buildSnapshot());
+      queueHostSnapshotBroadcast("debugVillageSpawn", { urgent: true });
     }
   }
 
@@ -39376,7 +40081,7 @@
     setPrompt("Time set to day", 1);
     markDirty();
     if (net.isHost && net.connections.size > 0) {
-      broadcastNet(buildSnapshot());
+      queueHostSnapshotBroadcast("forceDay", { urgent: true });
     }
   }
 
@@ -39393,7 +40098,7 @@
     setPrompt("Time set to night", 1);
     markDirty();
     if (net.isHost && net.connections.size > 0) {
-      broadcastNet(buildSnapshot());
+      queueHostSnapshotBroadcast("forceNight", { urgent: true });
     }
   }
 
@@ -39607,7 +40312,7 @@
         saveGame();
         setPrompt(`Loaded seed: ${nextSeed}`, 1.3);
         if (net.isHost && net.connections.size > 0) {
-          broadcastNet(buildSnapshot());
+          queueHostSnapshotBroadcast("switchSeed", { urgent: true });
         }
       },
     });
@@ -39648,7 +40353,7 @@
         saveGame();
         setPrompt(`Restarted seed: ${currentSeed}`, 1.3);
         if (net.isHost && net.connections.size > 0) {
-          broadcastNet(buildSnapshot());
+          queueHostSnapshotBroadcast("restartSeed", { urgent: true });
         }
       },
     });
@@ -44282,7 +44987,7 @@
         debugPlacement: "repairedBoat",
       };
     }
-    const slot = state.inventory[activeSlot];
+    const slot = Array.isArray(state.inventory) ? state.inventory[activeSlot] : null;
     if (!slot || !slot.id) return null;
     const itemDef = ITEMS[slot.id];
     if (!itemDef || !itemDef.placeable) return null;
@@ -44632,7 +45337,7 @@
       markDirty();
       setPrompt("Repaired boat placed", 1.1);
       if (net.isHost && net.connections.size > 0) {
-        broadcastNet(buildSnapshot());
+        queueHostSnapshotBroadcast("localDebugBoatPlace", { urgent: true });
         const motion = buildMotionUpdate();
         if (motion) broadcastNet(motion);
       }
@@ -44793,7 +45498,7 @@
   }
 
   function useActiveConsumable() {
-    const slot = state.inventory[activeSlot];
+    const slot = Array.isArray(state.inventory) ? state.inventory[activeSlot] : null;
     if (!slot?.id) return false;
     const consumedId = slot.id;
     if (consumedId !== "medicine" && consumedId !== "cooked_meat") return false;
@@ -45419,10 +46124,12 @@
     if (!state.inCave && !state.player.inHut && state.nearBench && !state.activeShipRepair && !localShipSeat) {
       if (!wasNearBench) {
         buildMenu.classList.remove("hidden");
+        showBuildCategoryOverview(false);
         renderBuildMenu();
       }
     } else if (wasNearBench) {
       buildMenu.classList.add("hidden");
+      showBuildCategoryOverview(false);
     }
 
     wasNearBench = state.nearBench;
@@ -47481,6 +48188,284 @@
     ctx.fill();
   }
 
+  function getStructureVisualSeed(source, salt = 0) {
+    const tx = Number.isFinite(source?.tx) ? Math.floor(source.tx) : 0;
+    const ty = Number.isFinite(source?.ty) ? Math.floor(source.ty) : 0;
+    const id = Number.isFinite(source?.id) ? Math.floor(source.id) : 0;
+    return (((tx * 73856093) ^ (ty * 19349663) ^ (id * 83492791) ^ salt) >>> 0);
+  }
+
+  function getCampfireFlickerState(source = null) {
+    const seed = getStructureVisualSeed(source, 0x7f4a);
+    const now = (typeof performance !== "undefined" && typeof performance.now === "function")
+      ? performance.now()
+      : Date.now();
+    const t = now * 0.008 + ((seed & 255) * 0.021);
+    const pulse = clamp(
+      0.74
+        + Math.sin(t * 1.37 + 0.8) * 0.16
+        + Math.sin(t * 2.41 + 0.23) * 0.08,
+      0.42,
+      1.08
+    );
+    return {
+      pulse,
+      sway: Math.sin(t * 1.91 + 0.6) * 0.9 + Math.sin(t * 0.86 + 1.7) * 0.32,
+      lift: Math.sin(t * 1.54 + 0.28) * 0.85,
+      ember: clamp(0.62 + (pulse - 0.7) * 0.5, 0.5, 0.9),
+    };
+  }
+
+  function drawBedStructureVisual(baseX, baseY, baseSize) {
+    const cx = baseX + baseSize * 0.5;
+    const shadowY = baseY + baseSize * 0.86;
+    const shadowRx = Math.max(6, baseSize * 0.31);
+    const shadowRy = Math.max(2.4, baseSize * 0.09);
+    ctx.fillStyle = "rgba(0,0,0,0.18)";
+    ctx.beginPath();
+    ctx.ellipse(cx, shadowY, shadowRx, shadowRy, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    const bedX = baseX + baseSize * 0.1;
+    const bedY = baseY + baseSize * 0.18;
+    const bedW = baseSize * 0.8;
+    const bedH = baseSize * 0.62;
+    const legW = Math.max(2, bedW * 0.12);
+    const legH = Math.max(2, bedH * 0.16);
+
+    ctx.fillStyle = "#8f6a43";
+    ctx.fillRect(bedX + bedW * 0.08, bedY + bedH - 1, legW, legH);
+    ctx.fillRect(bedX + bedW - legW - bedW * 0.08, bedY + bedH - 1, legW, legH);
+
+    ctx.fillStyle = "#cfbea6";
+    drawRoundedRect(ctx, bedX, bedY, bedW, bedH, Math.max(2, baseSize * 0.06));
+    ctx.fill();
+    const blanket = ctx.createLinearGradient(0, bedY, 0, bedY + bedH * 0.52);
+    blanket.addColorStop(0, "#95b3d0");
+    blanket.addColorStop(1, "#7291b0");
+    ctx.fillStyle = blanket;
+    drawRoundedRect(ctx, bedX, bedY, bedW, bedH * 0.46, Math.max(2, baseSize * 0.06));
+    ctx.fill();
+    ctx.fillStyle = "rgba(255, 255, 255, 0.34)";
+    drawRoundedRect(ctx, bedX + bedW * 0.08, bedY + bedH * 0.04, bedW * 0.76, Math.max(2, bedH * 0.12), Math.max(1, baseSize * 0.03));
+    ctx.fill();
+    ctx.fillStyle = "#f2eadc";
+    drawRoundedRect(ctx, bedX + bedW * 0.08, bedY + bedH * 0.52, bedW * 0.34, bedH * 0.22, Math.max(1.5, baseSize * 0.04));
+    ctx.fill();
+    ctx.strokeStyle = "rgba(35, 25, 18, 0.28)";
+    ctx.lineWidth = 1;
+    ctx.strokeRect(bedX + 0.5, bedY + 0.5, bedW - 1, bedH - 1);
+  }
+
+  function drawChestStructureVisual(baseX, baseY, baseSize, source = null) {
+    const chestSeed = getStructureVisualSeed(source, 0x5ced);
+    const chestBody = (chestSeed & 1) ? "#8b5f35" : "#7f5530";
+    const chestLid = (chestSeed & 2) ? "#6f4526" : "#73492a";
+    const metal = (chestSeed & 4) ? "#c8b37a" : "#d9c289";
+    const band = "rgba(66, 52, 39, 0.9)";
+    const cx = baseX + baseSize * 0.5;
+    const bodyX = baseX + baseSize * 0.1;
+    const bodyY = baseY + baseSize * 0.34;
+    const bodyW = baseSize * 0.8;
+    const bodyH = Math.max(8, baseSize * 0.48);
+    const lidH = Math.max(6, baseSize * 0.28);
+
+    ctx.fillStyle = "rgba(0,0,0,0.22)";
+    ctx.beginPath();
+    ctx.ellipse(cx, baseY + baseSize * 0.9, Math.max(8, baseSize * 0.36), Math.max(2.6, baseSize * 0.1), 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = tintColor(chestBody, -0.28);
+    ctx.fillRect(bodyX + bodyW * 0.06, bodyY + bodyH - 1, Math.max(2, bodyW * 0.1), Math.max(2, bodyH * 0.12));
+    ctx.fillRect(bodyX + bodyW - Math.max(2, bodyW * 0.16), bodyY + bodyH - 1, Math.max(2, bodyW * 0.1), Math.max(2, bodyH * 0.12));
+
+    ctx.fillStyle = chestBody;
+    ctx.fillRect(bodyX, bodyY, bodyW, bodyH);
+    ctx.fillStyle = tintColor(chestBody, 0.16);
+    ctx.fillRect(bodyX + 1, bodyY + 1, bodyW - 2, Math.max(2, bodyH * 0.14));
+    ctx.fillStyle = tintColor(chestBody, -0.2);
+    ctx.fillRect(bodyX, bodyY + bodyH - Math.max(2, bodyH * 0.14), bodyW, Math.max(2, bodyH * 0.14));
+
+    ctx.strokeStyle = "rgba(52, 38, 28, 0.32)";
+    ctx.lineWidth = 1;
+    const slatXs = [bodyX + bodyW * 0.18, bodyX + bodyW * 0.5, bodyX + bodyW * 0.82];
+    for (const sx of slatXs) {
+      ctx.beginPath();
+      ctx.moveTo(sx + 0.5, bodyY + 1);
+      ctx.lineTo(sx + 0.5, bodyY + bodyH - 2);
+      ctx.stroke();
+    }
+
+    ctx.fillStyle = tintColor(chestLid, -0.06);
+    ctx.fillRect(bodyX, bodyY - 1, bodyW, Math.max(3, bodyH * 0.18));
+    const lidGrad = ctx.createLinearGradient(0, bodyY - lidH, 0, bodyY + 2);
+    lidGrad.addColorStop(0, tintColor(chestLid, 0.12));
+    lidGrad.addColorStop(1, tintColor(chestLid, -0.16));
+    ctx.fillStyle = lidGrad;
+    ctx.beginPath();
+    ctx.moveTo(bodyX, bodyY + 1);
+    ctx.lineTo(bodyX, bodyY - 1);
+    ctx.quadraticCurveTo(cx, bodyY - lidH, bodyX + bodyW, bodyY - 1);
+    ctx.lineTo(bodyX + bodyW, bodyY + 1);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.strokeStyle = "rgba(255, 229, 179, 0.14)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(bodyX + 1, bodyY - 0.2);
+    ctx.quadraticCurveTo(cx, bodyY - lidH + 1, bodyX + bodyW - 1, bodyY - 0.2);
+    ctx.stroke();
+
+    ctx.fillStyle = band;
+    ctx.fillRect(bodyX + 2, bodyY - 1, Math.max(2, bodyW * 0.08), bodyH + 2);
+    ctx.fillRect(bodyX + bodyW - Math.max(4, bodyW * 0.12), bodyY - 1, Math.max(2, bodyW * 0.08), bodyH + 2);
+    ctx.fillRect(bodyX, bodyY + Math.max(2, bodyH * 0.12), bodyW, Math.max(2, bodyH * 0.14));
+
+    const lockW = Math.max(5, bodyW * 0.18);
+    const lockH = Math.max(5, bodyH * 0.28);
+    const lockX = Math.floor(cx - lockW / 2);
+    const lockY = bodyY + bodyH * 0.18;
+    ctx.fillStyle = metal;
+    drawRoundedRect(ctx, lockX, lockY, lockW, lockH, Math.max(1.1, baseSize * 0.03));
+    ctx.fill();
+    ctx.fillStyle = "rgba(72, 56, 40, 0.9)";
+    ctx.fillRect(lockX + lockW * 0.24, lockY + lockH * 0.32, lockW * 0.52, Math.max(2, lockH * 0.28));
+    ctx.fillStyle = "rgba(255,255,255,0.25)";
+    ctx.fillRect(lockX + 1, lockY + 1, lockW - 2, 1);
+    ctx.fillStyle = "rgba(38, 29, 23, 0.95)";
+    ctx.beginPath();
+    ctx.arc(lockX + lockW / 2, lockY + lockH * 0.45, Math.max(0.8, baseSize * 0.03), 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillRect(Math.floor(lockX + lockW / 2), lockY + lockH * 0.45, 1, Math.max(1.5, lockH * 0.24));
+
+    ctx.strokeStyle = "rgba(28, 20, 14, 0.36)";
+    ctx.strokeRect(bodyX + 0.5, bodyY + 0.5, bodyW - 1, bodyH - 1);
+  }
+
+  function drawCampfireStructureVisual(baseX, baseY, baseSize, source = null) {
+    const flicker = getCampfireFlickerState(source);
+    const cx = baseX + baseSize * 0.5;
+    const cy = baseY + baseSize * 0.53;
+    const emberY = baseY + baseSize * 0.72;
+
+    ctx.fillStyle = "rgba(0,0,0,0.24)";
+    ctx.beginPath();
+    ctx.ellipse(cx, baseY + baseSize * 0.9, Math.max(8, baseSize * 0.34), Math.max(2.6, baseSize * 0.11), 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    const glow = ctx.createRadialGradient(cx, cy + 1, baseSize * 0.06, cx, cy + 1, baseSize * 0.42);
+    glow.addColorStop(0, `rgba(255, 204, 124, ${0.18 + flicker.pulse * 0.12})`);
+    glow.addColorStop(0.55, `rgba(255, 142, 76, ${0.1 + flicker.pulse * 0.06})`);
+    glow.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(cx, cy + 1, baseSize * 0.42, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = "#4b3324";
+    ctx.beginPath();
+    ctx.ellipse(cx, emberY, baseSize * 0.24, baseSize * 0.12, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = `rgba(255, 147, 68, ${0.22 + flicker.ember * 0.18})`;
+    ctx.beginPath();
+    ctx.ellipse(cx, emberY - 1, baseSize * 0.17, baseSize * 0.07, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.strokeStyle = "#8a5a34";
+    ctx.lineWidth = Math.max(2, baseSize * 0.08);
+    ctx.beginPath();
+    ctx.moveTo(cx - baseSize * 0.22, emberY + baseSize * 0.02);
+    ctx.lineTo(cx + baseSize * 0.14, emberY - baseSize * 0.18);
+    ctx.moveTo(cx + baseSize * 0.2, emberY + baseSize * 0.02);
+    ctx.lineTo(cx - baseSize * 0.12, emberY - baseSize * 0.2);
+    ctx.stroke();
+    ctx.strokeStyle = "rgba(67, 42, 22, 0.45)";
+    ctx.lineWidth = Math.max(1, baseSize * 0.03);
+    ctx.beginPath();
+    ctx.moveTo(cx - baseSize * 0.18, emberY - baseSize * 0.05);
+    ctx.lineTo(cx + baseSize * 0.1, emberY - baseSize * 0.2);
+    ctx.moveTo(cx + baseSize * 0.16, emberY - baseSize * 0.01);
+    ctx.lineTo(cx - baseSize * 0.09, emberY - baseSize * 0.18);
+    ctx.stroke();
+
+    const outerHeight = baseSize * (0.34 + flicker.pulse * 0.08);
+    const outerWidth = baseSize * 0.18;
+    const flameBaseY = emberY - baseSize * 0.03;
+    const flameTopX = cx + flicker.sway;
+    const flameTopY = cy - outerHeight + flicker.lift;
+    const outerGrad = ctx.createLinearGradient(0, flameTopY, 0, flameBaseY + baseSize * 0.08);
+    outerGrad.addColorStop(0, "#ffe08a");
+    outerGrad.addColorStop(0.56, "#f29a45");
+    outerGrad.addColorStop(1, "#bf5226");
+    ctx.fillStyle = outerGrad;
+    ctx.beginPath();
+    ctx.moveTo(cx, flameBaseY);
+    ctx.bezierCurveTo(
+      cx - outerWidth * 1.15,
+      flameBaseY - baseSize * 0.12,
+      flameTopX - outerWidth * 0.7,
+      flameTopY + baseSize * 0.09,
+      flameTopX,
+      flameTopY
+    );
+    ctx.bezierCurveTo(
+      flameTopX + outerWidth * 0.88,
+      flameTopY + baseSize * 0.08,
+      cx + outerWidth * 1.18,
+      flameBaseY - baseSize * 0.1,
+      cx,
+      flameBaseY
+    );
+    ctx.closePath();
+    ctx.fill();
+
+    const innerHeight = outerHeight * 0.58;
+    const innerWidth = outerWidth * 0.55;
+    const innerTopX = cx - flicker.sway * 0.22;
+    const innerTopY = flameBaseY - innerHeight + flicker.lift * 0.35;
+    const innerGrad = ctx.createLinearGradient(0, innerTopY, 0, flameBaseY + baseSize * 0.02);
+    innerGrad.addColorStop(0, "rgba(255, 249, 205, 0.95)");
+    innerGrad.addColorStop(1, "rgba(255, 198, 103, 0.65)");
+    ctx.fillStyle = innerGrad;
+    ctx.beginPath();
+    ctx.moveTo(cx, flameBaseY - baseSize * 0.01);
+    ctx.bezierCurveTo(
+      cx - innerWidth,
+      flameBaseY - baseSize * 0.07,
+      innerTopX - innerWidth * 0.45,
+      innerTopY + baseSize * 0.06,
+      innerTopX,
+      innerTopY
+    );
+    ctx.bezierCurveTo(
+      innerTopX + innerWidth * 0.5,
+      innerTopY + baseSize * 0.05,
+      cx + innerWidth,
+      flameBaseY - baseSize * 0.05,
+      cx,
+      flameBaseY - baseSize * 0.01
+    );
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  function drawConsistentFurnitureVisual(type, baseX, baseY, baseSize, source = null) {
+    if (type === "bed") {
+      drawBedStructureVisual(baseX, baseY, baseSize);
+      return true;
+    }
+    if (type === "campfire") {
+      drawCampfireStructureVisual(baseX, baseY, baseSize, source);
+      return true;
+    }
+    if (type === "chest") {
+      drawChestStructureVisual(baseX, baseY, baseSize, source);
+      return true;
+    }
+    return false;
+  }
+
   function drawStructure(structure, camera) {
     if (structure.removed) return;
     const def = STRUCTURE_DEFS[structure.type];
@@ -47525,7 +48510,8 @@
     const baseWidth = structureWidthPx - inset * 2;
     const baseHeight = structureHeightPx - inset * 2;
 
-    if (def.blocking) {
+    const usesSharedFurnitureVisual = structure.type === "bed" || structure.type === "campfire" || structure.type === "chest";
+    if (def.blocking && !usesSharedFurnitureVisual) {
       ctx.fillStyle = "rgba(0,0,0,0.25)";
       ctx.beginPath();
       ctx.ellipse(
@@ -48155,70 +49141,11 @@
         break;
       }
       case "bed": {
-        const bedX = baseX + 3;
-        const bedY = baseY + 6;
-        const bedW = baseSize - 6;
-        const bedH = baseSize - 8;
-        ctx.fillStyle = "#8f6a43";
-        ctx.fillRect(bedX + 1, bedY + bedH - 1, 2, 2);
-        ctx.fillRect(bedX + bedW - 3, bedY + bedH - 1, 2, 2);
-        ctx.fillStyle = "#d8c7af";
-        drawRoundedRect(ctx, bedX, bedY, bedW, bedH, 2);
-        ctx.fill();
-        const blanket = ctx.createLinearGradient(0, bedY, 0, bedY + 9);
-        blanket.addColorStop(0, "#9fb8d6");
-        blanket.addColorStop(1, "#7f9bbc");
-        ctx.fillStyle = blanket;
-        drawRoundedRect(ctx, bedX, bedY, bedW, 8, 2);
-        ctx.fill();
-        ctx.fillStyle = "rgba(255, 255, 255, 0.38)";
-        drawRoundedRect(ctx, bedX + 2, bedY + 1, bedW - 4, 2, 1);
-        ctx.fill();
-        ctx.fillStyle = "#f2eadc";
-        drawRoundedRect(ctx, bedX + 2, bedY + 9, bedW * 0.42, 5, 1.5);
-        ctx.fill();
-        ctx.strokeStyle = "rgba(35, 25, 18, 0.28)";
-        ctx.lineWidth = 1;
-        ctx.strokeRect(bedX + 0.5, bedY + 0.5, bedW - 1, bedH - 1);
+        drawBedStructureVisual(baseX, baseY, baseSize);
         break;
       }
       case "campfire": {
-        const cx = baseX + baseSize / 2;
-        const cy = baseY + baseSize / 2;
-        ctx.fillStyle = "rgba(0,0,0,0.28)";
-        ctx.beginPath();
-        ctx.ellipse(cx, baseY + baseSize - 6, 11, 5, 0, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.strokeStyle = "#70482f";
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(cx - 7, baseY + baseSize - 9);
-        ctx.lineTo(cx + 6, baseY + baseSize - 3);
-        ctx.moveTo(cx - 6, baseY + baseSize - 3);
-        ctx.lineTo(cx + 7, baseY + baseSize - 9);
-        ctx.stroke();
-        ctx.fillStyle = "#5a3a25";
-        ctx.beginPath();
-        ctx.arc(cx, baseY + baseSize - 7, 6, 0, Math.PI * 2);
-        ctx.fill();
-        const flameGrad = ctx.createLinearGradient(0, baseY + 5, 0, baseY + baseSize - 7);
-        flameGrad.addColorStop(0, "#ffd66f");
-        flameGrad.addColorStop(0.62, "#f1893f");
-        flameGrad.addColorStop(1, "#c75327");
-        ctx.fillStyle = flameGrad;
-        ctx.beginPath();
-        ctx.moveTo(cx, baseY + 6);
-        ctx.lineTo(cx - 6, baseY + baseSize - 8);
-        ctx.lineTo(cx + 6, baseY + baseSize - 8);
-        ctx.closePath();
-        ctx.fill();
-        ctx.fillStyle = "rgba(255, 250, 205, 0.72)";
-        ctx.beginPath();
-        ctx.moveTo(cx, baseY + 9);
-        ctx.lineTo(cx - 3, baseY + baseSize - 9);
-        ctx.lineTo(cx + 3, baseY + baseSize - 9);
-        ctx.closePath();
-        ctx.fill();
+        drawCampfireStructureVisual(baseX, baseY, baseSize, structure);
         break;
       }
       case "beacon": {
@@ -48358,102 +49285,7 @@
         break;
       }
       case "chest": {
-        const chestSeed = (((structure.tx * 73856093) ^ (structure.ty * 19349663) ^ 0x5ced) >>> 0);
-        const chestBody = (chestSeed & 1) ? "#8b5f35" : "#7f5530";
-        const chestLid = (chestSeed & 2) ? "#6f4526" : "#73492a";
-        const metal = (chestSeed & 4) ? "#c8b37a" : "#d9c289";
-        const band = "rgba(66, 52, 39, 0.9)";
-        const shadowW = Math.max(8, baseSize * 0.36);
-        const bodyX = baseX + 3;
-        const bodyY = baseY + 10;
-        const bodyW = baseSize - 6;
-        const bodyH = Math.max(8, baseSize - 13);
-        const lidH = 8;
-
-        // Ground shadow so the chest sits on the terrain
-        ctx.fillStyle = "rgba(0,0,0,0.22)";
-        ctx.beginPath();
-        ctx.ellipse(baseX + baseSize / 2, baseY + baseSize - 3, shadowW, 3.2, 0, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Feet / base supports
-        ctx.fillStyle = tintColor(chestBody, -0.28);
-        ctx.fillRect(bodyX + 1, bodyY + bodyH - 1, 3, 2);
-        ctx.fillRect(bodyX + bodyW - 4, bodyY + bodyH - 1, 3, 2);
-
-        // Chest body
-        ctx.fillStyle = chestBody;
-        ctx.fillRect(bodyX, bodyY, bodyW, bodyH);
-        ctx.fillStyle = tintColor(chestBody, 0.16);
-        ctx.fillRect(bodyX + 1, bodyY + 1, bodyW - 2, 2);
-        ctx.fillStyle = tintColor(chestBody, -0.2);
-        ctx.fillRect(bodyX, bodyY + bodyH - 2, bodyW, 2);
-
-        // Vertical slat detail
-        ctx.strokeStyle = "rgba(52, 38, 28, 0.32)";
-        ctx.lineWidth = 1;
-        const slatXs = [bodyX + 4, bodyX + Math.floor(bodyW * 0.5), bodyX + bodyW - 5];
-        for (const sx of slatXs) {
-          ctx.beginPath();
-          ctx.moveTo(sx + 0.5, bodyY + 1);
-          ctx.lineTo(sx + 0.5, bodyY + bodyH - 2);
-          ctx.stroke();
-        }
-
-        // Lid base + arched top so it reads as a chest, not a crate
-        ctx.fillStyle = tintColor(chestLid, -0.06);
-        ctx.fillRect(bodyX, bodyY - 1, bodyW, 4);
-        const lidGrad = ctx.createLinearGradient(0, bodyY - lidH, 0, bodyY + 2);
-        lidGrad.addColorStop(0, tintColor(chestLid, 0.12));
-        lidGrad.addColorStop(1, tintColor(chestLid, -0.16));
-        ctx.fillStyle = lidGrad;
-        ctx.beginPath();
-        ctx.moveTo(bodyX, bodyY + 1);
-        ctx.lineTo(bodyX, bodyY - 1);
-        ctx.quadraticCurveTo(baseX + baseSize / 2, bodyY - lidH, bodyX + bodyW, bodyY - 1);
-        ctx.lineTo(bodyX + bodyW, bodyY + 1);
-        ctx.closePath();
-        ctx.fill();
-
-        // Lid edge highlight
-        ctx.strokeStyle = "rgba(255, 229, 179, 0.14)";
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(bodyX + 1, bodyY - 0.2);
-        ctx.quadraticCurveTo(baseX + baseSize / 2, bodyY - lidH + 1, bodyX + bodyW - 1, bodyY - 0.2);
-        ctx.stroke();
-
-        // Iron bands
-        ctx.fillStyle = band;
-        ctx.fillRect(bodyX + 2, bodyY - 1, 2, bodyH + 2);
-        ctx.fillRect(bodyX + bodyW - 4, bodyY - 1, 2, bodyH + 2);
-        ctx.fillRect(bodyX, bodyY + 2, bodyW, 2);
-
-        // Metal trim + lock plate
-        ctx.fillStyle = metal;
-        ctx.fillRect(bodyX + 1, bodyY + 1, bodyW - 2, 1);
-        const lockW = 6;
-        const lockH = 6;
-        const lockX = Math.floor(baseX + baseSize / 2 - lockW / 2);
-        const lockY = bodyY + 3;
-        ctx.fillStyle = metal;
-        drawRoundedRect(ctx, lockX, lockY, lockW, lockH, 1.4);
-        ctx.fill();
-        ctx.fillStyle = "rgba(72, 56, 40, 0.9)";
-        ctx.fillRect(lockX + 2, lockY + 2, lockW - 4, 3);
-        ctx.fillStyle = "rgba(255,255,255,0.25)";
-        ctx.fillRect(lockX + 1, lockY + 1, lockW - 2, 1);
-
-        // Keyhole / latch cue
-        ctx.fillStyle = "rgba(38, 29, 23, 0.95)";
-        ctx.beginPath();
-        ctx.arc(lockX + lockW / 2, lockY + 3, 0.9, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.fillRect(Math.floor(lockX + lockW / 2), lockY + 3, 1, 2);
-
-        // Outline to hold shape at a distance
-        ctx.strokeStyle = "rgba(28, 20, 14, 0.36)";
-        ctx.strokeRect(bodyX + 0.5, bodyY + 0.5, bodyW - 1, bodyH - 1);
+        drawChestStructureVisual(baseX, baseY, baseSize, structure);
         break;
       }
       case "robot": {
@@ -48682,12 +49514,15 @@
       );
       const cx = light.x;
       const cy = light.y;
-      const radius = def.lightRadius;
+      const flicker = structure.type === "campfire" ? getCampfireFlickerState(structure) : null;
+      const radius = structure.type === "campfire"
+        ? def.lightRadius * (0.94 + (flicker?.pulse || 0.7) * 0.08)
+        : def.lightRadius;
       const warmInner = structure.type === "campfire"
-        ? "rgba(255, 178, 98, 0.44)"
+        ? `rgba(255, 178, 98, ${0.34 + (flicker?.pulse || 0.7) * 0.16})`
         : "rgba(255, 232, 188, 0.3)";
       const warmMid = structure.type === "campfire"
-        ? "rgba(255, 122, 64, 0.2)"
+        ? `rgba(255, 122, 64, ${0.15 + (flicker?.pulse || 0.7) * 0.08})`
         : "rgba(216, 188, 140, 0.14)";
       const gradient = ctx.createRadialGradient(cx, cy, radius * 0.1, cx, cy, radius);
       gradient.addColorStop(0, warmInner);
@@ -49055,38 +49890,19 @@
     const x = layout.originX + item.tx * layout.tileSize;
     const y = layout.originY + item.ty * layout.tileSize;
     const size = layout.tileSize;
+    const inset = Math.max(2, Math.floor(size * 0.06));
+    const baseX = x + inset;
+    const baseY = y + inset;
+    const baseSize = size - inset * 2;
     const def = STRUCTURE_DEFS[item.type];
     const color = def?.color || "#999";
+    if (drawConsistentFurnitureVisual(item.type, baseX, baseY, baseSize, item)) {
+      return;
+    }
     ctx.fillStyle = "rgba(0,0,0,0.22)";
     ctx.fillRect(x + 4, y + size - 8, size - 8, 5);
-    if (item.type === "bed") {
-      ctx.fillStyle = "#d2c4ac";
-      ctx.fillRect(x + 6, y + 6, size - 12, size - 10);
-      ctx.fillStyle = "#8ba8c7";
-      ctx.fillRect(x + 6, y + 6, size - 12, 7);
-    } else if (item.type === "chest") {
-      ctx.fillStyle = tintColor(color, 0.06);
-      ctx.fillRect(x + 7, y + 10, size - 14, size - 16);
-      ctx.fillStyle = tintColor(color, -0.18);
-      ctx.fillRect(x + 7, y + 6, size - 14, 8);
-      ctx.fillStyle = "#e2cb85";
-      ctx.fillRect(x + size / 2 - 2, y + size / 2, 4, 5);
-    } else if (item.type === "campfire") {
-      ctx.fillStyle = "#3e2a1d";
-      ctx.beginPath();
-      ctx.ellipse(x + size / 2, y + size / 2 + 4, 10, 5, 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = "#e67a35";
-      ctx.beginPath();
-      ctx.moveTo(x + size / 2, y + 9);
-      ctx.lineTo(x + size / 2 - 6, y + size / 2 + 8);
-      ctx.lineTo(x + size / 2 + 6, y + size / 2 + 8);
-      ctx.closePath();
-      ctx.fill();
-    } else {
-      ctx.fillStyle = color;
-      ctx.fillRect(x + 6, y + 6, size - 12, size - 12);
-    }
+    ctx.fillStyle = color;
+    ctx.fillRect(x + 6, y + 6, size - 12, size - 12);
   }
 
   function renderHouseInterior() {
@@ -49600,7 +50416,7 @@
     markDirty();
     setPrompt("Island shifted", 1.2);
     if (net.isHost && net.connections.size > 0) {
-      broadcastNet(buildSnapshot());
+      queueHostSnapshotBroadcast("continentalShift", { urgent: true });
     }
     return true;
   }
@@ -51961,6 +52777,17 @@
     };
   }
 
+  function buildQaInventorySlotList(slots) {
+    const normalized = sanitizeInventorySlots(slots, INVENTORY_SIZE);
+    return normalized.map((slot, index) => ({
+      index,
+      scope: index < HOTBAR_SIZE ? "hotbar" : "inventory",
+      localIndex: index < HOTBAR_SIZE ? index : index - HOTBAR_SIZE,
+      id: slot.id || null,
+      qty: Math.max(0, Math.floor(Number(slot.qty) || 0)),
+    }));
+  }
+
   function buildQaWorldSummary(world) {
     return {
       seed: String(world?.seed || state.surfaceWorld?.seed || ""),
@@ -52351,7 +53178,7 @@
     getOrCreateCaveV2(world, firstEntrance);
     markDirty();
     if (net.isHost && net.connections.size > 0) {
-      broadcastNet(buildSnapshot());
+      queueHostSnapshotBroadcast("qaLinkedCavePair", { urgent: true });
     }
     return {
       caveId: String(firstEntrance.caveId || ""),
@@ -52361,6 +53188,146 @@
       firstIslandIndex,
       secondIslandIndex,
       caveV2: buildQaCaveV2Summary(),
+    };
+  }
+
+  function findQaStructurePlacement(world, type, anchorTx, anchorTy, maxRadius = 12) {
+    if (!world) return null;
+    for (let radius = 1; radius <= maxRadius; radius += 1) {
+      for (let dy = -radius; dy <= radius; dy += 1) {
+        for (let dx = -radius; dx <= radius; dx += 1) {
+          const tx = anchorTx + dx;
+          const ty = anchorTy + dy;
+          const placement = canUseStructureFootprint(world, type, tx, ty, { allowResourceClear: true });
+          if (!placement?.ok) continue;
+          return {
+            tx,
+            ty,
+            clearResourceTiles: placement.clearResourceTiles || [],
+          };
+        }
+      }
+    }
+    return null;
+  }
+
+  function ensureQaFixtureInteriorItems(house) {
+    const interior = getHouseInterior(house);
+    if (!interior) return false;
+    const desired = [
+      { type: "bed", tx: clamp(Math.floor(interior.width * 0.2), 0, interior.width - 1), ty: clamp(Math.floor(interior.height * 0.24), 0, interior.height - 1) },
+      { type: "chest", tx: clamp(interior.width - 2, 0, interior.width - 1), ty: 1 },
+      { type: "campfire", tx: clamp(Math.floor(interior.width * 0.5), 0, interior.width - 1), ty: clamp(Math.floor(interior.height * 0.5) - 1, 1, interior.height - 1) },
+    ];
+    for (const target of desired) {
+      let entry = Array.isArray(interior.items)
+        ? interior.items.find((item) => item && item.type === target.type)
+        : null;
+      if (!entry) {
+        const freeTile = findVillageInteriorOpenTile(house, interior, [target]);
+        if (!freeTile) continue;
+        entry = addInteriorStructure(house, target.type, freeTile.tx, freeTile.ty);
+      }
+      if (!entry) continue;
+      entry.tx = clamp(target.tx, 0, interior.width - 1);
+      entry.ty = clamp(target.ty, 0, interior.height - 1);
+      if (entry.type === "chest") {
+        entry.storage = sanitizeInventorySlots(entry.storage, CHEST_SIZE);
+        entry.storageRevision = normalizeStorageRevisionValue(entry.storageRevision);
+      }
+    }
+    return true;
+  }
+
+  function ensureQaFurnitureFixtureHouse(world, kind, anchorTx, anchorTy, isVillage = false) {
+    let house = state.structures.find((structure) => (
+      structure
+      && !structure.removed
+      && isHouseType(structure.type)
+      && structure.meta?.qaFurnitureFixtureKind === kind
+    )) || null;
+    if (!house) {
+      const placement = findQaStructurePlacement(world, "small_house", anchorTx, anchorTy, 14);
+      if (!placement) return null;
+      clearResourceTiles(world, placement.clearResourceTiles);
+      if (isVillage) {
+        const rng = makeRng(seedToInt(`${world.seed}:${kind}:fixtures`));
+        house = addVillageHouse(world, placement.tx, placement.ty, "small_house", rng, true, true, true) || null;
+      } else {
+        house = addStructure("small_house", placement.tx, placement.ty, { meta: { qaFurnitureFixtureKind: kind } });
+      }
+    }
+    if (!house) return null;
+    if (!house.meta || typeof house.meta !== "object") house.meta = {};
+    house.meta.qaFurnitureFixtureKind = kind;
+    if (isVillage) house.meta.village = true;
+    ensureHouseMeta(house);
+    ensureQaFixtureInteriorItems(house);
+    return house;
+  }
+
+  function ensureQaSurfaceFurnitureFixture(world, type, kind, anchorTx, anchorTy) {
+    let structure = state.structures.find((entry) => (
+      entry
+      && !entry.removed
+      && entry.type === type
+      && entry.meta?.qaFurnitureFixtureKind === kind
+    )) || null;
+    if (!structure) {
+      const placement = findQaStructurePlacement(world, type, anchorTx, anchorTy, 10);
+      if (!placement) return null;
+      clearResourceTiles(world, placement.clearResourceTiles);
+      structure = addStructure(type, placement.tx, placement.ty, {
+        meta: { qaFurnitureFixtureKind: kind },
+        storage: type === "chest" ? createEmptyInventory(CHEST_SIZE) : null,
+      });
+    }
+    if (!structure) return null;
+    if (!structure.meta || typeof structure.meta !== "object") structure.meta = {};
+    structure.meta.qaFurnitureFixtureKind = kind;
+    if (type === "chest") {
+      structure.storage = sanitizeInventorySlots(structure.storage, CHEST_SIZE);
+      structure.storageRevision = normalizeStorageRevisionValue(structure.storageRevision);
+    }
+    return structure;
+  }
+
+  function spawnQaFurnitureFixtureSet() {
+    const world = state.surfaceWorld || state.world;
+    if (!world || !state.player || state.inCave) return null;
+    if (state.player.inHut) leaveHouse();
+    const playerTx = Math.floor(state.player.x / CONFIG.tileSize);
+    const playerTy = Math.floor(state.player.y / CONFIG.tileSize);
+
+    const playerHouse = ensureQaFurnitureFixtureHouse(world, "player-house", playerTx + 4, playerTy - 3, false);
+    const villageHouse = ensureQaFurnitureFixtureHouse(world, "village-house", playerTx - 7, playerTy - 3, true);
+    const surfaceBed = ensureQaSurfaceFurnitureFixture(world, "bed", "surface-bed", playerTx + 1, playerTy + 3);
+    const surfaceChest = ensureQaSurfaceFurnitureFixture(world, "chest", "surface-chest", playerTx + 3, playerTy + 3);
+    const surfaceCampfire = ensureQaSurfaceFurnitureFixture(world, "campfire", "surface-campfire", playerTx + 5, playerTy + 3);
+    markDirty();
+    return {
+      playerHouse: playerHouse ? { tx: playerHouse.tx, ty: playerHouse.ty } : null,
+      villageHouse: villageHouse ? { tx: villageHouse.tx, ty: villageHouse.ty } : null,
+      surfaceBed: surfaceBed ? { tx: surfaceBed.tx, ty: surfaceBed.ty } : null,
+      surfaceChest: surfaceChest ? { tx: surfaceChest.tx, ty: surfaceChest.ty } : null,
+      surfaceCampfire: surfaceCampfire ? { tx: surfaceCampfire.tx, ty: surfaceCampfire.ty } : null,
+    };
+  }
+
+  function enterQaFurnitureFixtureHouse(kind = "player-house") {
+    const house = state.structures.find((structure) => (
+      structure
+      && !structure.removed
+      && isHouseType(structure.type)
+      && structure.meta?.qaFurnitureFixtureKind === kind
+    )) || null;
+    if (!house) return null;
+    enterHouse(house);
+    return {
+      kind,
+      tx: house.tx,
+      ty: house.ty,
+      interior: getHouseInterior(house),
     };
   }
 
@@ -52416,6 +53383,7 @@
         remotePlayers: net.players instanceof Map ? net.players.size : 0,
         statusText: mpStatus?.textContent || "",
         roomText: roomDisplay?.textContent || "",
+        traffic: renderSnapshot.network,
       },
       world: buildQaWorldSummary(activeWorld),
       player: state.player
@@ -52484,6 +53452,10 @@
         toggleSettingsPanel();
         return buildRenderGameTextPayload();
       },
+      toggleInventoryForQa: () => {
+        toggleInventory();
+        return buildRenderGameTextPayload();
+      },
       toggleDebugPanel: () => {
         toggleDebugMenu();
         return buildRenderGameTextPayload();
@@ -52498,9 +53470,25 @@
         forceDebugNight();
         return buildRenderGameTextPayload();
       },
+      setInventorySlotsForQa: (slots = []) => {
+        state.inventory = sanitizeInventorySlots(slots, INVENTORY_SIZE);
+        selectedSlot = null;
+        activeSlot = clamp(activeSlot, 0, HOTBAR_SIZE - 1);
+        markDirty();
+        updateAllSlotUI();
+        return buildQaInventorySlotList(state.inventory);
+      },
+      getInventorySlotsForQa: () => buildQaInventorySlotList(state.inventory),
+      getInventoryUiBindingsForQa: () => buildInventoryUiValidationReport(),
       getMpAutotestSummary: () => buildQaMpAutotestSummary(),
       getCaveV2Summary: () => buildQaCaveV2Summary(),
       getCaveV2DoorwayAudit: () => buildQaCaveV2DoorwayAudit(),
+      getRuntimeCaveV2EntrancesForQa: () => buildQaRuntimeCaveV2EntranceSummary(state.surfaceWorld || state.world || null),
+      getSavedCaveV2EntrancesForQa: (seed = null) => {
+        const requestedSeed = normalizeSeedValue(seed ?? state.surfaceWorld?.seed ?? state.world?.seed ?? getStoredActiveSeed() ?? "island-1");
+        const saved = migrateSave(loadGame(requestedSeed));
+        return buildQaSavedCaveV2EntranceSummary(saved?.caveV2Entrances, state.surfaceWorld || state.world || null);
+      },
       hasCaveV2EntranceId: (entranceId) => {
         const world = state.surfaceWorld || state.world;
         const id = typeof entranceId === "string" ? entranceId : "";
@@ -52518,6 +53506,33 @@
         updateAllSlotUI();
         return buildRenderGameTextPayload();
       },
+      openBuildMenuForQa: (categoryId = null) => {
+        state.nearBench = true;
+        wasNearBench = true;
+        if (!state.nearBenchStructure && state.player) {
+          state.nearBenchStructure = {
+            type: "bench",
+            tx: Math.floor(state.player.x / CONFIG.tileSize),
+            ty: Math.floor(state.player.y / CONFIG.tileSize),
+          };
+        }
+        buildMenu.classList.remove("hidden");
+        if (typeof categoryId === "string" && categoryId) {
+          openBuildCategory(categoryId, false);
+        } else {
+          showBuildCategoryOverview(false);
+        }
+        renderBuildMenu();
+        return buildRenderGameTextPayload();
+      },
+      closeBuildMenuForQa: () => {
+        state.nearBench = false;
+        state.nearBenchStructure = null;
+        wasNearBench = false;
+        buildMenu.classList.add("hidden");
+        showBuildCategoryOverview(false);
+        return buildRenderGameTextPayload();
+      },
       startMpAutotest: (mode = "quick", options = null) => {
         const opts = options && typeof options === "object" ? options : {};
         if (mpAutotestClientsInput && Number.isFinite(Number(opts.clients))) {
@@ -52530,6 +53545,12 @@
         return buildQaMpAutotestSummary();
       },
       spawnQaLinkedCavePair: () => spawnQaLinkedCavePair(),
+      spawnQaFurnitureFixtureSet: () => spawnQaFurnitureFixtureSet(),
+      enterQaFurnitureFixtureHouse: (kind = "player-house") => enterQaFurnitureFixtureHouse(kind),
+      leaveHouseNow: () => {
+        leaveHouse();
+        return buildRenderGameTextPayload();
+      },
       travelActiveCaveV2ToSurfaceExit: (exitKind = "linked") => driveQaActiveCaveV2ToSurfaceExit(exitKind),
       enterCaveV2ByEntranceId: (entranceId) => {
         const world = state.surfaceWorld || state.world;
@@ -53053,15 +54074,26 @@
     });
     buildCategoryTabs.forEach((tab) => {
       const categoryId = tab.dataset.category;
-      const preview = () => setBuildCategoryHint(categoryId);
-      const restore = () => setBuildCategoryHint(buildCategory);
-      tab.addEventListener("click", () => setBuildCategory(categoryId, true));
+      const preview = () => {
+        if (buildCategoryView !== "detail") setBuildCategoryHint(categoryId);
+      };
+      const restore = () => {
+        if (buildCategoryView === "detail") setBuildCategoryHint(buildCategory);
+        else setBuildCategoryHint(null);
+      };
+      tab.addEventListener("click", () => openBuildCategory(categoryId, true));
       tab.addEventListener("mouseenter", preview);
       tab.addEventListener("focus", preview);
       tab.addEventListener("mouseleave", restore);
       tab.addEventListener("blur", restore);
     });
+    if (buildCategoryBackBtn) {
+      buildCategoryBackBtn.addEventListener("click", () => {
+        showBuildCategoryOverview(true);
+      });
+    }
     setBuildCategory(buildCategory, false);
+    showBuildCategoryOverview(false);
 
     if (destroyChestBtn) {
       destroyChestBtn.addEventListener("click", destroyActiveChest);
