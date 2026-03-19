@@ -74,6 +74,7 @@
     if (document.__menuDelegateBound) return;
     document.__menuDelegateBound = true;
     document.addEventListener("click", (event) => {
+      if (window.__isgMenuApi) return;
       const btn = event.target && event.target.closest ? event.target.closest("button") : null;
       if (!btn || !btn.id) return;
       const map = {

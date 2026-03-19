@@ -1,6 +1,65 @@
 (() => {
   "use strict";
 
+  const foundationUtils = window.ISGUtils;
+  const foundationConfig = window.ISGConfig;
+  const foundationState = window.ISGState;
+  const uiModules = window.ISGUI || Object.create(null);
+
+  if (!foundationUtils || !foundationConfig || !foundationState) {
+    throw new Error("Missing Island Survival foundation modules.");
+  }
+
+  const { clamp, lerp } = foundationUtils;
+  const {
+    ACTIVE_SEED_KEY,
+    AUTO_GRAPHICS_BASELINE,
+    CHEST_SIZE,
+    CONFIG,
+    DEBUG_PASSCODE,
+    DESKTOP_RENDER_DPR_CAP,
+    DESKTOP_RENDER_MAX_PIXELS,
+    GRAPHICS_PRESET_CONFIG,
+    GRAPHICS_PRESET_IDS,
+    GRAPHICS_RUNTIME_PROFILE_CONFIG,
+    HOTBAR_SIZE,
+    INVENTORY_SIZE,
+    JOIN_FLOW_TIMEOUT_MS,
+    LEGACY_PLAYER_NAME_KEY,
+    MAX_STACK,
+    MOBILE_RENDER_DPR_CAP,
+    MOBILE_RENDER_MAX_PIXELS,
+    MP_DEBUG_SYNC_AUDIT_CONFIG,
+    NET_CONFIG,
+    NET_PENDING_REQUEST_TIMEOUT_SECONDS,
+    PLAYER_COLORS,
+    PLAYER_NAME_MAX_LENGTH,
+    QA_SELF_TEST_CONFIG,
+    SAVE_KEY,
+    SAVE_KEY_PREFIX,
+    SAVE_VERSION,
+    SETTINGS_DEFAULTS,
+    SETTINGS_KEY,
+    START_FLOW_TIMEOUT_MS,
+    START_MENU_SWOOSH_DURATION_MS,
+    START_MENU_VIEW_ORDER,
+    START_SCREEN_EXIT_TRANSITION_MS,
+    SURFACE_GUARDIAN_CONFIG,
+    TOUCH_STICK_MAX_DIST,
+    WORLD_LAYOUT_VERSION,
+  } = foundationConfig;
+  const {
+    createGameState,
+    createMpAutotestState,
+    createNetState,
+    createPointerState,
+    createQaRuntimeState,
+    createTouchState,
+  } = foundationState;
+
+  let loadingScreensApi = null;
+  let promptsApi = null;
+
   const canvas = document.getElementById("game");
   const ctx = canvas.getContext("2d");
 
@@ -132,27 +191,6 @@
   const buildCategoryIcons = Array.from(buildMenu.querySelectorAll(".build-category-icon"));
   const buildCategoryHint = document.getElementById("buildCategoryHint");
 
-  const CONFIG = {
-    tileSize: 32,
-    worldSize: 520,
-    playerRadius: 12,
-    moveSpeed: 150,
-    interactRange: 55,
-    saveInterval: 5,
-    dayLength: 180,
-    nightLength: 120,
-  };
-
-  const START_MENU_VIEW_ORDER = Object.freeze({
-    main: 0,
-    play: 1,
-    options: 2,
-  });
-  const START_MENU_SWOOSH_DURATION_MS = 420;
-  const START_SCREEN_EXIT_TRANSITION_MS = 280;
-  const START_FLOW_TIMEOUT_MS = 18000;
-  const JOIN_FLOW_TIMEOUT_MS = 24000;
-
   const MONSTER = {
     surfaceMax: 30,
     caveMax: 4,
@@ -169,100 +207,6 @@
   const PLAYER_ATTACK_REACH = MONSTER.attackRange + 24;
   const PLAYER_ATTACK_FALLBACK_REACH = PLAYER_ATTACK_REACH - 6;
   const PLAYER_MOVE_SPEED_MULT = 1.12;
-
-  const TOUCH_STICK_MAX_DIST = 40;
-  const MOBILE_RENDER_DPR_CAP = 2.25;
-  const DESKTOP_RENDER_DPR_CAP = 2.0;
-  const MOBILE_RENDER_MAX_PIXELS = 2200000;
-  const DESKTOP_RENDER_MAX_PIXELS = 6000000;
-  const GRAPHICS_PRESET_CONFIG = Object.freeze({
-    performance: Object.freeze({ renderScale: 0.68, effectsLevel: 1 }),
-    balanced: Object.freeze({ renderScale: 0.82, effectsLevel: 2 }),
-    quality: Object.freeze({ renderScale: 0.92, effectsLevel: 2 }),
-    ultra: Object.freeze({ renderScale: 1.0, effectsLevel: 2 }),
-  });
-  const AUTO_GRAPHICS_BASELINE = Object.freeze({
-    preset: "ultra",
-    renderScale: GRAPHICS_PRESET_CONFIG.ultra.renderScale,
-    effectsLevel: 2,
-  });
-  const GRAPHICS_RUNTIME_PROFILE_CONFIG = Object.freeze({
-    performance: Object.freeze({
-      worldStepMax: 0.06,
-      ambientFishSpawnChance: 0.1,
-      ambientFishMaxFactor: 0.1,
-      oceanDecorStride: 6,
-      snapshotInterval: 0.42,
-      motionInterval: 0.05,
-      playerSendInterval: 0.055,
-      remoteSmoothScale: 1.42,
-      maxFixedSteps: 2,
-      maxFrameDeltaSeconds: 0.075,
-      resourceTickInterval: 0.05,
-      ambientFishTickInterval: 0.11,
-      villagerTickInterval: 0.066,
-      robotTickInterval: 0.066,
-      shipTickInterval: 0.066,
-    }),
-    balanced: Object.freeze({
-      worldStepMax: 0.055,
-      ambientFishSpawnChance: 0.18,
-      ambientFishMaxFactor: 0.2,
-      oceanDecorStride: 4,
-      snapshotInterval: 0.34,
-      motionInterval: 0.036,
-      playerSendInterval: 0.038,
-      remoteSmoothScale: 1.24,
-      maxFixedSteps: 3,
-      maxFrameDeltaSeconds: 0.09,
-      resourceTickInterval: 0.033,
-      ambientFishTickInterval: 0.066,
-      villagerTickInterval: 0.05,
-      robotTickInterval: 0.05,
-      shipTickInterval: 0.05,
-    }),
-    quality: Object.freeze({
-      worldStepMax: 0.055,
-      ambientFishSpawnChance: 0.22,
-      ambientFishMaxFactor: 0.22,
-      oceanDecorStride: 3,
-      snapshotInterval: 0.34,
-      motionInterval: 0.036,
-      playerSendInterval: 0.038,
-      remoteSmoothScale: 1.18,
-      maxFixedSteps: 3,
-      maxFrameDeltaSeconds: 0.09,
-      resourceTickInterval: 0.033,
-      ambientFishTickInterval: 0.09,
-      villagerTickInterval: 0.05,
-      robotTickInterval: 0.05,
-      shipTickInterval: 0.05,
-    }),
-    ultra: Object.freeze({
-      worldStepMax: 0.055,
-      ambientFishSpawnChance: 0.28,
-      ambientFishMaxFactor: 0.28,
-      oceanDecorStride: 2,
-      snapshotInterval: 0.32,
-      motionInterval: 0.034,
-      playerSendInterval: 0.036,
-      remoteSmoothScale: 1.12,
-      maxFixedSteps: 3,
-      maxFrameDeltaSeconds: 0.09,
-      resourceTickInterval: 0.033,
-      ambientFishTickInterval: 0.075,
-      villagerTickInterval: 0.05,
-      robotTickInterval: 0.05,
-      shipTickInterval: 0.05,
-    }),
-  });
-  const GRAPHICS_PRESET_IDS = Object.freeze([
-    "performance",
-    "balanced",
-    "quality",
-    "ultra",
-    "custom",
-  ]);
 
   const MONSTER_CAMPFIRE_FEAR = Object.freeze({
     radiusPadding: 6,
@@ -560,48 +504,6 @@
     },
   });
 
-  const NET_CONFIG = {
-    snapshotInterval: 0.3,
-    motionInterval: 0.025,
-    playerSendInterval: 0.025,
-    helloRetryInterval: 0.9,
-    joinReconnectBase: 1.2,
-    joinReconnectMax: 4.0,
-    joinHandshakeTimeout: 22,
-    joinHeartbeatInterval: 0.9,
-    resyncSilenceThreshold: 1.2,
-    resyncRequestCooldown: 0.8,
-    renderSmooth: 14,
-    houseSmooth: 22,
-    monsterSmooth: 48,
-    animalSmooth: 48,
-    villagerSmooth: 44,
-    projectileSmooth: 26,
-    poisonCloudSmooth: 18,
-    robotSmooth: 14,
-  };
-  const NET_PENDING_REQUEST_TIMEOUT_SECONDS = 8;
-
-  const PLAYER_COLORS = [
-    "#f26d6d",
-    "#f5b041",
-    "#7bd88f",
-    "#6fa8ff",
-    "#c28bff",
-    "#f7d56b",
-  ];
-
-  const QA_SELF_TEST_CONFIG = Object.freeze({
-    runInterval: 6,
-    saveRoundTripInterval: 32,
-    maxIssuesPerRun: 32,
-  });
-
-  const MP_DEBUG_SYNC_AUDIT_CONFIG = Object.freeze({
-    interval: 2.8,
-    pendingLimit: 18,
-  });
-
   const QA_FEATURE_INVENTORY = Object.freeze([
     "Core loop: fixed-step timing + interpolation + update/render order + menu/start scene transitions",
     "World generation: seeded deterministic islands, shorelines, biome assignment, and surface cave entrance registry",
@@ -889,16 +791,6 @@
     corridorWidenChance: 0.2,
     corridorAlcoveChance: 0.14,
   });
-
-  const SAVE_KEY = "island_survival_save_v1";
-  const SAVE_KEY_PREFIX = "island_survival_seed_save_v1:";
-  const ACTIVE_SEED_KEY = "island_survival_active_seed_v1";
-  const SAVE_VERSION = 5;
-  const WORLD_LAYOUT_VERSION = "2026-03-layout-v4";
-  const HOTBAR_SIZE = 4;
-  const INVENTORY_SIZE = 8;
-  const CHEST_SIZE = 8;
-  const MAX_STACK = 99;
 
   const HOUSE_TIERS = {
     small_house: { key: "small_house", name: "Small House", width: 5, height: 4, color: "#8b5d3c" },
@@ -1870,15 +1762,6 @@
     }),
   });
 
-  const SURFACE_GUARDIAN_CONFIG = Object.freeze({
-    spawnInterval: 5.8,
-    maxTotal: 22,
-    maxPerIsland: 2,
-    minPlayerDistanceTiles: 4.5,
-    coverageSoftOverflow: 2,
-    coverageSpawnBudget: 2,
-  });
-
   const MUSHROOM_GREEN_COW_CONFIG = Object.freeze({
     minPerIsland: 2,
     ensureAttemptsPerCow: 28,
@@ -2069,24 +1952,6 @@
     windupCooldownMs: 110,
     aggroCooldownMs: 180,
     distantCooldownMs: 220,
-  });
-  const SETTINGS_KEY = "island_survival_settings_v1";
-  const LEGACY_PLAYER_NAME_KEY = "island_mp_name";
-  const PLAYER_NAME_MAX_LENGTH = 20;
-  const DEBUG_PASSCODE = "123";
-  const SETTINGS_DEFAULTS = Object.freeze({
-    playerName: "",
-    musicVolume: 0.72,
-    sfxVolume: 0.62,
-    graphicsPreset: AUTO_GRAPHICS_BASELINE.preset,
-    renderScale: AUTO_GRAPHICS_BASELINE.renderScale,
-    graphicsEffectsLevel: AUTO_GRAPHICS_BASELINE.effectsLevel,
-    debugUnlocked: false,
-    debugInfiniteResources: false,
-    debugInfiniteHealth: false,
-    debugSpeedMultiplier: 1,
-    debugWorldSpeedMultiplier: 1,
-    debugFovMultiplier: 1,
   });
   const MAP_ITEM_SET = new Set(["village_map", "cave_map"]);
   const MAP_PANEL = Object.freeze({
@@ -3013,20 +2878,9 @@
   let resizeRaf = 0;
   let pendingResizeReason = "";
 
-  const touch = {
-    active: false,
-    pointerId: null,
-    centerX: 0,
-    centerY: 0,
-    dx: 0,
-    dy: 0,
-  };
+  const touch = createTouchState();
 
-  const pointer = {
-    x: 0,
-    y: 0,
-    active: false,
-  };
+  const pointer = createPointerState();
 
   const hotbarSlots = [];
   const inventorySlots = [];
@@ -3035,265 +2889,25 @@
   const landTileBaseFillCache = new Map();
   const tileSpeckleVariantHashCache = new Map();
   const ITEM_TEXTURE_CACHE_VERSION = 6;
-  const qaRuntime = {
-    runTimer: QA_SELF_TEST_CONFIG.runInterval,
-    saveRoundTripTimer: QA_SELF_TEST_CONFIG.saveRoundTripInterval,
-    runCount: 0,
-    featureInventoryLogged: false,
-    caveChecklistLogged: false,
-    caveFieldClassificationLogged: false,
-    saveSchemaLogged: false,
-    passChecklistLogged: false,
-    truthMapLogged: false,
-    caveDisableReadinessLogged: false,
-    initCallCount: 0,
-    gameLoopStartCount: 0,
-    caveOrbTraceKeys: new Set(),
-    caveDisabledNetCounters: {
-      sent: 0,
-      recv: 0,
-      activePayloads: 0,
-      types: Object.create(null),
-      recent: [],
-    },
-    caveV2LastRoomSummary: "",
-    startMenuBindAttemptCount: 0,
-    menuApiBridgeInstallCount: 0,
-    frameBuckets: {
-      total: 0,
-      backdrop: 0,
-      terrain: 0,
-      world: 0,
-      entities: 0,
-      overlays: 0,
-    },
-    frameBucketSamples: 0,
-  };
+  const qaRuntime = createQaRuntimeState({
+    runInterval: QA_SELF_TEST_CONFIG.runInterval,
+    saveRoundTripInterval: QA_SELF_TEST_CONFIG.saveRoundTripInterval,
+  });
 
-  const mpAutotest = {
-    active: false,
-    mode: null,
-    customFault: null,
-    seed: "",
-    rng: null,
-    elapsed: 0,
-    step: 0,
-    actionTimer: 0,
-    periodicCheckTimer: 0,
-    messageQueue: [],
-    messageLog: [],
-    actionHistory: [],
-    clients: [],
-    hostConnections: new Map(),
-    nextSeq: 1,
-    eventStats: {
-      authoritativeMutations: 0,
-      clientAuthViolations: 0,
-    },
-    inventoryLedger: {
-      totals: Object.create(null),
-      dropTotals: Object.create(null),
-      nonDropTotals: Object.create(null),
-      fingerprint: "",
-    },
-    hostHash: "",
-    clientHashes: new Map(),
-    lastAction: "none",
-    failReason: "",
-    failReport: "",
-    replayBundle: null,
-    logLines: [],
-    runningStatus: "idle",
-    savedSeed: null,
-    diagnostics: null,
-    wallStartMs: 0,
-    lastObservedStep: 0,
-    lastProgressWallElapsed: 0,
-    progressPercent: 0,
-    expectedSteps: 0,
-    maxSteps: 0,
-    categoryStatus: new Map(),
-    scenarioStatus: new Map(),
-    currentScenarioId: null,
-    featureCoverage: Object.create(null),
-    actionStats: Object.create(null),
-    pendingAssertions: [],
-    nextHarvestProbeSeq: 1,
-    harvestProbeResults: new Map(),
-    harvestAssertionInconclusiveCount: 0,
-    savedDebugSettings: null,
-  };
+  const mpAutotest = createMpAutotestState();
 
-  const state = {
-    world: null,
-    surfaceWorld: null,
-    player: null,
-    inventory: null,
-    structures: [],
-    structureGrid: null,
-    targetResource: null,
-    targetMonster: null,
-    targetAnimal: null,
-    nearBench: false,
-    nearBenchStructure: null,
-    nearStation: null,
-    nearChest: null,
-    nearCave: null,
-    nearCaveV2: null,
-    nearHouse: null,
-    nearBed: null,
-    nearDock: null,
-    nearInteriorMoveTarget: null,
-    activeStation: null,
-    activeChest: null,
-    activeCave: null,
-    activeCaveLayer: 0,
-    activeHouse: null,
-    inCave: false,
-    returnPosition: null,
-    caveTransition: null,
-    cavePassageCooldown: 0,
-    cavePassageLock: null,
-    caveV2: {
-      cavesById: Object.create(null),
-      active: null,
-      transitioning: false,
-      transitionT: 0,
-      transition: null,
-      transitionCooldown: 0,
-      transitionLock: null,
-      targetOreId: null,
-      targetDropId: null,
-      debugLastSummary: "",
-      debugLastRoomStatsKey: "",
-      debugEntryAuditPending: false,
-      debugLastEntryAuditKey: "",
-    },
-    caveDisableRecoveryPending: false,
-    caveDisableRecoveryReason: "",
-    caveDisableRecoveryWindow: 0,
-    caveDisableRecoveryTriggered: false,
-    caveDisableRecoveryRunCount: 0,
-    caveDisableRecoveryLastReason: "",
-    housePlayer: null,
-    spawnTile: null,
-    timeOfDay: 0,
-    isNight: false,
-    surfaceDayBurnGraceTimer: 0,
-    surfaceSpawnTimer: 0,
-    surfaceGuardianSpawnTimer: SURFACE_GUARDIAN_CONFIG.spawnInterval,
-    gameWon: false,
-    winTimer: 0,
-    winSequencePlayed: false,
-    winPlayerPos: null,
-    promptText: "",
-    promptTimer: 0,
-    dirty: false,
-    saveTimer: CONFIG.saveInterval,
-    nextDropId: 1,
-    nextAnimalId: 1,
-    respawnLock: false,
-    checkpointTimer: 0,
-    animalVocalTimer: 2.6,
-    settingsTab: "settings",
-    playerName: SETTINGS_DEFAULTS.playerName,
-    musicVolume: SETTINGS_DEFAULTS.musicVolume,
-    sfxVolume: SETTINGS_DEFAULTS.sfxVolume,
-    graphicsPreset: SETTINGS_DEFAULTS.graphicsPreset,
-    renderScale: SETTINGS_DEFAULTS.renderScale,
-    graphicsEffectsLevel: SETTINGS_DEFAULTS.graphicsEffectsLevel,
-    debugUnlocked: SETTINGS_DEFAULTS.debugUnlocked,
-    debugMoses: false,
-    debugInfiniteResources: SETTINGS_DEFAULTS.debugInfiniteResources,
-    debugInfiniteHealth: SETTINGS_DEFAULTS.debugInfiniteHealth,
-    debugWorldMapVisible: false,
-    debugShowFps: false,
-    debugPerfProfiler: false,
-    debugShowAbandonedRobot: false,
-    debugShowRepairableShip: false,
-    debugContinentalShift: false,
-    debugPlaceRepairedBoat: false,
-    debugBoatPlacePending: false,
-    debugLinkedCavePlacement: null,
-    debugIslandDrag: null,
-    autoPerfWarmupTimer: 0,
-    debugSpeedMultiplier: SETTINGS_DEFAULTS.debugSpeedMultiplier,
-    debugWorldSpeedMultiplier: SETTINGS_DEFAULTS.debugWorldSpeedMultiplier,
-    debugFovMultiplier: SETTINGS_DEFAULTS.debugFovMultiplier,
-    houseRelocation: null,
-    sleepSequence: null,
-    ambientFish: [],
-    ambientFishSpawnTimer: 0,
-    nearShip: null,
-    activeShipRepair: null,
-    shipActionPending: false,
-    shipControlSendTimer: 0,
-    loadingVisible: false,
-    loadingTitle: "",
-    loadingStage: "",
-  };
+  const state = createGameState({
+    CONFIG,
+    SETTINGS_DEFAULTS,
+    SURFACE_GUARDIAN_CONFIG,
+  });
 
   let wasNearBench = false;
 
-  const net = {
-    enabled: false,
-    ready: false,
-    isHost: false,
-    peer: null,
-    hostConn: null,
-    roomId: null,
-    hostId: null,
-    playerId: null,
-    connections: new Map(),
-    players: new Map(),
-    pendingPlaces: new Map(),
-    pendingHousePlaces: new Map(),
-    pendingHouseMoves: new Map(),
-    pendingBreaks: new Map(),
-    debugBoatPlaceReceipts: new Map(),
-    snapshotTimer: NET_CONFIG.snapshotInterval,
-    motionTimer: NET_CONFIG.motionInterval,
-    playerTimer: NET_CONFIG.playerSendInterval,
-    helloRetryTimer: NET_CONFIG.helloRetryInterval,
-    resyncTimer: 0,
-    lastHostPacketAt: 0,
-    snapshotSeq: 0,
-    motionSeq: 0,
-    localPlayerSeq: 0,
-    localPlayerAckSeq: -1,
-    lastSnapshotSeq: -1,
-    lastMotionSeq: -1,
-    remotePlayerSeq: new Map(),
-    hostPlayerSeqByPeer: new Map(),
-    remoteInventoryTotalsByPeer: new Map(),
-    remoteInventoryFingerprintByPeer: new Map(),
-    syncAuditTimer: MP_DEBUG_SYNC_AUDIT_CONFIG.interval,
-    syncAuditSeq: 0,
-    pendingSyncAudits: new Map(),
-    syncAuditLedgerTotals: null,
-    syncAuditLedgerFingerprint: "",
-    syncLedgerEventCounter: 0,
-    syncLedgerLastEventCounter: 0,
-    syncLedgerLastEventLabel: "",
-    lastSentPlayerFingerprint: "",
-    robotPausePingTimer: 0.2,
-    localName: "",
-    localColor: "",
-    joinStartedAt: 0,
-    joinRetryTimer: NET_CONFIG.joinReconnectBase,
-    joinAttempts: 0,
-    joinPhase: "idle",
-    snapshotAppliedAt: 0,
-    joinAutoReconnectsRemaining: 1,
-    joinHeartbeatTimer: NET_CONFIG.joinHeartbeatInterval,
-    joinFallbackSnapshotApplied: false,
-    joinStaticSnapshotRequested: false,
-    joinTimeoutNotified: false,
-    hostConnPendingSince: 0,
-    joinLastErrorCode: "",
-    connectIntent: "idle",
-    hostCodeRetryCount: 0,
-  };
+  const net = createNetState({
+    MP_DEBUG_SYNC_AUDIT_CONFIG,
+    NET_CONFIG,
+  });
 
   const audio = {
     ctx: null,
@@ -3400,10 +3014,6 @@
       ],
     },
   };
-
-  function clamp(value, min, max) {
-    return Math.min(Math.max(value, min), max);
-  }
 
   function generateDefaultPlayerName() {
     return `Survivor-${Math.floor(100 + Math.random() * 900)}`;
@@ -3599,10 +3209,6 @@
       vein: palette.vein,
       speck: palette.speck,
     };
-  }
-
-  function lerp(a, b, t) {
-    return a + (b - a) * t;
   }
 
   function pointSegmentDistance(px, py, ax, ay, bx, by) {
@@ -14114,6 +13720,7 @@
     net.joinTimeoutNotified = false;
     net.hostConnPendingSince = 0;
     net.joinLastErrorCode = "";
+    net.joinPromptGuardUntil = 0;
     net.hostCodeRetryCount = 0;
   }
 
@@ -14272,17 +13879,190 @@
     return text || null;
   }
 
+  function logJoinFlow(stage, details = null) {
+    const payload = details && typeof details === "object"
+      ? details
+      : Object.create(null);
+    try {
+      console.debug(`[Join Room] ${stage}`, payload);
+    } catch (err) {
+      // ignore debug logging failures
+    }
+  }
+
+  function isJoinPromptGuardActive() {
+    return Number.isFinite(net.joinPromptGuardUntil) && net.joinPromptGuardUntil > performance.now();
+  }
+
+  function armJoinPromptGuard(windowMs = 900) {
+    net.joinPromptGuardUntil = performance.now() + Math.max(250, Number(windowMs) || 900);
+  }
+
+  function normalizeSnapshotStructureStorageEntry(entry) {
+    if (!entry || typeof entry !== "object") return entry;
+    const normalizedType = resolveStructureType(entry.type, entry.meta);
+    const storageSize = getStorageSizeForStructureType(normalizedType, null);
+    if (Number.isInteger(storageSize) && storageSize > 0) {
+      entry.storage = sanitizeInventorySlots(entry.storage, storageSize);
+      entry.storageRevision = normalizeStorageRevisionValue(entry.storageRevision);
+    } else if (!Array.isArray(entry.storage)) {
+      entry.storage = null;
+      entry.storageRevision = normalizeStorageRevisionValue(entry.storageRevision);
+    }
+    if (entry.meta?.house && Array.isArray(entry.meta.house.items)) {
+      entry.meta.house.items = entry.meta.house.items.map((item) => {
+        if (!item || typeof item !== "object") return item;
+        const itemType = resolveStructureType(item.type, item.meta);
+        const itemStorageSize = getStorageSizeForStructureType(itemType, null);
+        if (!Number.isInteger(itemStorageSize) || itemStorageSize <= 0) {
+          return {
+            ...item,
+            storage: null,
+            storageRevision: normalizeStorageRevisionValue(item.storageRevision),
+          };
+        }
+        return {
+          ...item,
+          storage: sanitizeInventorySlots(item.storage, itemStorageSize),
+          storageRevision: normalizeStorageRevisionValue(item.storageRevision),
+        };
+      });
+    }
+    return entry;
+  }
+
+  function normalizeInventoryState(snapshotOrState, options = null) {
+    if (!snapshotOrState || typeof snapshotOrState !== "object") return snapshotOrState;
+    const opts = options && typeof options === "object" ? options : Object.create(null);
+    const inventorySize = Number.isInteger(opts.inventorySize) ? opts.inventorySize : INVENTORY_SIZE;
+    const forceInventory = opts.forceInventory !== false;
+    if (forceInventory || Array.isArray(snapshotOrState.inventory) || snapshotOrState.inventory == null) {
+      snapshotOrState.inventory = sanitizeInventorySlots(snapshotOrState.inventory, inventorySize);
+    }
+    if (Array.isArray(snapshotOrState.structures)) {
+      snapshotOrState.structures = snapshotOrState.structures.map((entry) => normalizeSnapshotStructureStorageEntry(entry));
+    }
+    if (snapshotOrState.activeChest && typeof snapshotOrState.activeChest === "object") {
+      const chestType = resolveStructureType(snapshotOrState.activeChest.type, snapshotOrState.activeChest.meta);
+      const chestStorageSize = getStorageSizeForStructureType(chestType, null);
+      if (Number.isInteger(chestStorageSize) && chestStorageSize > 0) {
+        snapshotOrState.activeChest.storage = sanitizeInventorySlots(
+          snapshotOrState.activeChest.storage,
+          chestStorageSize
+        );
+      }
+    }
+    return snapshotOrState;
+  }
+
+  function validateIncomingJoinSnapshot(snapshot, options = null) {
+    const opts = options && typeof options === "object" ? options : Object.create(null);
+    const context = typeof opts.context === "string" && opts.context ? opts.context : "snapshot";
+    const issues = [];
+    if (!snapshot || typeof snapshot !== "object") {
+      return {
+        ok: false,
+        deferred: false,
+        code: "BAD_SNAPSHOT",
+        detail: "Host snapshot payload was missing.",
+        issues: [`${context}: payload missing`],
+        snapshot: null,
+      };
+    }
+    if (typeof snapshot.seed !== "string" || !snapshot.seed.trim()) {
+      issues.push(`${context}: missing seed`);
+    }
+    if (!snapshot.world || typeof snapshot.world !== "object") {
+      issues.push(`${context}: missing world payload`);
+      snapshot.world = {
+        resourceStates: [],
+        respawnTasks: [],
+        drops: [],
+        animals: [],
+        villagers: [],
+        monsters: [],
+        projectiles: [],
+        poisonClouds: [],
+      };
+    }
+    const arrayDefaults = [
+      ["islandLayout", []],
+      ["caves", []],
+      ["players", []],
+      ["structures", []],
+      ["caveV2Entrances", []],
+    ];
+    for (const [key, fallback] of arrayDefaults) {
+      if (!Array.isArray(snapshot[key])) {
+        issues.push(`${context}: ${key} was not an array`);
+        snapshot[key] = fallback.slice();
+      }
+    }
+    const worldArrayDefaults = [
+      "resourceStates",
+      "respawnTasks",
+      "drops",
+      "animals",
+      "villagers",
+      "monsters",
+      "projectiles",
+      "poisonClouds",
+    ];
+    for (const key of worldArrayDefaults) {
+      if (!Array.isArray(snapshot.world[key])) {
+        issues.push(`${context}: world.${key} was not an array`);
+        snapshot.world[key] = [];
+      }
+    }
+    normalizeInventoryState(snapshot, { forceInventory: true, inventorySize: INVENTORY_SIZE });
+    if (issues.length > 0 && (state.debugUnlocked || mpAutotest.active)) {
+      console.warn("[Join Snapshot Validation]", {
+        context,
+        issues,
+      });
+    }
+    const fatal = issues.some((issue) => (
+      issue.includes("missing seed")
+      || issue.includes("missing world payload")
+    ));
+    return {
+      ok: !fatal,
+      deferred: false,
+      code: fatal ? "BAD_SNAPSHOT" : "",
+      detail: fatal ? "Host snapshot was missing required data." : "",
+      issues,
+      snapshot,
+    };
+  }
+
   function joinRoomPrompt() {
+    if (isJoinPromptGuardActive() || (state.loadingVisible && state.loadingTitle === "Joining")) {
+      logJoinFlow("prompt skipped", {
+        source: "topbar",
+        reason: isJoinPromptGuardActive() ? "guard-active" : "already-joining",
+      });
+      return;
+    }
+    armJoinPromptGuard();
     const current = getRoomIdFromUrl() || net.roomId || "";
+    logJoinFlow("start", { source: "topbar", current });
     const input = window.prompt("Enter code/link:", current);
+    if (input === null) {
+      logJoinFlow("cancelled", { source: "topbar" });
+      return;
+    }
     const roomId = parseRoomInput(input);
     if (!roomId) {
+      logJoinFlow("invalid-code", { source: "topbar", raw: input });
       setPrompt("Bad code", 1.2);
       return;
     }
+    logJoinFlow("code accepted", { source: "topbar", roomId });
     if (shouldPersistRoomInUrl()) {
       setRoomIdInUrl(roomId);
     }
+    normalizeInventoryState(state, { forceInventory: true, inventorySize: INVENTORY_SIZE });
+    logJoinFlow("network join begin", { source: "topbar", roomId });
     resetMultiplayer(roomId);
   }
 
@@ -14373,6 +14153,7 @@
     net.enabled = true;
     net.connectIntent = "join";
     net.hostCodeRetryCount = 0;
+    normalizeInventoryState(state, { forceInventory: true, inventorySize: INVENTORY_SIZE });
     const profile = getLocalProfile();
     net.localName = profile.name;
     net.localColor = normalizeHexColor(profile.color) || pickRandomDistinctPlayerColor(getAssignedPlayerColorSet());
@@ -14765,18 +14546,35 @@
   }
 
   function startJoin() {
+    if (isJoinPromptGuardActive() || (state.loadingVisible && state.loadingTitle === "Joining")) {
+      logJoinFlow("prompt skipped", {
+        source: "start-menu",
+        reason: isJoinPromptGuardActive() ? "guard-active" : "already-joining",
+      });
+      return;
+    }
+    armJoinPromptGuard();
+    logJoinFlow("start", { source: "start-menu" });
     const input = window.prompt("Enter room code:", "");
+    if (input === null) {
+      logJoinFlow("cancelled", { source: "start-menu" });
+      return;
+    }
     const roomId = parseRoomInput(input);
     if (!roomId) {
+      logJoinFlow("invalid-code", { source: "start-menu", raw: input });
       setPrompt("Bad code", 1.2);
       return;
     }
+    logJoinFlow("code accepted", { source: "start-menu", roomId });
+    normalizeInventoryState(state, { forceInventory: true, inventorySize: INVENTORY_SIZE });
     armStartFlowWatchdog("join", JOIN_FLOW_TIMEOUT_MS, () => {
       if (net.ready || net.joinPhase === "playable") return;
       failJoinToMenu("JOIN_TIMEOUT", "Join timed out");
     });
     transitionStartScreenToLoading("Joining", "Connecting...", () => {
       try {
+        logJoinFlow("network join begin", { source: "start-menu", roomId });
         initMultiplayerJoin(roomId);
         setPrompt("Connecting...", 0.8);
       } catch (err) {
@@ -15273,11 +15071,13 @@
         if (!net.isHost) {
           if (!net.ready) {
             if (!net.joinFallbackSnapshotApplied) {
-              net.joinFallbackSnapshotApplied = true;
               handleWelcome({ snapshot: message });
             }
           } else {
-            applyNetworkSnapshot(message);
+            const snapshotResult = applyNetworkSnapshot(message);
+            if (!snapshotResult?.ok && !snapshotResult?.deferred && (state.debugUnlocked || mpAutotest.active)) {
+              console.warn("[Join Snapshot Validation] Ignored live snapshot", snapshotResult);
+            }
           }
         }
         break;
@@ -16820,13 +16620,25 @@
   }
 
   function applyNetworkSnapshot(snapshot) {
-    if (!snapshot || !snapshot.seed) return;
+    const validation = validateIncomingJoinSnapshot(snapshot, { context: net.ready ? "liveSnapshot" : "welcomeSnapshot" });
+    if (!validation.ok) return validation;
+    snapshot = validation.snapshot;
     if (!net.isHost) {
       const incomingSeq = Number(snapshot.seq);
       if (Number.isFinite(incomingSeq)) {
         const normalizedSeq = Math.max(0, Math.floor(incomingSeq));
         const lastSeq = Number.isFinite(net.lastSnapshotSeq) ? net.lastSnapshotSeq : -1;
-        if (normalizedSeq <= lastSeq) return;
+        if (normalizedSeq <= lastSeq) {
+          return {
+            ok: true,
+            deferred: false,
+            skipped: true,
+            code: "",
+            detail: "Stale snapshot ignored.",
+            issues: validation.issues,
+            snapshot,
+          };
+        }
         net.lastSnapshotSeq = normalizedSeq;
       }
     }
@@ -16848,7 +16660,14 @@
       if (!world) {
         if (!net.isHost && !net.ready) {
           requestAuthoritativeStaticSnapshot("missing_surface_static");
-          return;
+          return {
+            ok: false,
+            deferred: true,
+            code: "STATIC_SNAPSHOT_PENDING",
+            detail: "Requested authoritative static snapshot from host.",
+            issues: validation.issues,
+            snapshot,
+          };
         }
         world = generateWorld(snapshot.seed);
       }
@@ -16892,6 +16711,7 @@
         state.inventory = createEmptyInventory(INVENTORY_SIZE);
       }
     }
+    normalizeInventoryState(state, { forceInventory: true, inventorySize: INVENTORY_SIZE });
 
     const world = state.surfaceWorld;
     if (!state.player) {
@@ -17029,6 +16849,14 @@
     if (inventoryOpen || state.activeChest || state.activeStation || buildMenuOpen()) {
       updateAllSlotUI();
     }
+    return {
+      ok: true,
+      deferred: false,
+      code: "",
+      detail: "",
+      issues: validation.issues,
+      snapshot,
+    };
   }
 
   function handleHello(conn, message) {
@@ -17105,7 +16933,12 @@
     net.lastMotionSeq = -1;
     let snapshotApplied = false;
     if (message.snapshot) {
-      applyNetworkSnapshot(message.snapshot);
+      const snapshotResult = applyNetworkSnapshot(message.snapshot);
+      if (snapshotResult?.deferred) return;
+      if (!snapshotResult?.ok) {
+        failJoinToMenu(snapshotResult?.code || "BAD_SNAPSHOT", snapshotResult?.detail || "Host snapshot was invalid.");
+        return;
+      }
       snapshotApplied = true;
     } else if (state.surfaceWorld) {
       snapshotApplied = true;
@@ -17172,7 +17005,8 @@
     }
     clearPoisonStatus(state.player);
     updateHealthUI();
-    state.inventory = sanitizeInventorySlots(state.inventory, INVENTORY_SIZE);
+    normalizeInventoryState(state, { forceInventory: true, inventorySize: INVENTORY_SIZE });
+    net.joinPromptGuardUntil = 0;
     net.helloRetryTimer = NET_CONFIG.helloRetryInterval;
     net.joinPhase = "playable";
     updateMpStatus("MP: Connected");
@@ -19267,6 +19101,7 @@
     net.debugBoatPlaceReceipts.clear();
     resetNetSequenceState();
     net.joinLastErrorCode = code;
+    net.joinPromptGuardUntil = 0;
     net.connectIntent = "idle";
     if (state.loadingVisible && state.loadingTitle === "Joining") {
       hideLoadingOverlay();
@@ -28483,7 +28318,10 @@
   }
 
   function countItem(inventory, itemId) {
-    return inventory.reduce((sum, slot) => sum + (slot.id === itemId ? slot.qty : 0), 0);
+    return (Array.isArray(inventory) ? inventory : []).reduce(
+      (sum, slot) => sum + (slot?.id === itemId ? slot.qty : 0),
+      0
+    );
   }
 
   function hasCost(inventory, cost) {
@@ -28635,95 +28473,31 @@
   }
 
   function setLoadingOverlayVisible(visible, titleText = null, stageText = null) {
-    state.loadingVisible = !!visible;
-    if (typeof titleText === "string") {
-      state.loadingTitle = titleText;
-    }
-    if (typeof stageText === "string") {
-      state.loadingStage = stageText;
-    }
-    if (loadingTitle && typeof state.loadingTitle === "string" && state.loadingTitle) {
-      loadingTitle.textContent = state.loadingTitle;
-    }
-    if (loadingStage && typeof state.loadingStage === "string" && state.loadingStage) {
-      loadingStage.textContent = state.loadingStage;
-    }
-    if (loadingOverlay) {
-      loadingOverlay.classList.toggle("hidden", !state.loadingVisible);
-    }
+    return loadingScreensApi.setLoadingOverlayVisible(visible, titleText, stageText);
   }
 
   function showLoadingOverlay(titleText = "Loading", stageText = "Preparing...") {
-    setLoadingOverlayVisible(true, titleText, stageText);
+    return loadingScreensApi.showLoadingOverlay(titleText, stageText);
   }
 
   function setLoadingOverlayStage(stageText = "Preparing...", titleText = null) {
-    setLoadingOverlayVisible(true, titleText, stageText);
+    return loadingScreensApi.setLoadingOverlayStage(stageText, titleText);
   }
 
   function hideLoadingOverlay() {
-    clearStartFlowWatchdog();
-    setLoadingOverlayVisible(false);
-    armAutoPerformanceWarmup();
+    return loadingScreensApi.hideLoadingOverlay();
   }
 
   function runDeferredLoadingTask(options) {
-    const opts = options && typeof options === "object" ? options : Object.create(null);
-    const title = typeof opts.title === "string" && opts.title ? opts.title : "Loading";
-    const stage = typeof opts.stage === "string" && opts.stage ? opts.stage : "Preparing...";
-    const finalizeStage = typeof opts.finalStage === "string" && opts.finalStage ? opts.finalStage : "Ready";
-    const holdMs = clamp(Math.floor(Number(opts.holdMs) || 120), 0, 1200);
-    const task = typeof opts.task === "function" ? opts.task : null;
-    const onError = typeof opts.onError === "function" ? opts.onError : null;
-    if (!task) return;
-    showLoadingOverlay(title, stage);
-    const run = () => {
-      window.setTimeout(() => {
-        try {
-          task();
-          setLoadingOverlayStage(finalizeStage, title);
-        } catch (err) {
-          console.error("Deferred loading task failed", err);
-          if (onError) {
-            try {
-              onError(err);
-            } catch (callbackErr) {
-              console.error("Deferred loading recovery handler failed", callbackErr);
-            }
-          }
-        } finally {
-          window.setTimeout(() => {
-            if (state.loadingVisible) hideLoadingOverlay();
-          }, holdMs);
-        }
-      }, 0);
-    };
-    if (typeof window.requestAnimationFrame === "function") {
-      window.requestAnimationFrame(() => run());
-    } else {
-      run();
-    }
+    return loadingScreensApi.runDeferredLoadingTask(options);
   }
 
   function setPrompt(text, duration = 0) {
-    state.promptText = compactPromptText(text);
-    state.promptTimer = duration;
+    return promptsApi.setPrompt(text, duration);
   }
 
   function updatePrompt(dt) {
-    if (state.promptTimer > 0) {
-      state.promptTimer -= dt;
-      if (state.promptTimer <= 0) {
-        state.promptText = "";
-      }
-    }
-
-    if (state.promptText) {
-      promptEl.textContent = state.promptText;
-      promptEl.classList.add("visible");
-    } else {
-      promptEl.classList.remove("visible");
-    }
+    return promptsApi.updatePrompt(dt);
   }
 
   function setSaveStatus(text) {
@@ -53461,6 +53235,26 @@
 
   // Install a global menu bridge and bind controls before heavy init so menu
   // actions remain usable even if later startup logic throws.
+  if (!uiModules.loadingScreens || typeof uiModules.loadingScreens.installLoadingScreens !== "function") {
+    throw new Error("Missing loading screen UI module.");
+  }
+  if (!uiModules.prompts || typeof uiModules.prompts.installPrompts !== "function") {
+    throw new Error("Missing prompt UI module.");
+  }
+  loadingScreensApi = uiModules.loadingScreens.installLoadingScreens({
+    armAutoPerformanceWarmup,
+    clamp,
+    clearStartFlowWatchdog,
+    loadingOverlayEl: loadingOverlay,
+    loadingStageEl: loadingStage,
+    loadingTitleEl: loadingTitle,
+    state,
+  });
+  promptsApi = uiModules.prompts.installPrompts({
+    compactPromptText,
+    promptEl,
+    state,
+  });
   installQaDiagnosticsBridge();
   installStartMenuApiBridge();
   window.__gameMainLoaded = true;
