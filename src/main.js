@@ -4,15 +4,17 @@
   const foundationUtils = window.ISGUtils;
   const foundationConfig = window.ISGConfig;
   const foundationState = window.ISGState;
+  const foundationWorlds = window.ISGWorlds;
   const uiModules = window.ISGUI || Object.create(null);
 
-  if (!foundationUtils || !foundationConfig || !foundationState) {
+  if (!foundationUtils || !foundationConfig || !foundationState || !foundationWorlds) {
     throw new Error("Missing Island Survival foundation modules.");
   }
 
   const { clamp, lerp } = foundationUtils;
   const {
     ACTIVE_SEED_KEY,
+    ACTIVE_WORLD_ID_KEY,
     AUTO_GRAPHICS_BASELINE,
     CHEST_SIZE,
     CONFIG,
@@ -26,6 +28,8 @@
     INVENTORY_SIZE,
     JOIN_FLOW_TIMEOUT_MS,
     LEGACY_PLAYER_NAME_KEY,
+    LEGACY_SEED_ROUTING_ENABLED,
+    LOCAL_WORLD_LIMIT,
     MAX_STACK,
     MOBILE_RENDER_DPR_CAP,
     MOBILE_RENDER_MAX_PIXELS,
@@ -46,6 +50,12 @@
     START_SCREEN_EXIT_TRANSITION_MS,
     SURFACE_GUARDIAN_CONFIG,
     TOUCH_STICK_MAX_DIST,
+    WORLD_METADATA_VERSION,
+    WORLD_MIGRATION_ASSISTANT_ENABLED,
+    WORLD_PAYLOAD_VERSION,
+    WORLD_RECORDS_ENABLED,
+    WORLD_SELECT_UI_ENABLED,
+    WORLD_THUMBNAILS_ENABLED,
     WORLD_LAYOUT_VERSION,
   } = foundationConfig;
   const {
@@ -56,6 +66,26 @@
     createQaRuntimeState,
     createTouchState,
   } = foundationState;
+  const {
+    captureThumbnail,
+    clearStoredActiveWorldId,
+    createWorld,
+    deleteWorld,
+    getCapacityStatusSync,
+    getStoredActiveWorldId,
+    getWorldSync,
+    importLegacySeedSave,
+    listWorlds,
+    listWorldsSync,
+    loadThumbnailDataUrl,
+    loadWorldPayloadSync,
+    sanitizeWorldName,
+    scanLegacySeedSaves,
+    saveWorld,
+    setStoredActiveWorldId,
+    updateWorldMetadata,
+    warmOpenDatabase,
+  } = foundationWorlds;
 
   let loadingScreensApi = null;
   let promptsApi = null;
@@ -86,11 +116,6 @@
   const buildRobotControls = document.getElementById("buildRobotControls");
   const toggleRobotRecallBtn = document.getElementById("toggleRobotRecallBtn");
   const buildRobotControlsHint = document.getElementById("buildRobotControlsHint");
-  const buildCategoryHeader = document.getElementById("buildCategoryHeader");
-  const buildCategoryBackBtn = document.getElementById("buildCategoryBack");
-  const buildCategoryHeaderIcon = document.getElementById("buildCategoryHeaderIcon");
-  const buildCategoryTitle = document.getElementById("buildCategoryTitle");
-  const buildCategoryMeta = document.getElementById("buildCategoryMeta");
   const stationMenu = document.getElementById("stationMenu");
   const stationTitle = document.getElementById("stationTitle");
   const stationOptions = document.getElementById("stationOptions");
@@ -114,8 +139,25 @@
   const loadingStage = document.getElementById("loadingStage");
   const startMenuShell = document.getElementById("startMenuShell");
   const startMainMenu = document.getElementById("startMainMenu");
+  const startWorldsMenu = document.getElementById("startWorldsMenu");
   const startPlayMenu = document.getElementById("startPlayMenu");
   const startOptionsMenu = document.getElementById("startOptionsMenu");
+  const worldMenuCapacity = document.getElementById("worldMenuCapacity");
+  const worldMenuHint = document.getElementById("worldMenuHint");
+  const worldMenuList = document.getElementById("worldMenuList");
+  const worldLegacySection = document.getElementById("worldLegacySection");
+  const worldLegacyHint = document.getElementById("worldLegacyHint");
+  const worldLegacyList = document.getElementById("worldLegacyList");
+  const worldCreatePanel = document.getElementById("worldCreatePanel");
+  const worldNameInput = document.getElementById("worldNameInput");
+  const worldModeSelect = document.getElementById("worldModeSelect");
+  const worldSeedInput = document.getElementById("worldSeedInput");
+  const worldCreateError = document.getElementById("worldCreateError");
+  const createWorldBtn = document.getElementById("createWorldBtn");
+  const joinWorldMenuBtn = document.getElementById("joinWorldMenuBtn");
+  const worldCreateConfirmBtn = document.getElementById("worldCreateConfirmBtn");
+  const worldCreateCancelBtn = document.getElementById("worldCreateCancelBtn");
+  const menuBackFromWorldsBtn = document.getElementById("menuBackFromWorldsBtn");
   const menuPlayBtn = document.getElementById("menuPlayBtn");
   const menuOptionsBtn = document.getElementById("menuOptionsBtn");
   const menuQuitBtn = document.getElementById("menuQuitBtn");
@@ -160,6 +202,8 @@
   const renderScaleInput = document.getElementById("renderScale");
   const renderScaleValue = document.getElementById("renderScaleValue");
   const resetWorldBtn = document.getElementById("resetWorldBtn");
+  const saveQuitBtn = document.getElementById("saveQuitBtn");
+  const leaveSessionBtn = document.getElementById("leaveSessionBtn");
   const unlockDebugBtn = document.getElementById("unlockDebugBtn");
   const debugUnlockStatus = document.getElementById("debugUnlockStatus");
   const debugToggle = document.getElementById("debugToggle");
@@ -842,7 +886,7 @@
 
   const ITEMS = {
     wood: { name: "Wood", color: "#c89b5f" },
-    stone: { name: "Stone", color: "#7f8894" },
+    stone: { name: "Stone", color: "#737d88" },
     ore: { name: "Ore (Legacy)", color: "#8d5aa3" },
     ingot: { name: "Ingot (Legacy)", color: "#c9b36c" },
     coal: { name: "Coal", color: "#2a2f38" },
@@ -906,7 +950,7 @@
     tree_resource: { symbol: "TREE", bg: "#2f7f4f", border: "#7ed19d", fg: "#ecffef" },
     stop_icon: { symbol: "STOP", bg: "#7f2f37", border: "#ea8d8d", fg: "#ffecec" },
     wood: { symbol: "LOG", bg: "#8a5c35", border: "#b7845a", fg: "#ffe0bc" },
-    stone: { symbol: "ROC", bg: "#5c6571", border: "#939daa", fg: "#e7edf4" },
+    stone: { symbol: "ROC", bg: "#58616b", border: "#87919d", fg: "#dbe3eb" },
     ore: { symbol: "ORE", bg: "#5c3f72", border: "#9f7bc0", fg: "#f4e8ff" },
     ingot: { symbol: "ING", bg: "#8f7c3e", border: "#d8c276", fg: "#fff5d5" },
     coal: { symbol: "COL", bg: "#1f2530", border: "#4a5b71", fg: "#e9f1ff" },
@@ -1601,7 +1645,7 @@
       land: [198, 214, 230],
       tree: "#e8f3ff",
       grassColor: "#b8d8f1",
-      rock: "#8993a1",
+      rock: "#78828e",
       ore: "#7f6a9f",
       stoneColor: BIOME_STONES[2].color,
       sand: [226, 217, 184],
@@ -2891,7 +2935,6 @@
   let attackPressed = false;
   let inventoryOpen = false;
   let buildCategory = "navigation";
-  let buildCategoryView = "overview";
   let selectedSlot = null;
   let activeSlot = 0;
   const buildRecipeCursorByCategory = Object.create(null);
@@ -2902,6 +2945,8 @@
   let resizeRaf = 0;
   let pendingResizeReason = "";
   let inventoryUiValidationSignature = "";
+  let worldMenuRefreshToken = 0;
+  let worldListRenderVersion = 0;
 
   const touch = createTouchState();
 
@@ -2927,6 +2972,17 @@
     SETTINGS_DEFAULTS,
     SURFACE_GUARDIAN_CONFIG,
   });
+  const initialActiveWorldId = getStoredActiveWorldId();
+  if (initialActiveWorldId) {
+    state.activeWorldId = initialActiveWorldId;
+    state.worldMenu.selectedWorldId = initialActiveWorldId;
+    const initialWorldRecord = getWorldSync(initialActiveWorldId);
+    if (initialWorldRecord) {
+      state.activeWorldName = initialWorldRecord.name;
+      state.activeWorldMode = initialWorldRecord.mode;
+      state.activeWorldSeed = initialWorldRecord.seed;
+    }
+  }
 
   let wasNearBench = false;
 
@@ -3217,7 +3273,7 @@
     const paletteByBiome = {
       temperate: { accent: "#8cae6b", vein: "#5c7651", speck: "#d5e3bf" },
       jungle: { accent: "#58b283", vein: "#2f7352", speck: "#b8e6cf" },
-      snow: { accent: "#a6b4c3", vein: "#7e91a7", speck: "#dbe3ec" },
+      snow: { accent: "#909aa6", vein: "#697684", speck: "#c3ccd6" },
       volcanic: { accent: "#d2815c", vein: "#723d31", speck: "#f0b293" },
       mangrove: { accent: "#79ba98", vein: "#3f725a", speck: "#c4e7d7" },
       redwood: { accent: "#7ba777", vein: "#466847", speck: "#bad7b8" },
@@ -3227,7 +3283,7 @@
     };
     const key = String(biome?.key || BIOME_KEYS.plains);
     const palette = paletteByBiome[key] || paletteByBiome[BIOME_KEYS.plains];
-    const accentBlend = isBiomeStone ? 0.34 : 0.14;
+    const accentBlend = isBiomeStone ? 0.24 : 0.08;
     const base = mixColor(baseColor, palette.accent, accentBlend);
     return {
       base,
@@ -14220,9 +14276,20 @@
     if (shouldPersistRoomInUrl()) {
       setRoomIdInUrl(roomId);
     }
+    clearActiveWorldContext({
+      keepStoredActiveWorldId: true,
+      sessionKind: "join",
+      mode: "multiplayer",
+    });
     normalizeInventoryState(state, { forceInventory: true, inventorySize: INVENTORY_SIZE });
     logJoinFlow("network join begin", { source: "topbar", roomId });
-    resetMultiplayer(roomId);
+    armStartFlowWatchdog("join", JOIN_FLOW_TIMEOUT_MS, () => {
+      if (net.ready || net.joinPhase === "playable") return;
+      failJoinToMenu("JOIN_TIMEOUT", "Join timed out");
+    });
+    showLoadingOverlay("Joining", "Connecting...");
+    initMultiplayerJoin(roomId);
+    setPrompt("Connecting...", 0.8);
   }
 
   function initMultiplayer() {
@@ -14256,6 +14323,8 @@
     net.helloRetryTimer = NET_CONFIG.helloRetryInterval;
     resetJoinHandshakeState();
     net.enabled = true;
+    state.sessionKind = "host";
+    updateSessionMenuButtons();
     net.connectIntent = "host";
     net.hostCodeRetryCount = 0;
     const profile = getLocalProfile();
@@ -14310,6 +14379,8 @@
     net.helloRetryTimer = NET_CONFIG.helloRetryInterval;
     resetJoinHandshakeState();
     net.enabled = true;
+    state.sessionKind = "join";
+    updateSessionMenuButtons();
     net.connectIntent = "join";
     net.hostCodeRetryCount = 0;
     normalizeInventoryState(state, { forceInventory: true, inventorySize: INVENTORY_SIZE });
@@ -14355,10 +14426,15 @@
   }
 
   function applyStartMenuViewClasses(nextView) {
-    const next = (nextView === "play" || nextView === "options") ? nextView : "main";
+    const next = (
+      nextView === "worlds"
+      || nextView === "play"
+      || nextView === "options"
+    ) ? nextView : "main";
     const nextOrder = START_MENU_VIEW_ORDER[next] ?? 0;
     const views = [
       { id: "main", el: startMainMenu },
+      { id: "worlds", el: startWorldsMenu },
       { id: "play", el: startPlayMenu },
       { id: "options", el: startOptionsMenu },
     ];
@@ -14379,7 +14455,11 @@
   }
 
   function setStartMenuView(view = "main", options = null) {
-    const nextView = (view === "play" || view === "options") ? view : "main";
+    const nextView = (
+      view === "worlds"
+      || view === "play"
+      || view === "options"
+    ) ? view : "main";
     const animate = options?.animate !== false;
     const prevView = currentStartMenuView;
     const prevOrder = START_MENU_VIEW_ORDER[prevView] ?? 0;
@@ -14447,7 +14527,11 @@
       menuPlayBtn.addEventListener("click", (event) => {
         event.stopPropagation();
         ensureAudioContext();
-        setStartMenuView("play");
+        if (shouldShowWorldSelectUi()) {
+          openWorldMenu();
+        } else {
+          setStartMenuView("play");
+        }
       });
     }
     if (menuOptionsBtn) {
@@ -14468,6 +14552,14 @@
       menuBackFromPlayBtn.addEventListener("click", (event) => {
         event.stopPropagation();
         ensureAudioContext();
+        setStartMenuView("main");
+      });
+    }
+    if (menuBackFromWorldsBtn) {
+      menuBackFromWorldsBtn.addEventListener("click", (event) => {
+        event.stopPropagation();
+        ensureAudioContext();
+        hideWorldCreatePanel();
         setStartMenuView("main");
       });
     }
@@ -14506,6 +14598,36 @@
         startJoin();
       });
     }
+    if (createWorldBtn) {
+      createWorldBtn.addEventListener("click", (event) => {
+        event.stopPropagation();
+        ensureAudioContext();
+        showWorldCreatePanel();
+      });
+    }
+    if (joinWorldMenuBtn) {
+      joinWorldMenuBtn.addEventListener("click", (event) => {
+        event.stopPropagation();
+        ensureAudioContext();
+        startJoin();
+      });
+    }
+    if (worldCreateCancelBtn) {
+      worldCreateCancelBtn.addEventListener("click", (event) => {
+        event.stopPropagation();
+        ensureAudioContext();
+        hideWorldCreatePanel();
+      });
+    }
+    if (worldCreateConfirmBtn) {
+      worldCreateConfirmBtn.addEventListener("click", (event) => {
+        event.stopPropagation();
+        ensureAudioContext();
+        createWorldFromMenu().catch((err) => {
+          setWorldCreateError(err?.message || "Failed to create world.");
+        });
+      });
+    }
   }
 
   function installStartMenuApiBridge() {
@@ -14515,6 +14637,10 @@
         showMain: () => {
           ensureAudioContext();
           setStartMenuView("main");
+        },
+        showWorlds: () => {
+          ensureAudioContext();
+          openWorldMenu();
         },
         showPlay: () => {
           ensureAudioContext();
@@ -14557,6 +14683,456 @@
     }
   }
 
+  function shouldUseWorldRecords() {
+    return WORLD_RECORDS_ENABLED !== false;
+  }
+
+  function shouldShowWorldSelectUi() {
+    return shouldUseWorldRecords() && WORLD_SELECT_UI_ENABLED !== false;
+  }
+
+  function shouldAllowLiveSeedSwitching() {
+    return !shouldUseWorldRecords() || !!state.debugUnlocked;
+  }
+
+  function setWorldCreateError(message = "") {
+    if (!worldCreateError) return;
+    const text = typeof message === "string" ? message.trim() : "";
+    worldCreateError.textContent = text || "World creation error";
+    worldCreateError.classList.toggle("hidden", !text);
+  }
+
+  function getDefaultWorldName() {
+    const records = listWorldsSync();
+    let index = Math.max(1, records.length + 1);
+    let candidate = `World ${index}`;
+    const usedNames = new Set(records.map((record) => String(record.name || "").toLowerCase()));
+    while (usedNames.has(candidate.toLowerCase())) {
+      index += 1;
+      candidate = `World ${index}`;
+    }
+    return candidate;
+  }
+
+  function showWorldCreatePanel() {
+    if (!worldCreatePanel) return;
+    const capacity = getCapacityStatusSync();
+    if (capacity.full) {
+      setWorldCreateError(`World limit reached (${capacity.limit}). Delete a world first.`);
+      worldCreatePanel.classList.remove("hidden");
+      return;
+    }
+    if (worldNameInput) worldNameInput.value = getDefaultWorldName();
+    if (worldModeSelect) worldModeSelect.value = "solo";
+    if (worldSeedInput) worldSeedInput.value = "";
+    setWorldCreateError("");
+    worldCreatePanel.classList.remove("hidden");
+    if (createWorldBtn) createWorldBtn.disabled = true;
+    window.setTimeout(() => {
+      try {
+        worldNameInput?.focus();
+        worldNameInput?.select();
+      } catch (err) {
+        // ignore focus failures
+      }
+    }, 0);
+  }
+
+  function hideWorldCreatePanel() {
+    worldCreatePanel?.classList.add("hidden");
+    if (createWorldBtn) createWorldBtn.disabled = false;
+    setWorldCreateError("");
+  }
+
+  function formatWorldTimestamp(timestamp) {
+    const value = Number(timestamp);
+    if (!Number.isFinite(value) || value <= 0) return "Never played";
+    try {
+      return new Date(value).toLocaleString([], {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+      });
+    } catch (err) {
+      return "Recently";
+    }
+  }
+
+  function updateWorldIdentityDisplay(seedOverride = null) {
+    if (!seedDisplay) return;
+    const seedValue = normalizeSeedValue(seedOverride ?? state.activeWorldSeed ?? state.surfaceWorld?.seed ?? state.world?.seed ?? getStoredActiveSeed() ?? "island-1");
+    if (shouldUseWorldRecords() && state.sessionKind !== "legacy-seed") {
+      const label = state.activeWorldName || (state.sessionKind === "join" ? "Joined World" : humanizeWorldSeed(seedValue));
+      seedDisplay.textContent = `World: ${label}`;
+      seedDisplay.title = state.activeWorldId
+        ? `World seed: ${seedValue}`
+        : (state.sessionKind === "join" ? `Host seed: ${seedValue}` : "World seed is fixed after creation");
+      seedDisplay.dataset.mode = "world";
+    } else {
+      seedDisplay.textContent = `Seed: ${seedValue}`;
+      seedDisplay.title = "Click to switch seed";
+      seedDisplay.dataset.mode = "seed";
+    }
+  }
+
+  function humanizeWorldSeed(seed) {
+    return String(seed || "")
+      .split("-")
+      .filter(Boolean)
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(" ") || "World";
+  }
+
+  function setActiveWorldContext(record, sessionKind = null) {
+    const normalizedRecord = record && typeof record === "object" ? record : null;
+    state.activeWorldId = normalizedRecord?.id || null;
+    state.activeWorldName = normalizedRecord?.name || "";
+    state.activeWorldMode = normalizedRecord?.mode || "solo";
+    state.activeWorldSeed = normalizeSeedValue(normalizedRecord?.seed || state.surfaceWorld?.seed || state.world?.seed || "island-1");
+    state.sessionKind = sessionKind || (state.activeWorldMode === "multiplayer" ? "host" : "solo");
+    state.pendingMenuReturnReason = "";
+    state.thumbnailCapturePending = false;
+    state.worldMenu.selectedWorldId = state.activeWorldId;
+    if (state.activeWorldId) {
+      setStoredActiveWorldId(state.activeWorldId);
+    }
+    if (LEGACY_SEED_ROUTING_ENABLED && state.activeWorldSeed) {
+      setStoredActiveSeed(state.activeWorldSeed);
+    }
+    updateWorldIdentityDisplay();
+    updateSessionMenuButtons();
+  }
+
+  function clearActiveWorldContext(options = null) {
+    const opts = options && typeof options === "object" ? options : Object.create(null);
+    state.activeWorldId = null;
+    state.activeWorldName = typeof opts.name === "string" ? opts.name : "";
+    state.activeWorldMode = typeof opts.mode === "string" ? opts.mode : "solo";
+    state.activeWorldSeed = normalizeSeedValue(opts.seed ?? state.surfaceWorld?.seed ?? state.world?.seed ?? getStoredActiveSeed() ?? "island-1");
+    state.loadedWorldId = null;
+    state.sessionKind = typeof opts.sessionKind === "string" ? opts.sessionKind : "solo";
+    state.thumbnailCapturePending = false;
+    state.pendingMenuReturnReason = typeof opts.reason === "string" ? opts.reason : "";
+    if (!opts.keepStoredActiveWorldId) {
+      clearStoredActiveWorldId();
+    }
+    updateWorldIdentityDisplay();
+    updateSessionMenuButtons();
+  }
+
+  function markLoadedWorldContext() {
+    state.loadedWorldId = state.activeWorldId || null;
+    updateWorldIdentityDisplay();
+    updateSessionMenuButtons();
+  }
+
+  function needsWorldSessionLoad() {
+    if (!state.world) return true;
+    if (shouldUseWorldRecords() && state.activeWorldId) {
+      return state.loadedWorldId !== state.activeWorldId;
+    }
+    return false;
+  }
+
+  function captureSessionThumbnailDataUrl() {
+    if (!WORLD_THUMBNAILS_ENABLED || !canvas || typeof canvas.toDataURL !== "function") return "";
+    try {
+      const width = 320;
+      const height = 180;
+      const offscreen = document.createElement("canvas");
+      offscreen.width = width;
+      offscreen.height = height;
+      const offscreenCtx = offscreen.getContext("2d", { alpha: false });
+      if (!offscreenCtx) return "";
+      offscreenCtx.imageSmoothingEnabled = true;
+      offscreenCtx.drawImage(canvas, 0, 0, width, height);
+      return offscreen.toDataURL("image/jpeg", 0.82);
+    } catch (err) {
+      return "";
+    }
+  }
+
+  async function refreshWorldMenu(options = null) {
+    if (!shouldShowWorldSelectUi()) return;
+    const opts = options && typeof options === "object" ? options : Object.create(null);
+    const token = ++worldMenuRefreshToken;
+    state.worldMenu.loading = true;
+    state.worldMenu.error = "";
+    if (worldMenuHint) {
+      worldMenuHint.textContent = "Loading saved worlds...";
+    }
+    await warmOpenDatabase();
+    if (!state.worldMenu.autoImportAttempted && WORLD_MIGRATION_ASSISTANT_ENABLED !== false) {
+      state.worldMenu.autoImportAttempted = true;
+      const existing = listWorldsSync();
+      const legacyCandidates = scanLegacySeedSaves().filter((entry) => entry.importable && !entry.importedWorldId);
+      if (existing.length === 0 && legacyCandidates.length > 0 && legacyCandidates.length <= LOCAL_WORLD_LIMIT) {
+        const fallbackName = sanitizePlayerName(state.playerName || net.localName || "", "");
+        for (const entry of legacyCandidates) {
+          try {
+            importLegacySeedSave(entry.key, {
+              name: humanizeWorldSeed(entry.seed),
+              mode: "solo",
+              lastPlayerName: fallbackName,
+            });
+          } catch (err) {
+            // leave failed imports for manual retry in the world menu
+          }
+        }
+      }
+    }
+    const records = await listWorlds();
+    const legacyCandidates = scanLegacySeedSaves().filter((entry) => entry.importable && !entry.importedWorldId);
+    if (token !== worldMenuRefreshToken) return;
+    state.worldMenu.records = Array.isArray(records) ? records : [];
+    state.worldMenu.legacyCandidates = legacyCandidates;
+    state.worldMenu.loading = false;
+    state.worldMenu.selectedWorldId = state.activeWorldId || getStoredActiveWorldId() || state.worldMenu.selectedWorldId || null;
+    renderWorldMenu(opts);
+  }
+
+  function renderWorldMenu(options = null) {
+    const opts = options && typeof options === "object" ? options : Object.create(null);
+    const records = Array.isArray(state.worldMenu.records) ? state.worldMenu.records : [];
+    const legacyCandidates = Array.isArray(state.worldMenu.legacyCandidates) ? state.worldMenu.legacyCandidates : [];
+    const capacity = getCapacityStatusSync();
+    if (worldMenuCapacity) {
+      worldMenuCapacity.textContent = `${capacity.used} / ${capacity.limit} worlds`;
+    }
+    if (worldMenuHint) {
+      worldMenuHint.textContent = records.length > 0
+        ? "Choose a world to keep playing."
+        : "Create a world or import an old seed save.";
+    }
+    if (createWorldBtn) {
+      createWorldBtn.disabled = capacity.full;
+      createWorldBtn.textContent = capacity.full ? "World Limit Reached" : "Create New World";
+    }
+    if (worldMenuList) {
+      worldMenuList.innerHTML = "";
+      if (records.length === 0) {
+        const empty = document.createElement("div");
+        empty.className = "start-world-empty";
+        empty.textContent = "No saved worlds yet. Create one to start a new island, or import an older seed-based save below.";
+        worldMenuList.appendChild(empty);
+      } else {
+        worldListRenderVersion += 1;
+        const renderVersion = worldListRenderVersion;
+        for (const record of records) {
+          const card = document.createElement("div");
+          card.className = "start-world-card";
+
+          const thumb = document.createElement("div");
+          thumb.className = "start-world-thumb";
+          thumb.textContent = "No Preview";
+          card.appendChild(thumb);
+          if (record.thumbnailId) {
+            loadThumbnailDataUrl(record.thumbnailId).then((dataUrl) => {
+              if (renderVersion !== worldListRenderVersion) return;
+              if (!dataUrl || !thumb.isConnected) return;
+              thumb.textContent = "";
+              const img = document.createElement("img");
+              img.src = dataUrl;
+              img.alt = `${record.name} preview`;
+              thumb.appendChild(img);
+            }).catch(() => {
+              // keep placeholder
+            });
+          }
+
+          const info = document.createElement("div");
+          info.className = "start-world-info";
+
+          const titleRow = document.createElement("div");
+          titleRow.className = "start-world-title-row";
+          const title = document.createElement("div");
+          title.className = "start-world-title";
+          title.textContent = record.name;
+          const mode = document.createElement("div");
+          mode.className = "start-world-mode";
+          mode.textContent = record.mode === "multiplayer" ? "Multiplayer" : "Solo";
+          titleRow.appendChild(title);
+          titleRow.appendChild(mode);
+          info.appendChild(titleRow);
+
+          const meta = document.createElement("div");
+          meta.className = "start-world-meta";
+          meta.textContent = `Last played: ${formatWorldTimestamp(record.lastPlayedAt)}${record.lastPlayerName ? ` • ${record.lastPlayerName}` : ""}`;
+          info.appendChild(meta);
+
+          const seed = document.createElement("div");
+          seed.className = "start-world-seed";
+          seed.textContent = `Seed: ${record.seed}`;
+          info.appendChild(seed);
+
+          const actions = document.createElement("div");
+          actions.className = "start-world-actions";
+          const playBtn = document.createElement("button");
+          playBtn.type = "button";
+          playBtn.className = "start-world-card-btn";
+          playBtn.textContent = record.mode === "multiplayer" ? "Host" : "Play";
+          playBtn.addEventListener("click", () => {
+            startWorldRecordSession(record, record.mode === "multiplayer" ? "host" : "solo");
+          });
+          const deleteBtn = document.createElement("button");
+          deleteBtn.type = "button";
+          deleteBtn.className = "start-world-card-btn danger";
+          deleteBtn.textContent = "Delete";
+          deleteBtn.addEventListener("click", async () => {
+            const confirmed = window.confirm(`Delete world "${record.name}"? This cannot be undone.`);
+            if (!confirmed) return;
+            deleteWorld(record.id);
+            if (state.activeWorldId === record.id) {
+              clearActiveWorldContext({ keepStoredActiveWorldId: false, sessionKind: "solo" });
+            }
+            await refreshWorldMenu({ keepView: true });
+          });
+          actions.appendChild(playBtn);
+          actions.appendChild(deleteBtn);
+          info.appendChild(actions);
+
+          card.appendChild(info);
+          worldMenuList.appendChild(card);
+        }
+      }
+    }
+    if (worldLegacySection) {
+      const showLegacy = WORLD_MIGRATION_ASSISTANT_ENABLED !== false && legacyCandidates.length > 0;
+      worldLegacySection.classList.toggle("hidden", !showLegacy);
+      if (showLegacy && worldLegacyHint) {
+        worldLegacyHint.textContent = capacity.full
+          ? "Delete a world to free a slot before importing more seed saves."
+          : "Import older seed saves into your new world list.";
+      }
+    }
+    if (worldLegacyList) {
+      worldLegacyList.innerHTML = "";
+      for (const entry of legacyCandidates) {
+        const card = document.createElement("div");
+        card.className = "start-world-card";
+        const thumb = document.createElement("div");
+        thumb.className = "start-world-thumb";
+        thumb.textContent = "Legacy";
+        card.appendChild(thumb);
+        const info = document.createElement("div");
+        info.className = "start-world-info";
+        const titleRow = document.createElement("div");
+        titleRow.className = "start-world-title-row";
+        const title = document.createElement("div");
+        title.className = "start-world-title";
+        title.textContent = humanizeWorldSeed(entry.seed);
+        const mode = document.createElement("div");
+        mode.className = "start-world-mode";
+        mode.textContent = "Legacy";
+        titleRow.appendChild(title);
+        titleRow.appendChild(mode);
+        info.appendChild(titleRow);
+        const meta = document.createElement("div");
+        meta.className = "start-world-meta";
+        meta.textContent = entry.corrupted
+          ? "This legacy save looks corrupted."
+          : `Seed: ${entry.seed}`;
+        info.appendChild(meta);
+        const actions = document.createElement("div");
+        actions.className = "start-world-actions";
+        const importBtn = document.createElement("button");
+        importBtn.type = "button";
+        importBtn.className = "start-world-card-btn secondary";
+        importBtn.textContent = "Import";
+        importBtn.disabled = capacity.full || entry.corrupted;
+        importBtn.addEventListener("click", async () => {
+          try {
+            importLegacySeedSave(entry.key, {
+              name: humanizeWorldSeed(entry.seed),
+              mode: "solo",
+              lastPlayerName: sanitizePlayerName(state.playerName || net.localName || "", ""),
+            });
+            await refreshWorldMenu({ keepView: true });
+          } catch (err) {
+            setPrompt("Legacy import failed", 1.4);
+          }
+        });
+        actions.appendChild(importBtn);
+        info.appendChild(actions);
+        card.appendChild(info);
+        worldLegacyList.appendChild(card);
+      }
+    }
+    if (!opts.keepView && currentStartMenuView === "worlds") {
+      setStartMenuView("worlds", { animate: false });
+    }
+  }
+
+  function openWorldMenu(options = null) {
+    if (!shouldShowWorldSelectUi()) {
+      setStartMenuView("play");
+      return;
+    }
+    if (!options?.preserveCreatePanel) {
+      hideWorldCreatePanel();
+    }
+    setStartMenuView("worlds");
+    refreshWorldMenu(options).catch((err) => {
+      state.worldMenu.error = err?.message || "Failed to load worlds.";
+      if (worldMenuHint) {
+        worldMenuHint.textContent = state.worldMenu.error;
+      }
+    });
+  }
+
+  function startWorldRecordSession(record, sessionKind = null) {
+    const normalizedRecord = record && typeof record === "object" ? record : null;
+    if (!normalizedRecord) return;
+    setActiveWorldContext(normalizedRecord, sessionKind || (normalizedRecord.mode === "multiplayer" ? "host" : "solo"));
+    state.world = null;
+    state.surfaceWorld = null;
+    state.loadedWorldId = null;
+    if (state.sessionKind === "host") {
+      startHost();
+    } else {
+      startSolo();
+    }
+  }
+
+  async function createWorldFromMenu() {
+    const capacity = getCapacityStatusSync();
+    if (capacity.full) {
+      setWorldCreateError(`World limit reached (${capacity.limit}). Delete a world first.`);
+      return;
+    }
+    const rawName = worldNameInput?.value ?? "";
+    const rawMode = worldModeSelect?.value ?? "solo";
+    const rawSeed = worldSeedInput?.value ?? "";
+    const generatedSeed = rawSeed && rawSeed.trim()
+      ? normalizeSeedValue(rawSeed)
+      : `island-${Math.random().toString(36).slice(2, 8)}`;
+    const record = createWorld({
+      name: sanitizeWorldName(rawName, getDefaultWorldName()),
+      mode: rawMode,
+      seed: generatedSeed,
+      lastPlayerName: sanitizePlayerName(state.playerName || net.localName || "", ""),
+      saveVersion: SAVE_VERSION,
+      worldLayoutVersion: WORLD_LAYOUT_VERSION,
+    });
+    hideWorldCreatePanel();
+    await refreshWorldMenu({ keepView: true });
+    startWorldRecordSession(record, record.mode === "multiplayer" ? "host" : "solo");
+  }
+
+  function updateSessionMenuButtons() {
+    if (saveQuitBtn) {
+      const ownerSession = state.sessionKind === "solo" || state.sessionKind === "host";
+      saveQuitBtn.classList.toggle("hidden", !ownerSession);
+      saveQuitBtn.disabled = !ownerSession || (!state.activeWorldId && shouldUseWorldRecords());
+    }
+    if (leaveSessionBtn) {
+      leaveSessionBtn.classList.toggle("hidden", state.sessionKind !== "join");
+      leaveSessionBtn.disabled = state.sessionKind !== "join";
+    }
+  }
+
   function quitFromStartMenu() {
     try {
       window.close();
@@ -14583,12 +15159,28 @@
     if (startScreen) {
       startScreen.classList.remove("start-screen-transition-out");
       startScreen.classList.remove("hidden");
-      setStartMenuView("play", { animate: false });
+      if (shouldShowWorldSelectUi()) {
+        openWorldMenu({ keepView: true });
+        setStartMenuView("worlds", { animate: false });
+      } else {
+        setStartMenuView("play", { animate: false });
+      }
     }
     setPrompt(promptText, 2.2);
   }
 
   function startSolo() {
+    if (!state.activeWorldId && shouldUseWorldRecords()) {
+      openWorldMenu();
+      setPrompt("Select a world first", 1.2);
+      return;
+    }
+    if (shouldUseWorldRecords() && state.activeWorldId && state.activeWorldMode === "multiplayer") {
+      openWorldMenu({ keepView: true });
+      setPrompt("Use Host for multiplayer worlds", 1.3);
+      return;
+    }
+    state.sessionKind = "solo";
     if (state.loadingVisible) hideLoadingOverlay();
     armStartFlowWatchdog("solo", START_FLOW_TIMEOUT_MS, () => {
       if (!state.loadingVisible || state.loadingTitle !== "Loading") return;
@@ -14638,9 +15230,35 @@
     transitionStartScreenToLoading("Loading", "Preparing...", () => {
       try {
         if (!state.world) {
+          const shouldLoad = needsWorldSessionLoad();
+          if (!shouldLoad) {
+            updateAllSlotUI();
+            setLoadingOverlayStage("Ready", "Loading");
+            window.setTimeout(() => {
+              hideLoadingOverlay();
+            }, 120);
+            return;
+          }
           runDeferredLoadingTask({
             title: "Loading",
             stage: "Generating...",
+            finalStage: "Ready",
+            task: () => {
+              setLoadingOverlayStage("Restoring...", "Loading");
+              loadOrCreateGame();
+              setLoadingOverlayStage("Syncing...", "Loading");
+              updateAllSlotUI();
+            },
+            onError: () => {
+              restoreStartMenuAfterStartFailure("Failed to start solo");
+            },
+          });
+          return;
+        }
+        if (needsWorldSessionLoad()) {
+          runDeferredLoadingTask({
+            title: "Loading",
+            stage: "Restoring...",
             finalStage: "Ready",
             task: () => {
               setLoadingOverlayStage("Restoring...", "Loading");
@@ -14666,6 +15284,17 @@
   }
 
   function startHost() {
+    if (!state.activeWorldId && shouldUseWorldRecords()) {
+      openWorldMenu();
+      setPrompt("Select a multiplayer world first", 1.2);
+      return;
+    }
+    if (shouldUseWorldRecords() && state.activeWorldId && state.activeWorldMode !== "multiplayer") {
+      openWorldMenu({ keepView: true });
+      setPrompt("Choose a multiplayer world to host", 1.3);
+      return;
+    }
+    state.sessionKind = "host";
     if (state.loadingVisible) hideLoadingOverlay();
     armStartFlowWatchdog("host", START_FLOW_TIMEOUT_MS, () => {
       if (!state.loadingVisible || state.loadingTitle !== "Loading") return;
@@ -14674,7 +15303,7 @@
     });
     transitionStartScreenToLoading("Loading", "Preparing host...", () => {
       try {
-        if (!state.world) {
+        if (!state.world || needsWorldSessionLoad()) {
           runDeferredLoadingTask({
             title: "Loading",
             stage: "Generating...",
@@ -14714,6 +15343,11 @@
       return;
     }
     const roomId = joinRequest.roomId;
+    clearActiveWorldContext({
+      keepStoredActiveWorldId: true,
+      sessionKind: "join",
+      mode: "multiplayer",
+    });
     normalizeInventoryState(state, { forceInventory: true, inventorySize: INVENTORY_SIZE });
     armStartFlowWatchdog("join", JOIN_FLOW_TIMEOUT_MS, () => {
       if (net.ready || net.joinPhase === "playable") return;
@@ -15461,6 +16095,11 @@
           if (net.remoteInventoryFingerprintByPeer instanceof Map) {
             net.remoteInventoryFingerprintByPeer.delete(message.id);
           }
+        }
+        break;
+      case "hostClosed":
+        if (!net.isHost) {
+          failJoinToMenu("HOST_CLOSED", "Host ended the session");
         }
         break;
       default:
@@ -16245,6 +16884,9 @@
     return {
       type: "snapshot",
       seq,
+      worldId: state.activeWorldId || null,
+      worldName: state.activeWorldName || "",
+      worldMode: state.activeWorldMode || (net.isHost ? "multiplayer" : "solo"),
       seed: surface.seed,
       islandLayout: serializeIslandLayout(surface),
       timeOfDay: state.timeOfDay,
@@ -17235,7 +17877,13 @@
     state.isNight = !!snapshot.isNight;
     state.gameWon = !!snapshot.gameWon;
     updateTimeUI();
-    seedDisplay.textContent = `Seed: ${snapshot.seed}`;
+    state.activeWorldName = typeof snapshot.worldName === "string" ? snapshot.worldName : state.activeWorldName;
+    state.activeWorldMode = typeof snapshot.worldMode === "string" ? snapshot.worldMode : "multiplayer";
+    state.activeWorldSeed = normalizeSeedValue(snapshot.seed);
+    state.sessionKind = "join";
+    state.loadedWorldId = null;
+    updateWorldIdentityDisplay(snapshot.seed);
+    updateSessionMenuButtons();
     applyPlayersSnapshot(snapshot.players);
     if (!CAVES_ENABLED) {
       requestCaveDisableRecovery("snapshot-players-caves-disabled", { windowSeconds: 1.0 });
@@ -19520,6 +20168,11 @@
     net.joinPromptGuardUntil = 0;
     net.joinPromptActive = false;
     net.connectIntent = "idle";
+    clearActiveWorldContext({
+      keepStoredActiveWorldId: true,
+      sessionKind: "solo",
+      mode: "solo",
+    });
     if (state.loadingVisible && state.loadingTitle === "Joining") {
       hideLoadingOverlay();
     }
@@ -19531,7 +20184,12 @@
     if (startScreen) {
       startScreen.classList.remove("start-screen-transition-out");
       startScreen.classList.remove("hidden");
-      setStartMenuView("play", { animate: false });
+      if (shouldShowWorldSelectUi()) {
+        openWorldMenu({ keepView: true });
+        setStartMenuView("worlds", { animate: false });
+      } else {
+        setStartMenuView("play", { animate: false });
+      }
     }
     setPrompt(`${detail} (${code})`, 2.4);
   }
@@ -28868,6 +29526,36 @@
     return HOTBAR_SIZE + localIndex;
   }
 
+  function isInventoryUiScope(scope) {
+    return scope === "inventory" || scope === "hotbar" || scope === "bag";
+  }
+
+  function getInventoryUiSlotIndex(scope, index) {
+    if (!Number.isInteger(index)) return -1;
+    if (scope === "hotbar") {
+      return index >= 0 && index < HOTBAR_SIZE ? index : -1;
+    }
+    if (scope === "bag") {
+      return getBackpackInventoryIndex(index);
+    }
+    if (scope === "inventory") {
+      return index >= 0 && index < INVENTORY_SIZE ? index : -1;
+    }
+    return -1;
+  }
+
+  function getInventoryUiScopeLabel(scope, inventoryIndex) {
+    if (scope === "inventory" && Number.isInteger(inventoryIndex)) {
+      return inventoryIndex < HOTBAR_SIZE ? "hotbar" : "bag";
+    }
+    return scope;
+  }
+
+  function getSelectedInventorySlotIndex() {
+    if (!selectedSlot || !isInventoryUiScope(selectedSlot.scope)) return -1;
+    return getInventoryUiSlotIndex(selectedSlot.scope, selectedSlot.index);
+  }
+
   function buildInventoryUiValidationReport() {
     const issues = [];
     const seenIndices = new Map();
@@ -28903,8 +29591,9 @@
       registerView("inventory", i, inventorySlots[i]?.inventoryIndex);
     }
 
-    if (selectedSlot?.scope === "inventory" && !seenIndices.has(selectedSlot.index)) {
-      issues.push(`selected inventory slot ${selectedSlot.index} is not mapped to a visible slot`);
+    const selectedInventoryIndex = getSelectedInventorySlotIndex();
+    if (selectedInventoryIndex >= 0 && !seenIndices.has(selectedInventoryIndex)) {
+      issues.push(`selected inventory slot ${selectedInventoryIndex} is not mapped to a visible slot`);
     }
 
     if (Array.isArray(state.inventory)) {
@@ -28947,16 +29636,24 @@
 
   function logInventoryMoveDebug(fromScope, fromIndex, toScope, toIndex, movedItemId = null) {
     if (!state.debugUnlocked) return;
-    const fromList = fromScope === "inventory" ? state.inventory : state.activeChest?.storage;
-    const toList = toScope === "inventory" ? state.inventory : state.activeChest?.storage;
+    const fromInventoryIndex = isInventoryUiScope(fromScope)
+      ? getInventoryUiSlotIndex(fromScope, fromIndex)
+      : fromIndex;
+    const toInventoryIndex = isInventoryUiScope(toScope)
+      ? getInventoryUiSlotIndex(toScope, toIndex)
+      : toIndex;
+    const fromList = isInventoryUiScope(fromScope) ? state.inventory : state.activeChest?.storage;
+    const toList = isInventoryUiScope(toScope) ? state.inventory : state.activeChest?.storage;
     console.debug("[Inventory Move]", {
-      fromScope,
+      fromScope: getInventoryUiScopeLabel(fromScope, fromInventoryIndex),
       fromIndex,
-      toScope,
+      fromInventoryIndex,
+      toScope: getInventoryUiScopeLabel(toScope, toInventoryIndex),
       toIndex,
-      movedItemId: movedItemId ?? fromList?.[fromIndex]?.id ?? null,
-      fromItem: fromList?.[fromIndex]?.id ?? null,
-      toItem: toList?.[toIndex]?.id ?? null,
+      toInventoryIndex,
+      movedItemId: movedItemId ?? fromList?.[fromInventoryIndex]?.id ?? null,
+      fromItem: fromList?.[fromInventoryIndex]?.id ?? null,
+      toItem: toList?.[toInventoryIndex]?.id ?? null,
     });
   }
 
@@ -29283,6 +29980,17 @@
     return `${SAVE_KEY_PREFIX}${normalizeSeedValue(seed)}`;
   }
 
+  function getActiveWorldRecordId() {
+    if (!shouldUseWorldRecords()) return null;
+    return state.activeWorldId || getStoredActiveWorldId() || null;
+  }
+
+  function getActiveWorldRecord() {
+    const worldId = getActiveWorldRecordId();
+    if (!worldId) return null;
+    return getWorldSync(worldId);
+  }
+
   function getSeedAliasCandidates(seed) {
     const raw = String(seed ?? "").trim();
     const candidates = new Set();
@@ -29298,6 +30006,10 @@
   }
 
   function getStoredActiveSeed() {
+    const activeWorld = getActiveWorldRecord();
+    if (activeWorld?.seed) {
+      return normalizeSeedValue(activeWorld.seed);
+    }
     try {
       const seed = localStorage.getItem(ACTIVE_SEED_KEY);
       return seed ? normalizeSeedValue(seed) : null;
@@ -29535,8 +30247,30 @@
     };
 
     try {
-      localStorage.setItem(seedKey, JSON.stringify(data));
+      const activeWorldId = getActiveWorldRecordId();
+      if (activeWorldId) {
+        const metadataPatch = {
+          seed: surface.seed,
+          mode: state.activeWorldMode || (net.isHost ? "multiplayer" : "solo"),
+          lastPlayedAt: Date.now(),
+          lastPlayerName: sanitizePlayerName(state.playerName || net.localName || "", ""),
+          saveVersion: SAVE_VERSION,
+          worldLayoutVersion: WORLD_LAYOUT_VERSION,
+        };
+        saveWorld(activeWorldId, data, metadataPatch).catch((err) => {
+          console.warn("World save mirror sync failed", err);
+        });
+        const savedRecord = updateWorldMetadata(activeWorldId, metadataPatch);
+        if (savedRecord) {
+          state.activeWorldName = savedRecord.name;
+          state.activeWorldMode = savedRecord.mode;
+          state.activeWorldSeed = savedRecord.seed;
+        }
+      } else {
+        localStorage.setItem(seedKey, JSON.stringify(data));
+      }
       setStoredActiveSeed(surface.seed);
+      updateWorldIdentityDisplay(surface.seed);
       setSaveStatus("Saved");
     } catch (err) {
       setSaveStatus("Save failed");
@@ -29550,6 +30284,13 @@
   }
 
   function loadGame(seedStr = null) {
+    const activeWorldId = getActiveWorldRecordId();
+    if (activeWorldId) {
+      const envelope = loadWorldPayloadSync(activeWorldId);
+      if (envelope?.savePayload && typeof envelope.savePayload === "object") {
+        return envelope.savePayload;
+      }
+    }
     const requestedInput = seedStr ?? getStoredActiveSeed() ?? "island-1";
     const requestedSeed = normalizeSeedValue(requestedInput);
     const match = readSaveForSeed(requestedInput);
@@ -33220,8 +33961,21 @@
     setSaveStatus("Saving...");
     state.saveTimer = CONFIG.saveInterval;
 
+    if (state.activeWorldId) {
+      state.activeWorldSeed = world.seed;
+      updateWorldMetadata(state.activeWorldId, {
+        seed: world.seed,
+        mode: state.activeWorldMode || (state.sessionKind === "host" ? "multiplayer" : "solo"),
+        lastPlayerName: sanitizePlayerName(state.playerName || net.localName || "", ""),
+        saveVersion: SAVE_VERSION,
+        worldLayoutVersion: WORLD_LAYOUT_VERSION,
+      });
+    } else {
+      state.activeWorldSeed = world.seed;
+    }
+    state.loadedWorldId = state.activeWorldId || null;
     setStoredActiveSeed(world.seed);
-    seedDisplay.textContent = `Seed: ${world.seed}`;
+    updateWorldIdentityDisplay(world.seed);
     updateToolDisplay();
     updateHealthUI();
     updateTimeUI();
@@ -33237,7 +33991,7 @@
 
   function loadOrCreateGame(preferredSeed = null) {
     applyAdaptiveGraphicsBaseline({ persist: false, resize: true, syncCadence: true });
-    const targetSeed = normalizeSeedValue(preferredSeed ?? getStoredActiveSeed() ?? "island-1");
+    const targetSeed = normalizeSeedValue(preferredSeed ?? state.activeWorldSeed ?? getStoredActiveSeed() ?? "island-1");
     const savedRaw = loadGame(targetSeed);
     const saved = migrateSave(savedRaw);
     if (saved) {
@@ -33549,8 +34303,21 @@
         setSaveStatus("Saving...");
       }
 
+      if (state.activeWorldId) {
+        state.activeWorldSeed = world.seed;
+        updateWorldMetadata(state.activeWorldId, {
+          seed: world.seed,
+          mode: state.activeWorldMode || (state.sessionKind === "host" ? "multiplayer" : "solo"),
+          lastPlayerName: sanitizePlayerName(state.playerName || net.localName || "", ""),
+          saveVersion: SAVE_VERSION,
+          worldLayoutVersion: WORLD_LAYOUT_VERSION,
+        });
+      } else {
+        state.activeWorldSeed = world.seed;
+      }
+      state.loadedWorldId = state.activeWorldId || null;
       setStoredActiveSeed(world.seed);
-      seedDisplay.textContent = `Seed: ${world.seed}`;
+      updateWorldIdentityDisplay(world.seed);
       updateToolDisplay();
       updateHealthUI();
       updateTimeUI();
@@ -36226,8 +36993,9 @@
   }
 
   function getDropSourceSlotIndex() {
-    if (selectedSlot?.scope === "inventory" && Number.isInteger(selectedSlot.index)) {
-      return clamp(selectedSlot.index, 0, INVENTORY_SIZE - 1);
+    const selectedInventoryIndex = getSelectedInventorySlotIndex();
+    if (selectedInventoryIndex >= 0) {
+      return clamp(selectedInventoryIndex, 0, INVENTORY_SIZE - 1);
     }
     return clamp(activeSlot, 0, HOTBAR_SIZE - 1);
   }
@@ -36274,7 +37042,7 @@
     }
     slot.id = null;
     slot.qty = 0;
-    if (selectedSlot?.scope === "inventory" && selectedSlot.index === slotIndex) {
+    if (getSelectedInventorySlotIndex() === slotIndex) {
       selectedSlot = null;
     }
     updateAllSlotUI();
@@ -36525,11 +37293,12 @@
 
   function updateAllSlotUI() {
     const inventoryData = Array.isArray(state.inventory) ? state.inventory : null;
+    const selectedInventoryIndex = getSelectedInventorySlotIndex();
     for (let i = 0; i < hotbarSlots.length; i += 1) {
       const view = hotbarSlots[i];
       const slotIndex = view?.inventoryIndex ?? i;
       const slotData = inventoryData ? (inventoryData[slotIndex] ?? null) : null;
-      const selected = !!(selectedSlot && selectedSlot.scope === "inventory" && selectedSlot.index === slotIndex);
+      const selected = selectedInventoryIndex === slotIndex;
       const active = slotIndex === activeSlot;
       applySlotView(view, slotData, selected, active);
     }
@@ -36538,7 +37307,7 @@
       const view = inventorySlots[i];
       const slotIndex = view?.inventoryIndex ?? getBackpackInventoryIndex(i);
       const slotData = inventoryData ? (inventoryData[slotIndex] ?? null) : null;
-      const selected = !!(selectedSlot && selectedSlot.scope === "inventory" && selectedSlot.index === slotIndex);
+      const selected = selectedInventoryIndex === slotIndex;
       applySlotView(view, slotData, selected, false);
     }
 
@@ -37861,19 +38630,23 @@
   function handleSlotClick(scope, index) {
     if (inventoryOpen || state.activeChest) {
       const chestStorage = state.activeChest?.storage || null;
-      const sourceList = scope === "inventory" ? state.inventory : chestStorage;
-      if (!sourceList || !sourceList[index]) return;
+      const inventoryIndex = isInventoryUiScope(scope)
+        ? getInventoryUiSlotIndex(scope, index)
+        : -1;
+      const sourceList = isInventoryUiScope(scope) ? state.inventory : chestStorage;
+      const sourceIndex = isInventoryUiScope(scope) ? inventoryIndex : index;
+      if (!sourceList || sourceIndex < 0 || !sourceList[sourceIndex]) return;
 
-      if (!selectedSlot && chestStorage && sourceList[index]?.id) {
-        const movingItemId = sourceList[index]?.id ?? null;
-        const quickMoveTarget = scope === "inventory"
-          ? moveSlotToFirstAvailable(state.inventory, index, chestStorage)
-          : moveSlotToFirstAvailable(chestStorage, index, state.inventory);
+      if (!selectedSlot && chestStorage && sourceList[sourceIndex]?.id) {
+        const movingItemId = sourceList[sourceIndex]?.id ?? null;
+        const quickMoveTarget = isInventoryUiScope(scope)
+          ? moveSlotToFirstAvailable(state.inventory, sourceIndex, chestStorage)
+          : moveSlotToFirstAvailable(chestStorage, sourceIndex, state.inventory);
         if (quickMoveTarget >= 0) {
           logInventoryMoveDebug(
             scope,
             index,
-            scope === "inventory" ? "chest" : "inventory",
+            isInventoryUiScope(scope) ? "chest" : "inventory",
             quickMoveTarget,
             movingItemId,
           );
@@ -37885,23 +38658,28 @@
       }
 
       if (!selectedSlot) {
-        if (sourceList[index]?.id) {
+        if (sourceList[sourceIndex]?.id) {
           selectedSlot = { scope, index };
         }
       } else if (selectedSlot.scope === scope && selectedSlot.index === index) {
         selectedSlot = null;
       } else {
-        const fromList = selectedSlot.scope === "inventory" ? state.inventory : state.activeChest?.storage;
-        const toList = scope === "inventory" ? state.inventory : state.activeChest?.storage;
-        if (fromList && toList) {
+        const fromInventoryIndex = isInventoryUiScope(selectedSlot.scope)
+          ? getInventoryUiSlotIndex(selectedSlot.scope, selectedSlot.index)
+          : -1;
+        const fromList = isInventoryUiScope(selectedSlot.scope) ? state.inventory : state.activeChest?.storage;
+        const toList = isInventoryUiScope(scope) ? state.inventory : state.activeChest?.storage;
+        const fromIndex = isInventoryUiScope(selectedSlot.scope) ? fromInventoryIndex : selectedSlot.index;
+        const toIndex = isInventoryUiScope(scope) ? inventoryIndex : index;
+        if (fromList && toList && fromIndex >= 0 && toIndex >= 0) {
           logInventoryMoveDebug(
             selectedSlot.scope,
             selectedSlot.index,
             scope,
             index,
-            fromList?.[selectedSlot.index]?.id ?? null,
+            fromList?.[fromIndex]?.id ?? null,
           );
-          moveSlotBetween(fromList, selectedSlot.index, toList, index);
+          moveSlotBetween(fromList, fromIndex, toList, toIndex);
           markDirty();
           if (state.activeChest) {
             sendChestUpdate(state.activeChest);
@@ -37913,7 +38691,7 @@
       return;
     }
 
-    if (scope === "inventory" && index < HOTBAR_SIZE) {
+    if ((scope === "hotbar") || (scope === "inventory" && index < HOTBAR_SIZE)) {
       setActiveSlot(index);
     }
   }
@@ -37931,7 +38709,7 @@
       el.addEventListener("pointerdown", (event) => {
         event.preventDefault();
         ensureAudioContext();
-        handleSlotClick("inventory", i);
+        handleSlotClick("hotbar", i);
       });
       hotbarEl.appendChild(el);
       hotbarSlots.push({ el, item, count, inventoryIndex: i });
@@ -37951,7 +38729,7 @@
       el.addEventListener("pointerdown", (event) => {
         event.preventDefault();
         ensureAudioContext();
-        handleSlotClick("inventory", inventoryIndex);
+        handleSlotClick("bag", i);
       });
       inventorySlotsEl.appendChild(el);
       inventorySlots.push({ el, item, count, inventoryIndex });
@@ -38691,51 +39469,16 @@
   function updateBuildCategoryTiles() {
     for (const tab of buildCategoryTabs) {
       const categoryId = tab.dataset.category;
-      const active = buildCategoryView === "detail" && categoryId === buildCategory;
+      const active = categoryId === buildCategory;
       tab.classList.toggle("active", active);
       tab.setAttribute("aria-selected", active ? "true" : "false");
-      let countEl = tab.querySelector(".build-category-count");
-      if (!countEl) {
-        countEl = document.createElement("span");
-        countEl.className = "build-category-count";
-        tab.appendChild(countEl);
-      }
-      const count = getBuildCategoryRecipeCount(categoryId);
-      countEl.textContent = `${count} ${count === 1 ? "item" : "items"}`;
     }
   }
 
-  function syncBuildCategoryHeader() {
-    if (!buildMenu) return;
-    const detailMode = buildCategoryView === "detail";
-    buildMenu.classList.toggle("build-menu-detail-view", detailMode);
-    if (buildCategoryHeader) {
-      buildCategoryHeader.classList.toggle("hidden", !detailMode);
-    }
-    if (!detailMode) return;
-    const def = getBuildCategoryDefinition(buildCategory);
-    if (buildCategoryTitle) buildCategoryTitle.textContent = def.label;
-    if (buildCategoryMeta) buildCategoryMeta.textContent = def.description;
-    if (buildCategoryHeaderIcon) {
-      applyItemVisual(buildCategoryHeaderIcon, def.icon || def.id, true);
-    }
-  }
-
-  function setBuildCategoryHint(categoryId = null) {
+  function setBuildCategoryHint(categoryId) {
     if (!buildCategoryHint) return;
-    if (!categoryId) {
-      const totalCategories = BUILD_CATEGORY_DEFS.length;
-      const totalRecipes = BUILD_CATEGORY_DEFS.reduce((sum, entry) => sum + getBuildCategoryRecipeCount(entry.id), 0);
-      buildCategoryHint.textContent = `Choose a crafting folder. ${totalCategories} folders • ${totalRecipes} recipes.`;
-      return;
-    }
     const def = getBuildCategoryDefinition(categoryId);
-    const recipeCount = getBuildCategoryRecipeCount(def.id);
-    if (buildCategoryView === "detail" && categoryId === buildCategory) {
-      buildCategoryHint.textContent = `${recipeCount} ${recipeCount === 1 ? "recipe" : "recipes"} in ${def.label.toLowerCase()}.`;
-      return;
-    }
-    buildCategoryHint.textContent = `${def.description} ${recipeCount} ${recipeCount === 1 ? "recipe" : "recipes"}.`;
+    buildCategoryHint.textContent = def?.description || "";
   }
 
   function setBuildCategory(categoryId, shouldRender = true) {
@@ -38743,22 +39486,8 @@
     buildCategory = def.id;
     buildRecipeDetailsExpanded = false;
     updateBuildCategoryTiles();
-    syncBuildCategoryHeader();
-    setBuildCategoryHint(buildCategoryView === "detail" ? buildCategory : null);
+    setBuildCategoryHint(buildCategory);
     if (shouldRender) renderBuildMenu();
-  }
-
-  function showBuildCategoryOverview(shouldRender = true) {
-    buildCategoryView = "overview";
-    updateBuildCategoryTiles();
-    syncBuildCategoryHeader();
-    setBuildCategoryHint(null);
-    if (shouldRender) renderBuildMenu();
-  }
-
-  function openBuildCategory(categoryId, shouldRender = true) {
-    buildCategoryView = "detail";
-    setBuildCategory(categoryId, shouldRender);
   }
 
   function isUpgradeRecipe(recipe) {
@@ -38887,29 +39616,6 @@
     renderBuildRobotControls();
     buildList.innerHTML = "";
     updateBuildCategoryTiles();
-    syncBuildCategoryHeader();
-    buildList.classList.remove("build-menu-overview", "build-recipe-grid");
-    if (buildCategoryView !== "detail") {
-      setBuildCategoryHint(null);
-      buildList.classList.add("build-menu-overview");
-      const overview = document.createElement("div");
-      overview.className = "build-overview-card";
-      const eyebrow = document.createElement("div");
-      eyebrow.className = "build-overview-eyebrow";
-      eyebrow.textContent = "Crafting Folders";
-      const title = document.createElement("div");
-      title.className = "build-overview-title";
-      title.textContent = "Choose a category to open its recipes.";
-      const desc = document.createElement("div");
-      desc.className = "build-overview-desc";
-      desc.textContent = "This keeps travel, homes, stations, survival gear, and upgrades in cleaner visual folders instead of one long stack.";
-      overview.appendChild(eyebrow);
-      overview.appendChild(title);
-      overview.appendChild(desc);
-      buildList.appendChild(overview);
-      return;
-    }
-    buildList.classList.add("build-recipe-grid");
     setBuildCategoryHint(buildCategory);
     const recipes = getBuildRecipesForCategory(buildCategory);
     if (!recipes.length) {
@@ -38922,26 +39628,18 @@
     for (const recipe of recipes) {
       const upgradeRecipe = isUpgradeRecipe(recipe);
       const card = document.createElement("div");
-      card.className = "recipe-card build-recipe-card";
-      const header = document.createElement("div");
-      header.className = "recipe-card-header";
+      card.className = "recipe-card";
       const icon = document.createElement("div");
-      icon.className = "recipe-icon build-recipe-icon";
+      icon.className = "recipe-icon";
       applyItemVisual(icon, recipe.icon || recipe.id, true);
-      const titleWrap = document.createElement("div");
-      titleWrap.className = "recipe-card-title-wrap";
       const title = document.createElement("div");
       title.className = "recipe-title";
       title.textContent = recipe.name;
       const desc = document.createElement("div");
-      desc.className = "recipe-desc build-recipe-desc";
+      desc.className = "recipe-desc";
       desc.textContent = compactUiSentence(recipe.description || "", 44);
-      titleWrap.appendChild(title);
-      if (desc.textContent) titleWrap.appendChild(desc);
-      header.appendChild(icon);
-      header.appendChild(titleWrap);
       const cost = document.createElement("div");
-      cost.className = "recipe-cost build-recipe-cost";
+      cost.className = "recipe-cost";
       if (recipe.cost && isInfiniteResourcesEnabled()) {
         const free = document.createElement("span");
         free.className = "recipe-flow-arrow";
@@ -38994,7 +39692,9 @@
       }
       button.addEventListener("click", () => craftRecipe(recipe));
 
-      card.appendChild(header);
+      card.appendChild(icon);
+      card.appendChild(title);
+      if (desc.textContent) card.appendChild(desc);
       if (recipe.cost || Object.keys(getRecipeOutput(recipe)).length > 0) card.appendChild(cost);
       if (disabled && lockReason) {
         const lock = document.createElement("div");
@@ -39732,6 +40432,121 @@
     settingsPanel.classList.add("hidden");
   }
 
+  function closeRuntimePanelsForMenuReturn() {
+    closeSettingsPanel();
+    if (debugPanel) debugPanel.classList.add("hidden");
+    closeStationMenu();
+    closeChest();
+    closeInventory();
+    closeShipRepairPanel();
+    if (buildMenu) buildMenu.classList.add("hidden");
+    if (endScreen) {
+      endScreen.classList.add("hidden");
+      endScreen.classList.remove("animate");
+      endScreen.classList.remove("text-ready");
+    }
+  }
+
+  function disconnectMultiplayerSession(reason = "menuReturn") {
+    rollbackAllPendingClientRequests();
+    if (net.isHost && net.connections instanceof Map && net.connections.size > 0) {
+      for (const conn of net.connections.values()) {
+        try {
+          sendConnPayload(conn, { type: "hostClosed", reason });
+        } catch (err) {
+          // ignore host-close send failures
+        }
+      }
+    }
+    try {
+      net.hostConn?.close();
+    } catch (err) {
+      // ignore close failures
+    }
+    if (net.connections instanceof Map && net.connections.size > 0) {
+      for (const conn of net.connections.values()) {
+        try {
+          conn?.close?.();
+        } catch (err) {
+          // ignore close failures
+        }
+      }
+    }
+    try {
+      net.peer?.destroy();
+    } catch (err) {
+      // ignore destroy failures
+    }
+    net.enabled = false;
+    net.ready = false;
+    net.isHost = false;
+    net.peer = null;
+    net.hostConn = null;
+    net.playerId = null;
+    net.roomId = null;
+    net.hostId = null;
+    net.connectIntent = "idle";
+    net.connections.clear();
+    net.players.clear();
+    net.pendingPlaces.clear();
+    net.pendingHousePlaces.clear();
+    net.pendingHouseMoves.clear();
+    net.pendingBreaks.clear();
+    net.debugBoatPlaceReceipts.clear();
+    resetNetSequenceState();
+    syncNetworkCadenceTimers({ reset: true });
+    updateMpStatus("MP: Offline");
+    if (roomDisplay) {
+      roomDisplay.textContent = "R: --";
+    }
+  }
+
+  async function returnToWorldMenu(reason = "menu") {
+    clearStartFlowWatchdog();
+    if (state.loadingVisible) hideLoadingOverlay();
+    closeRuntimePanelsForMenuReturn();
+    disconnectMultiplayerSession(reason);
+    state.pendingMenuReturnReason = reason;
+    if (startScreen) {
+      startScreen.classList.remove("hidden");
+      startScreen.classList.remove("start-screen-transition-out");
+    }
+    if (shouldShowWorldSelectUi()) {
+      await refreshWorldMenu({ keepView: true });
+      setStartMenuView("worlds", { animate: false });
+    } else {
+      setStartMenuView("main", { animate: false });
+    }
+  }
+
+  async function saveAndQuitToMenu() {
+    if (state.sessionKind === "join") {
+      await leaveJoinSessionToMenu();
+      return;
+    }
+    closeSettingsPanel();
+    state.thumbnailCapturePending = true;
+    if (WORLD_THUMBNAILS_ENABLED && state.activeWorldId) {
+      const dataUrl = captureSessionThumbnailDataUrl();
+      if (dataUrl) {
+        await captureThumbnail(state.activeWorldId, dataUrl);
+      }
+    }
+    saveGame();
+    state.thumbnailCapturePending = false;
+    await returnToWorldMenu("save-and-quit");
+  }
+
+  async function leaveJoinSessionToMenu() {
+    closeSettingsPanel();
+    clearActiveWorldContext({
+      keepStoredActiveWorldId: true,
+      sessionKind: "solo",
+      mode: "solo",
+    });
+    await returnToWorldMenu("leave-session");
+  }
+
   function toggleSettingsPanel() {
     if (!settingsPanel) return;
     const opening = settingsPanel.classList.contains("hidden");
@@ -39777,13 +40592,16 @@
       setPrompt("Host only", 1);
       return;
     }
-    const seed = normalizeSeedValue(state.surfaceWorld?.seed || getStoredActiveSeed() || "island-1");
-    const confirmed = window.confirm(`Reset world "${seed}" and clear all progress?`);
+    const seed = normalizeSeedValue(state.activeWorldSeed || state.surfaceWorld?.seed || getStoredActiveSeed() || "island-1");
+    const label = state.activeWorldName || seed;
+    const confirmed = window.confirm(`Reset world "${label}" and clear all progress?`);
     if (!confirmed) return;
-    try {
-      localStorage.removeItem(getSeedSaveKey(seed));
-    } catch (err) {
-      // ignore delete failures
+    if (!state.activeWorldId) {
+      try {
+        localStorage.removeItem(getSeedSaveKey(seed));
+      } catch (err) {
+        // ignore delete failures
+      }
     }
     setDebugUnlocked(false);
     closeSettingsPanel();
@@ -39795,7 +40613,7 @@
         setLoadingOverlayStage("Syncing...", "Loading");
         startNewGame(seed);
         saveGame();
-        setPrompt(`World reset (${seed})`, 1.4);
+        setPrompt(`World reset (${label})`, 1.4);
         if (net.isHost && net.connections.size > 0) {
           queueHostSnapshotBroadcast("resetWorld", { urgent: true });
         }
@@ -40286,6 +41104,10 @@
   }
 
   function switchToSeed(seedInput) {
+    if (shouldUseWorldRecords() && !state.debugUnlocked) {
+      setPrompt("Seeds are set when a world is created.", 1.4);
+      return;
+    }
     if (netIsClientReady()) {
       setPrompt("Host only", 1);
       return;
@@ -40294,6 +41116,11 @@
     if (!nextSeed) return;
     closeSettingsPanel();
     if (debugPanel) debugPanel.classList.add("hidden");
+    clearActiveWorldContext({
+      keepStoredActiveWorldId: false,
+      sessionKind: "legacy-seed",
+      seed: nextSeed,
+    });
     if (state.world && state.player && !netIsClientReady()) {
       saveGame();
     }
@@ -40319,6 +41146,15 @@
   }
 
   function promptNewSeed() {
+    if (shouldUseWorldRecords() && !state.debugUnlocked) {
+      if (state.loadingVisible) hideLoadingOverlay();
+      if (startScreen && !startScreen.classList.contains("hidden")) {
+        openWorldMenu();
+      } else {
+        setPrompt("Create or choose a different world from the main menu.", 1.5);
+      }
+      return;
+    }
     if (netIsClientReady()) {
       setPrompt("Host only", 1);
       return;
@@ -40337,7 +41173,8 @@
       setPrompt("Host only", 1);
       return;
     }
-    const currentSeed = normalizeSeedValue(state.surfaceWorld?.seed || getStoredActiveSeed() || "island-1");
+    const currentSeed = normalizeSeedValue(state.activeWorldSeed || state.surfaceWorld?.seed || getStoredActiveSeed() || "island-1");
+    const label = state.activeWorldName || currentSeed;
     closeSettingsPanel();
     if (debugPanel) debugPanel.classList.add("hidden");
     closeStationMenu();
@@ -40351,7 +41188,7 @@
         setLoadingOverlayStage("Syncing...", "Loading");
         startNewGame(currentSeed);
         saveGame();
-        setPrompt(`Restarted seed: ${currentSeed}`, 1.3);
+        setPrompt(`Restarted world: ${label}`, 1.3);
         if (net.isHost && net.connections.size > 0) {
           queueHostSnapshotBroadcast("restartSeed", { urgent: true });
         }
@@ -40384,7 +41221,9 @@
     }
 
     if (event.code === "KeyN") {
-      promptNewSeed();
+      if (shouldAllowLiveSeedSwitching()) {
+        promptNewSeed();
+      }
       return;
     }
 
@@ -46124,12 +46963,12 @@
     if (!state.inCave && !state.player.inHut && state.nearBench && !state.activeShipRepair && !localShipSeat) {
       if (!wasNearBench) {
         buildMenu.classList.remove("hidden");
-        showBuildCategoryOverview(false);
+        setBuildCategory(buildCategory, false);
         renderBuildMenu();
       }
     } else if (wasNearBench) {
       buildMenu.classList.add("hidden");
-      showBuildCategoryOverview(false);
+      setBuildCategory(buildCategory, false);
     }
 
     wasNearBench = state.nearBench;
@@ -46367,8 +47206,11 @@
     const sparkle = !!options?.sparkle;
     const crystal = !!options?.crystal;
     const outline = options?.outline || tintColor(baseColor, -0.36);
-    const fillTop = tintColor(baseColor, 0.2);
+    const fillTop = tintColor(baseColor, Number.isFinite(options?.topTint) ? options.topTint : 0.2);
     const fillBottom = tintColor(baseColor, -0.24);
+    const highlightAlpha = clamp(Number(options?.highlightAlpha ?? 0.2), 0, 1);
+    const shadowAlpha = clamp(Number(options?.shadowAlpha ?? 0.14), 0, 1);
+    const ridgeAlpha = clamp(Number(options?.ridgeAlpha ?? 0.28), 0, 1);
     const points = 7;
     const verts = [];
     for (let i = 0; i < points; i += 1) {
@@ -46396,31 +47238,37 @@
     ctx.lineWidth = 1.4;
     ctx.stroke();
 
-    ctx.fillStyle = "rgba(255,255,255,0.2)";
-    ctx.beginPath();
-    ctx.moveTo(cx - radius * 0.45, cy - radius * 0.2);
-    ctx.lineTo(cx - radius * 0.05, cy - radius * 0.55);
-    ctx.lineTo(cx + radius * 0.15, cy - radius * 0.12);
-    ctx.closePath();
-    ctx.fill();
-    ctx.fillStyle = "rgba(0,0,0,0.14)";
-    ctx.beginPath();
-    ctx.moveTo(cx + radius * 0.08, cy + radius * 0.12);
-    ctx.lineTo(cx + radius * 0.5, cy + radius * 0.22);
-    ctx.lineTo(cx + radius * 0.24, cy + radius * 0.56);
-    ctx.closePath();
-    ctx.fill();
-
-    ctx.strokeStyle = "rgba(36, 46, 60, 0.28)";
-    ctx.lineWidth = 1;
-    for (let i = 0; i < ridges; i += 1) {
-      const ang = ((Math.PI * 2) * (i / ridges)) + (((seed >> (i + 1)) & 3) * 0.08);
-      const inner = radius * 0.22;
-      const outer = radius * (0.52 + ((((seed >> (i + 7)) & 7) / 7) * 0.2));
+    if (highlightAlpha > 0.001) {
+      ctx.fillStyle = `rgba(255,255,255,${highlightAlpha})`;
       ctx.beginPath();
-      ctx.moveTo(cx + Math.cos(ang) * inner, cy + Math.sin(ang) * inner);
-      ctx.lineTo(cx + Math.cos(ang) * outer, cy + Math.sin(ang) * outer);
-      ctx.stroke();
+      ctx.moveTo(cx - radius * 0.45, cy - radius * 0.2);
+      ctx.lineTo(cx - radius * 0.05, cy - radius * 0.55);
+      ctx.lineTo(cx + radius * 0.15, cy - radius * 0.12);
+      ctx.closePath();
+      ctx.fill();
+    }
+    if (shadowAlpha > 0.001) {
+      ctx.fillStyle = `rgba(0,0,0,${shadowAlpha})`;
+      ctx.beginPath();
+      ctx.moveTo(cx + radius * 0.08, cy + radius * 0.12);
+      ctx.lineTo(cx + radius * 0.5, cy + radius * 0.22);
+      ctx.lineTo(cx + radius * 0.24, cy + radius * 0.56);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    if (ridgeAlpha > 0.001) {
+      ctx.strokeStyle = `rgba(36, 46, 60, ${ridgeAlpha})`;
+      ctx.lineWidth = 1;
+      for (let i = 0; i < ridges; i += 1) {
+        const ang = ((Math.PI * 2) * (i / ridges)) + (((seed >> (i + 1)) & 3) * 0.08);
+        const inner = radius * 0.22;
+        const outer = radius * (0.52 + ((((seed >> (i + 7)) & 7) / 7) * 0.2));
+        ctx.beginPath();
+        ctx.moveTo(cx + Math.cos(ang) * inner, cy + Math.sin(ang) * inner);
+        ctx.lineTo(cx + Math.cos(ang) * outer, cy + Math.sin(ang) * outer);
+        ctx.stroke();
+      }
     }
 
     if (sparkle) {
@@ -51957,6 +52805,10 @@
         drawFacetedRockNode(screen.x, screen.y, 12.8, style.base, {
           seed: stoneSeed,
           ridges: 7,
+          ridgeAlpha: 0,
+          highlightAlpha: 0.12,
+          shadowAlpha: 0.1,
+          topTint: 0.08,
           sparkle: true,
           crystal: true,
         });
@@ -51981,6 +52833,10 @@
         drawFacetedRockNode(screen.x, screen.y, isOre ? 11.4 : 12.2, drawColor, {
           seed: rockSeed,
           ridges: isOre ? 5 : 4,
+          ridgeAlpha: isOre ? 0.28 : 0,
+          highlightAlpha: isOre ? 0.2 : 0.11,
+          shadowAlpha: isOre ? 0.14 : 0.1,
+          topTint: isOre ? 0.2 : 0.06,
           sparkle: isOre,
           crystal: isCrystalOre,
         });
@@ -53341,6 +54197,14 @@
       note: "origin=top-left,x+=right,y+=down",
       mode,
       menuView: currentStartMenuView,
+      worldSession: {
+        activeWorldId: state.activeWorldId || null,
+        activeWorldName: state.activeWorldName || "",
+        activeWorldMode: state.activeWorldMode || "",
+        activeWorldSeed: state.activeWorldSeed || "",
+        sessionKind: state.sessionKind || "",
+        loadedWorldId: state.loadedWorldId || null,
+      },
       loadingVisible: !!state.loadingVisible,
       loading: {
         title: String(state.loadingTitle || ""),
@@ -53518,9 +54382,9 @@
         }
         buildMenu.classList.remove("hidden");
         if (typeof categoryId === "string" && categoryId) {
-          openBuildCategory(categoryId, false);
+          setBuildCategory(categoryId, false);
         } else {
-          showBuildCategoryOverview(false);
+          setBuildCategory(buildCategory, false);
         }
         renderBuildMenu();
         return buildRenderGameTextPayload();
@@ -53530,7 +54394,7 @@
         state.nearBenchStructure = null;
         wasNearBench = false;
         buildMenu.classList.add("hidden");
-        showBuildCategoryOverview(false);
+        setBuildCategory(buildCategory, false);
         return buildRenderGameTextPayload();
       },
       startMpAutotest: (mode = "quick", options = null) => {
@@ -54006,7 +54870,15 @@
     updateContinentalShiftButton();
     updateDebugPlaceBoatButton();
     updateDebugCaveSpawnButtons();
+    updateWorldIdentityDisplay();
+    updateSessionMenuButtons();
     if (settingsPanel) settingsPanel.classList.add("hidden");
+    if (menuResetWorldBtn && shouldUseWorldRecords()) {
+      menuResetWorldBtn.classList.add("hidden");
+    }
+    if (shouldShowWorldSelectUi()) {
+      warmOpenDatabase();
+    }
 
     window.addEventListener("resize", () => requestResize("window-resize"));
     window.addEventListener("orientationchange", () => requestResize("orientationchange"));
@@ -54074,26 +54946,15 @@
     });
     buildCategoryTabs.forEach((tab) => {
       const categoryId = tab.dataset.category;
-      const preview = () => {
-        if (buildCategoryView !== "detail") setBuildCategoryHint(categoryId);
-      };
-      const restore = () => {
-        if (buildCategoryView === "detail") setBuildCategoryHint(buildCategory);
-        else setBuildCategoryHint(null);
-      };
-      tab.addEventListener("click", () => openBuildCategory(categoryId, true));
+      const preview = () => setBuildCategoryHint(categoryId);
+      const restore = () => setBuildCategoryHint(buildCategory);
+      tab.addEventListener("click", () => setBuildCategory(categoryId, true));
       tab.addEventListener("mouseenter", preview);
       tab.addEventListener("focus", preview);
       tab.addEventListener("mouseleave", restore);
       tab.addEventListener("blur", restore);
     });
-    if (buildCategoryBackBtn) {
-      buildCategoryBackBtn.addEventListener("click", () => {
-        showBuildCategoryOverview(true);
-      });
-    }
     setBuildCategory(buildCategory, false);
-    showBuildCategoryOverview(false);
 
     if (destroyChestBtn) {
       destroyChestBtn.addEventListener("click", destroyActiveChest);
@@ -54113,7 +54974,13 @@
     }
     if (newRunBtn) {
       newRunBtn.addEventListener("click", () => {
-        promptNewSeed();
+        if (shouldShowWorldSelectUi()) {
+          returnToWorldMenu("new-world").catch(() => {
+            setPrompt("Unable to open world list", 1.4);
+          });
+        } else {
+          promptNewSeed();
+        }
       });
     }
     if (restartSeedBtn) {
@@ -54124,9 +54991,10 @@
     if (seedDisplay) {
       seedDisplay.addEventListener("click", () => {
         ensureAudioContext();
-        promptNewSeed();
+        if (shouldAllowLiveSeedSwitching()) {
+          promptNewSeed();
+        }
       });
-      seedDisplay.title = "Click to switch seed";
     }
     if (settingsToggle) {
       settingsToggle.addEventListener("click", () => {
@@ -54213,6 +55081,22 @@
       });
     }
     if (resetWorldBtn) resetWorldBtn.addEventListener("click", resetWorldFromSettings);
+    if (saveQuitBtn) {
+      saveQuitBtn.addEventListener("click", () => {
+        ensureAudioContext();
+        saveAndQuitToMenu().catch(() => {
+          setPrompt("Save and quit failed", 1.4);
+        });
+      });
+    }
+    if (leaveSessionBtn) {
+      leaveSessionBtn.addEventListener("click", () => {
+        ensureAudioContext();
+        leaveJoinSessionToMenu().catch(() => {
+          setPrompt("Leave session failed", 1.4);
+        });
+      });
+    }
     if (unlockDebugBtn) unlockDebugBtn.addEventListener("click", unlockDebugFromSettings);
     if (debugToggle) debugToggle.addEventListener("click", toggleDebugMenu);
     if (giveBeaconBtn) giveBeaconBtn.addEventListener("click", giveDebugBeacon);
@@ -54253,6 +55137,26 @@
     }
     if (mpAutotestLogEl) {
       mpAutotestLogEl.textContent = "Multiplayer autotest idle.";
+    }
+    if (worldNameInput) {
+      worldNameInput.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          createWorldFromMenu().catch((err) => {
+            setWorldCreateError(err?.message || "Failed to create world.");
+          });
+        }
+      });
+    }
+    if (worldSeedInput) {
+      worldSeedInput.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          createWorldFromMenu().catch((err) => {
+            setWorldCreateError(err?.message || "Failed to create world.");
+          });
+        }
+      });
     }
     if (toggleRobotRecallBtn) {
       toggleRobotRecallBtn.addEventListener("click", () => {

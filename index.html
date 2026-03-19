@@ -8,7 +8,7 @@
   />
   <title>Island Survival Game</title>
   <link rel="icon" href="data:," />
-  <link rel="stylesheet" href="styles.css?v=20260319-2" />
+  <link rel="stylesheet" href="styles.css?v=20260319-3" />
 </head>
 <body>
   <canvas id="game"></canvas>
@@ -37,6 +37,65 @@
             <button id="joinBtn" class="start-menu-btn" type="button">Join</button>
           </div>
           <button id="menuBackFromPlayBtn" class="start-menu-back-btn" type="button">Back</button>
+        </div>
+        <div id="startWorldsMenu" class="start-menu-view">
+          <div class="start-subhead">Worlds</div>
+          <div id="worldMenuCapacity" class="start-worlds-capacity">0 / 3 worlds</div>
+          <div id="worldMenuHint" class="panel-hint start-worlds-hint">Create a world or pick one to keep playing.</div>
+          <div id="worldMenuList" class="start-world-list"></div>
+          <div id="worldLegacySection" class="start-world-legacy hidden">
+            <div class="start-subhead start-subhead-inline">Legacy Seeds</div>
+            <div id="worldLegacyHint" class="panel-hint start-worlds-hint">Import old seed-based saves into world slots.</div>
+            <div id="worldLegacyList" class="start-world-list start-world-list-legacy"></div>
+          </div>
+          <div id="worldCreatePanel" class="start-world-create hidden">
+            <div class="start-subhead start-subhead-inline">Create New World</div>
+            <label class="start-option-row" for="worldNameInput">
+              <span>World Name</span>
+            </label>
+            <input
+              id="worldNameInput"
+              class="start-name-input"
+              type="text"
+              maxlength="32"
+              placeholder="World 1"
+              autocomplete="off"
+              autocapitalize="words"
+              autocorrect="off"
+              spellcheck="false"
+            />
+            <label class="start-option-row" for="worldModeSelect">
+              <span>Mode</span>
+            </label>
+            <select id="worldModeSelect" class="start-name-input start-world-select">
+              <option value="solo">Solo</option>
+              <option value="multiplayer">Multiplayer</option>
+            </select>
+            <label class="start-option-row" for="worldSeedInput">
+              <span>Seed</span>
+            </label>
+            <input
+              id="worldSeedInput"
+              class="start-name-input"
+              type="text"
+              maxlength="32"
+              placeholder="Random"
+              autocomplete="off"
+              autocapitalize="none"
+              autocorrect="off"
+              spellcheck="false"
+            />
+            <div id="worldCreateError" class="panel-hint hidden">World creation error</div>
+            <div class="start-world-action-row">
+              <button id="worldCreateConfirmBtn" class="start-menu-btn" type="button">Create</button>
+              <button id="worldCreateCancelBtn" class="start-menu-back-btn" type="button">Cancel</button>
+            </div>
+          </div>
+          <div class="start-world-action-row">
+            <button id="createWorldBtn" class="start-menu-btn" type="button">Create New World</button>
+            <button id="joinWorldMenuBtn" class="start-menu-utility-btn" type="button">Join Room</button>
+          </div>
+          <button id="menuBackFromWorldsBtn" class="start-menu-back-btn" type="button">Back</button>
         </div>
         <div id="startOptionsMenu" class="start-menu-view">
           <div class="start-subhead">Options</div>
@@ -116,16 +175,6 @@
       <div id="buildRobotControls" class="build-robot-controls hidden">
         <button id="toggleRobotRecallBtn" class="build-robot-btn" type="button">Call All Robots</button>
         <div id="buildRobotControlsHint" class="build-robot-hint"></div>
-      </div>
-      <div id="buildCategoryHeader" class="build-category-header hidden">
-        <button id="buildCategoryBack" class="build-category-back" type="button" aria-label="Back to crafting categories">
-          <span aria-hidden="true">←</span>
-        </button>
-        <span id="buildCategoryHeaderIcon" class="build-category-header-icon" aria-hidden="true"></span>
-        <div class="build-category-header-copy">
-          <div id="buildCategoryTitle" class="build-category-title">Travel</div>
-          <div id="buildCategoryMeta" class="build-category-meta">Paths & bridges.</div>
-        </div>
       </div>
       <div id="buildCategoryTabs" class="build-category-tabs" role="tablist" aria-label="Crafting categories">
         <button class="build-category-btn active" data-category="navigation" type="button" title="Paths, bridges, and travel structures.">
@@ -316,6 +365,8 @@
         <input id="sfxVolume" class="settings-slider" type="range" min="0" max="100" step="1" value="65" />
         <div class="panel-hint">Graphics stay on the optimized high-detail mode automatically.</div>
         <button id="resetWorldBtn" class="action-btn danger-btn">Reset</button>
+        <button id="saveQuitBtn" class="action-btn">Save and Quit</button>
+        <button id="leaveSessionBtn" class="action-btn secondary-btn hidden">Leave Session</button>
         <button id="unlockDebugBtn" class="action-btn secondary-btn">Unlock Debug</button>
         <div id="debugUnlockStatus" class="panel-hint">Debug locked</div>
       </div>
@@ -340,14 +391,15 @@
     <div class="overlay-card">
       <div class="overlay-title">Rescued!</div>
       <div class="overlay-text">Beacon seen. Rescue inbound.</div>
-      <button id="newRunBtn" class="action-btn">Start New World</button>
-      <button id="restartSeedBtn" class="action-btn secondary-btn">Restart Seed</button>
+      <button id="newRunBtn" class="action-btn">Return to Worlds</button>
+      <button id="restartSeedBtn" class="action-btn secondary-btn">Restart World</button>
     </div>
   </div>
 
   <script src="src/utils.js?v=20260319-1"></script>
-  <script src="src/config.js?v=20260319-1"></script>
-  <script src="src/state.js?v=20260319-1"></script>
+  <script src="src/config.js?v=20260319-2"></script>
+  <script src="src/state.js?v=20260319-2"></script>
+  <script src="src/worlds.js?v=20260319-1"></script>
   <script src="src/ui/loadingScreens.js?v=20260319-1"></script>
   <script src="src/ui/prompts.js?v=20260319-1"></script>
   <script src="src/menu-bridge.js?v=20260319-3"></script>
@@ -394,6 +446,6 @@
     })();
   </script>
   <script src="https://unpkg.com/peerjs@1.5.5/dist/peerjs.min.js"></script>
-  <script src="src/main.js?v=20260319-7"></script>
+  <script src="src/main.js?v=20260319-12"></script>
 </body>
 </html>

@@ -128,6 +128,14 @@
     return {
       world: null,
       surfaceWorld: null,
+      activeWorldId: null,
+      activeWorldName: "",
+      activeWorldMode: "solo",
+      activeWorldSeed: "",
+      loadedWorldId: null,
+      sessionKind: "solo",
+      pendingMenuReturnReason: "",
+      thumbnailCapturePending: false,
       player: null,
       inventory: createEmptyInventoryState(inventorySize),
       structures: [],
@@ -233,6 +241,14 @@
       loadingVisible: false,
       loadingTitle: "",
       loadingStage: "",
+      worldMenu: {
+        loading: false,
+        error: "",
+        records: [],
+        legacyCandidates: [],
+        selectedWorldId: null,
+        autoImportAttempted: false,
+      },
     };
   }
 

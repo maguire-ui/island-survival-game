@@ -14,8 +14,9 @@
 
   const START_MENU_VIEW_ORDER = Object.freeze({
     main: 0,
-    play: 1,
-    options: 2,
+    worlds: 1,
+    play: 2,
+    options: 3,
   });
   const START_MENU_SWOOSH_DURATION_MS = 420;
   const START_SCREEN_EXIT_TRANSITION_MS = 280;
@@ -161,8 +162,26 @@
   const SAVE_KEY = "island_survival_save_v1";
   const SAVE_KEY_PREFIX = "island_survival_seed_save_v1:";
   const ACTIVE_SEED_KEY = "island_survival_active_seed_v1";
+  const ACTIVE_WORLD_ID_KEY = "island_survival_active_world_id_v1";
   const SAVE_VERSION = 5;
   const WORLD_LAYOUT_VERSION = "2026-03-layout-v4";
+  const WORLD_RECORDS_ENABLED = true;
+  const WORLD_SELECT_UI_ENABLED = true;
+  const WORLD_THUMBNAILS_ENABLED = true;
+  const LEGACY_SEED_ROUTING_ENABLED = true;
+  const WORLD_MIGRATION_ASSISTANT_ENABLED = true;
+  const LOCAL_WORLD_LIMIT = 3;
+  const WORLD_SCHEMA_VERSION = 1;
+  const WORLD_METADATA_VERSION = 1;
+  const WORLD_PAYLOAD_VERSION = 1;
+  const WORLD_DB_NAME = "island_survival_worlds_v1";
+  const WORLD_DB_VERSION = 1;
+  const WORLD_DB_STORES = Object.freeze({
+    meta: "worldMeta",
+    save: "worldSave",
+    thumb: "worldThumb",
+    legacy: "legacyImportState",
+  });
   const HOTBAR_SIZE = 4;
   const INVENTORY_SIZE = 8;
   const CHEST_SIZE = 8;
@@ -198,6 +217,7 @@
 
   window.ISGConfig = Object.freeze({
     ACTIVE_SEED_KEY,
+    ACTIVE_WORLD_ID_KEY,
     AUTO_GRAPHICS_BASELINE,
     CHEST_SIZE,
     CONFIG,
@@ -211,6 +231,8 @@
     INVENTORY_SIZE,
     JOIN_FLOW_TIMEOUT_MS,
     LEGACY_PLAYER_NAME_KEY,
+    LEGACY_SEED_ROUTING_ENABLED,
+    LOCAL_WORLD_LIMIT,
     MAX_STACK,
     MOBILE_RENDER_DPR_CAP,
     MOBILE_RENDER_MAX_PIXELS,
@@ -231,6 +253,16 @@
     START_SCREEN_EXIT_TRANSITION_MS,
     SURFACE_GUARDIAN_CONFIG,
     TOUCH_STICK_MAX_DIST,
+    WORLD_DB_NAME,
+    WORLD_DB_STORES,
+    WORLD_DB_VERSION,
     WORLD_LAYOUT_VERSION,
+    WORLD_METADATA_VERSION,
+    WORLD_MIGRATION_ASSISTANT_ENABLED,
+    WORLD_PAYLOAD_VERSION,
+    WORLD_RECORDS_ENABLED,
+    WORLD_SCHEMA_VERSION,
+    WORLD_SELECT_UI_ENABLED,
+    WORLD_THUMBNAILS_ENABLED,
   });
 })();
