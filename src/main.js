@@ -2974,13 +2974,15 @@
   });
   const initialActiveWorldId = getStoredActiveWorldId();
   if (initialActiveWorldId) {
-    state.activeWorldId = initialActiveWorldId;
-    state.worldMenu.selectedWorldId = initialActiveWorldId;
     const initialWorldRecord = getWorldSync(initialActiveWorldId);
     if (initialWorldRecord) {
+      state.activeWorldId = initialActiveWorldId;
+      state.worldMenu.selectedWorldId = initialActiveWorldId;
       state.activeWorldName = initialWorldRecord.name;
       state.activeWorldMode = initialWorldRecord.mode;
       state.activeWorldSeed = initialWorldRecord.seed;
+    } else {
+      clearStoredActiveWorldId();
     }
   }
 
@@ -14889,7 +14891,7 @@
     state.worldMenu.records = Array.isArray(records) ? records : [];
     state.worldMenu.legacyCandidates = legacyCandidates;
     state.worldMenu.loading = false;
-    state.worldMenu.selectedWorldId = state.activeWorldId || getStoredActiveWorldId() || state.worldMenu.selectedWorldId || null;
+    state.worldMenu.selectedWorldId = getActiveWorldRecordId() || state.worldMenu.selectedWorldId || null;
     renderWorldMenu(opts);
   }
 
@@ -29982,7 +29984,24 @@
 
   function getActiveWorldRecordId() {
     if (!shouldUseWorldRecords()) return null;
-    return state.activeWorldId || getStoredActiveWorldId() || null;
+    if (state.sessionKind === "join") return null;
+    if (state.activeWorldId) {
+      if (getWorldSync(state.activeWorldId)) {
+        return state.activeWorldId;
+      }
+      state.activeWorldId = null;
+      state.loadedWorldId = null;
+      state.activeWorldName = "";
+      state.activeWorldMode = "solo";
+      state.activeWorldSeed = "";
+    }
+    const storedWorldId = getStoredActiveWorldId();
+    if (!storedWorldId) return null;
+    if (getWorldSync(storedWorldId)) {
+      return storedWorldId;
+    }
+    clearStoredActiveWorldId();
+    return null;
   }
 
   function getActiveWorldRecord() {

@@ -480,7 +480,6 @@
     }
     const record = buildWorldRecord(opts);
     upsertMetaCache(record);
-    setStoredActiveWorldId(record.id);
     queueDbWrite(idbPut(WORLD_DB_STORES.meta, record));
     return record;
   }
@@ -564,6 +563,9 @@
   function deleteWorld(worldId) {
     const record = getWorldSync(worldId);
     if (!record) return false;
+    if (getStoredActiveWorldId() === record.id) {
+      clearStoredActiveWorldId();
+    }
     removeMetaCache(record.id);
     removeWorldPayloadFallback(record.id);
     removeThumbnailFallback(record.thumbnailId);
